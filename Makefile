@@ -1,5 +1,7 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
+# GNU Make < 3.82 (macOS ships 3.81) ignores .SHELLFLAGS, so recipes must not rely on
+# -e: every loop below stops explicitly with `|| exit 1` on the first failure.
 .SHELLFLAGS := -eu -o pipefail -c
 
 BACKEND := backend
@@ -20,12 +22,13 @@ help: ## List available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
 
 setup: ## Install dependencies and pre-commit hooks
-	for project in $(PROJECTS); do uv sync --frozen --project $$project; done
+	for project in $(PROJECTS); do uv sync --frozen --project $$project || exit 1; done
 	uv run --frozen --project $(BACKEND) pre-commit install
 
 lint: ## ruff check + ruff format --check (backend and frontend)
 	for project in $(PROJECTS); do \
-		(cd $$project && uv run --frozen ruff check . && uv run --frozen ruff format --check .); \
+		(cd $$project && uv run --frozen ruff check . && uv run --frozen ruff format --check .) \
+			|| exit 1; \
 	done
 
 lint-workflows: ## actionlint on .github/workflows
@@ -33,11 +36,12 @@ lint-workflows: ## actionlint on .github/workflows
 
 format: ## Apply ruff fixes and formatting (backend and frontend)
 	for project in $(PROJECTS); do \
-		(cd $$project && uv run --frozen ruff check --fix . && uv run --frozen ruff format .); \
+		(cd $$project && uv run --frozen ruff check --fix . && uv run --frozen ruff format .) \
+			|| exit 1; \
 	done
 
 typecheck: ## mypy --strict (backend and frontend)
-	for project in $(PROJECTS); do (cd $$project && uv run --frozen mypy); done
+	for project in $(PROJECTS); do (cd $$project && uv run --frozen mypy) || exit 1; done
 
 test: ## Unit tests with branch coverage gate, fail under 90 (backend and frontend)
 	cd $(BACKEND) && uv run --frozen pytest tests/unit --cov --cov-report=term-missing
@@ -46,7 +50,7 @@ test: ## Unit tests with branch coverage gate, fail under 90 (backend and fronte
 coverage-summary: ## Markdown coverage tables (used for the CI job summary)
 	@for project in $(PROJECTS); do \
 		echo "### Unit test coverage: $$project"; echo; \
-		(cd $$project && uv run --frozen coverage report --format=markdown); echo; \
+		(cd $$project && uv run --frozen coverage report --format=markdown) || exit 1; echo; \
 	done
 
 test-int: ## Integration tests against real Postgres and Qdrant (needs Docker)
@@ -58,7 +62,7 @@ security: ## bandit, pip-audit (both lock files), gitleaks
 	cd $(BACKEND) && uv run --frozen bandit -q -c pyproject.toml -r app
 	cd $(FRONTEND) && uv run --frozen bandit -q -r app.py hpdocs_ui
 	for project in $(PROJECTS); do \
-		(cd $$project && uv run --frozen pip-audit --strict --progress-spinner off); \
+		(cd $$project && uv run --frozen pip-audit --strict --progress-spinner off) || exit 1; \
 	done
 	docker run --rm -v "$(CURDIR)":/repo $(GITLEAKS_IMAGE) git /repo --redact --no-banner
 
@@ -69,7 +73,7 @@ images: ## Build the backend and frontend images (no .env needed, unlike compose
 scan-images: ## Trivy image scan: fail on fixable HIGH/CRITICAL vulnerabilities
 	for image in $(IMAGES); do \
 		$(TRIVY) image --quiet --skip-version-check --severity HIGH,CRITICAL \
-			--ignore-unfixed --exit-code 1 $$image; \
+			--ignore-unfixed --exit-code 1 $$image || exit 1; \
 	done
 
 scan-config: ## Trivy misconfiguration scan of the Dockerfiles (compose is not supported)
