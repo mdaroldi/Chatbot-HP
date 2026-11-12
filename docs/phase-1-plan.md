@@ -30,12 +30,13 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 | 4b | `feat(ingestion): [icon] placeholders for inline images` (image boxes in the parser output, `[icon]` inserted during line grouping, lost-icon count in the stats: measured 87 ENVY, 3 OMEN; the spike's 43 was not reproducible, see ADR 0004 corrections) | done |
 | 5 | `feat(ingestion): cleaning stage with drop statistics` | done (`app/ingestion/{cleaning,language}.py`; `pages.chapter_toc_lines` replaces `chapter_opener_pages`; continuation rule and opener lead-in as approved, see ADR 0004 corrections) |
 | 6 | `feat(ingestion): sections and chunking v1` (with ADR 0005 and the CLAUDE.md chunking row) | done (`app/ingestion/{spans,blocks,sections,chunking}.py`; unit tests use a word-counting fake tokenizer) |
-| 6b | `feat(ingestion): drop navigation and table residue` (section mini-TOCs, non-Latin table residue, URL-only sections; see "Commits 6b and 6c") | done |
+| 6b | `feat(ingestion): drop navigation and table residue` (section mini-TOCs, non-Latin table residue, URL-only sections; see "Commits 6b to 6d") | done |
 | 6c | `feat(ingestion): index front-matter safety and notice content` (with the ADR 0005 update) | done |
+| 6d | `feat(ingestion): treat question lead-ins of mini-TOCs as part of the list` (see "Commits 6b to 6d") | done |
 | 7 | `feat(ingestion): fastembed embedder and token counter` (with the corpus test of the real 450-token limit, and `CHUNK_MIN_TOKENS` re-measured with the real tokenizer) | next |
 | 8 | `feat(ingestion): Qdrant versioned collection and alias swap` | pending |
 | 9 | `feat(db): index_builds manifest (migration 0002)` | pending |
-| 10 | `feat(ingestion): pipeline, CLI, migrate and ingest services, make ingest/inspect-chunks` (with the startup-order ADR and CLAUDE.md update) | pending |
+| 10 | `feat(ingestion): pipeline, CLI, migrate and ingest services, make ingest/inspect-chunks` (with the startup-order ADR and CLAUDE.md update, and the chunk-ID digest corpus test) | pending |
 | 11 | `ci: corpus job with cached download` | pending |
 | 12 | `docs: README ingestion section` | pending |
 
@@ -47,7 +48,7 @@ the `corpus` marker; `make test-int` runs them, and the CI integration job exclu
 (commit 4b). The Phase 3 system prompt must tell the model what `[icon]` means (an
 unrecognised button or symbol) and that it must not guess which button it is.
 
-## Commits 6b and 6c (decided after commit 6)
+## Commits 6b to 6d (decided after commit 6)
 
 Inserted before commit 7. Each rule is test-first, with its own drop reason and
 counter, and the corpus tests pin which PDF pages it touches; a rule that hits
@@ -87,6 +88,17 @@ short line (at most 5 words, no end punctuation) with the word `safety` is a hea
 too. The cover, copyright and trademark text stays out of the index. New content type
 `front_matter`, checked before the title rules. Measured: ENVY 1 chunk (PDF 2), OMEN
 2 (PDF 3, 4). ADR 0005 is updated in the same commit.
+
+**6d, question lead-ins:** the `section_toc` lead-in may also end with `?`, so a
+question just before a dropped mini-TOC goes with it (a colon lead-in stays as it is;
+chapter openers keep the colon-only rule). Measured: ENVY PDF 95 and 100 only, one line
+each; both sections are left empty and dropped as `empty_after_cleaning` (ENVY 32 →
+34), so ENVY loses two chunks that held only the question. OMEN is unchanged.
+
+**Plan addition for commit 10, chunk-ID digest:** a corpus test pins a digest of the
+sorted chunk IDs per document, counted with the real tokenizer (commit 7). Any change
+in cleaning or chunking output fails it and forces a `chunking_version` bump, because
+`--if-needed` compares the version, not the code.
 
 **Deferred to the Phase 5 ablation:** merging a parent's one-line introduction into
 its first child section.

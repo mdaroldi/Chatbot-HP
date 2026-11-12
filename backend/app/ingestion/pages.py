@@ -19,6 +19,8 @@ _MIN_TOC_ENTRIES = 3
 _BULLETS = ("●", "•")
 _MIN_LISTED_SECTIONS = 2
 _SAME_LINE = 2.0  # points between the tops of a hanging bullet and its text
+# A section list may also follow a question, such as "What do you want to do?".
+_SECTION_LEAD_IN_ENDINGS = (":", "?")
 
 
 def toc_pages(lines: Sequence[TextLine]) -> frozenset[int]:
@@ -84,12 +86,14 @@ def _bullet_items(lines: Sequence[TextLine]) -> list[_BulletItem]:
     return items
 
 
-def _lead_in(lines: Sequence[TextLine], first_item: int) -> tuple[int, ...]:
+def _lead_in(
+    lines: Sequence[TextLine], first_item: int, endings: tuple[str, ...] = (":",)
+) -> tuple[int, ...]:
     """The line that introduces the list, such as "This chapter covers:"."""
     position = first_item - 1
     if position >= 0:
         before = lines[position]
-        if before.pdf_page == lines[first_item].pdf_page and before.text.endswith(":"):
+        if before.pdf_page == lines[first_item].pdf_page and before.text.endswith(endings):
             return (position,)
     return ()
 
@@ -133,8 +137,9 @@ def section_toc_lines(
     """Indices of section mini-TOCs: a list of at least two bullets in which every
     item is the title of one of the section's own subsections, with its lead-in.
 
-    Every item must match: one item that is not a child title (a URL, a title with
-    more words, a title wrapped onto a second line) keeps the whole list.
+    The lead-in ends with a colon or a question mark. Every item must match: one item
+    that is not a child title (a URL, a title with more words, a title wrapped onto a
+    second line) keeps the whole list.
     """
     bullets = _bullet_items(lines)
     found: set[int] = set()
@@ -145,7 +150,7 @@ def section_toc_lines(
             if len(run) >= _MIN_LISTED_SECTIONS and all(
                 compact(item.text) in titles for item in run
             ):
-                lead_in = _lead_in(lines, run[0].indices[0])
+                lead_in = _lead_in(lines, run[0].indices[0], _SECTION_LEAD_IN_ENDINGS)
                 found.update(i for i in lead_in if i >= span.body)
                 found.update(index for item in run for index in item.indices)
     return frozenset(found)

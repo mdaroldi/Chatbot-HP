@@ -310,12 +310,12 @@ def bullet(text: str, top: float, page: int = 1) -> tuple[TextLine, TextLine]:
     return line("●", page, top=top, x0=100, x1=105), line(text, page, top=top, x0=122, x1=400)
 
 
-def toc_section(*items: str) -> tuple[TextLine, ...]:
+def toc_section(*items: str, lead_in: str = "This section covers:") -> tuple[TextLine, ...]:
     """Section "Buttons" on page 1: intro, lead-in, the items; children on page 2."""
     return (
         heading("Buttons"),
         line("The printer has buttons on two sides.", top=100),
-        line("This section covers:", top=130),
+        line(lead_in, top=130),
         *(part for n, text in enumerate(items) for part in bullet(text, 150 + 20 * n)),
         heading("Panel buttons", 2),
         line("The panel has four buttons.", 2),
@@ -343,6 +343,18 @@ def test_a_list_naming_only_child_sections_is_dropped_with_its_lead_in() -> None
     ]
     assert kept(result)[:2] == ["Buttons", "The printer has buttons on two sides."]
     assert result.stats.lines[DropReason.SECTION_TOC] == 5
+
+
+def test_a_question_lead_in_goes_with_the_list_like_a_colon_lead_in() -> None:
+    def lead_in_dropped(text: str, *items: str) -> bool:
+        result = run(toc_section(*items, lead_in=text), TOC_OUTLINE, pages=2)
+        return text in dropped(result, DropReason.SECTION_TOC)
+
+    children = ("Panel buttons", "Back buttons")
+    assert lead_in_dropped("This section covers:", *children)
+    assert lead_in_dropped("What do you want to do?", *children)
+    assert not lead_in_dropped("This section covers two topics.", *children)
+    assert not lead_in_dropped("What do you want to do?", "Panel buttons", "www.example.com")
 
 
 def test_a_list_with_any_item_that_is_not_a_child_title_is_kept_whole() -> None:

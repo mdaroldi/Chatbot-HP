@@ -23,12 +23,12 @@ LINES_DROPPED = {
         DropReason.TOC: 70,
         DropReason.INDEX: 178,
         DropReason.CHAPTER_TOC: 117,
-        DropReason.SECTION_TOC: 191,
+        DropReason.SECTION_TOC: 193,
         DropReason.FOOTER: 361,
         DropReason.NON_LATIN: 104,
         DropReason.NON_ENGLISH_LATIN: 45,
         DropReason.NON_LATIN_TABLE: 78,
-        DropReason.EMPTY_AFTER_CLEANING: 41,
+        DropReason.EMPTY_AFTER_CLEANING: 43,
     },
     OMEN: {
         DropReason.TOC: 117,
@@ -43,28 +43,30 @@ LINES_DROPPED = {
     },
 }
 PAGES_DROPPED = {ENVY: (3, 2), OMEN: (3, 3)}  # (TOC, index)
-EMPTY_SECTIONS = {ENVY: 32, OMEN: 0}
+EMPTY_SECTIONS = {ENVY: 34, OMEN: 0}
 # The language rules may only fire in ENVY's regulatory back matter (PDF 116-133).
 NON_ENGLISH_PAGES = {ENVY: {121, 122, 123, 124, 132, 133}, OMEN: set()}
 NON_LATIN_PAGES = {ENVY: {121, 123, 124, 125, 129, 130, 131, 132}, OMEN: set()}
 ICONS = {ENVY: 87, OMEN: 3}
-KEPT = {ENVY: 3099, OMEN: 2738}
+KEPT = {ENVY: 3095, OMEN: 2738}
 # Section mini-TOCs, lines per PDF page: a marker and a text line per item, plus
-# three lead-ins (PDF 86, 120, 122). 19 lists with 94 items, all in ENVY.
+# five lead-ins: colons on PDF 86, 120, 122, questions on PDF 95, 100.
+# 19 lists with 94 items, all in ENVY.
 SECTION_TOC_LINES = {
     ENVY: {
         8: 4, 10: 6, 14: 4, 32: 4, 46: 4, 53: 12, 58: 6, 74: 12, 86: 19,
-        93: 4, 95: 4, 100: 4, 102: 8, 106: 10, 120: 21, 122: 13, 123: 8, 126: 48,
+        93: 4, 95: 5, 100: 5, 102: 8, 106: 10, 120: 21, 122: 13, 123: 8, 126: 48,
     },
     OMEN: {},
 }  # fmt: skip
 SECTION_TOC_ITEMS = {ENVY: 94, OMEN: 0}
 NON_LATIN_TABLE_PAGES = {ENVY: {130}, OMEN: set()}
 # Sections emptied by cleaning; 6b added 8, 10, 14, 53, 74, 86, 93 and 122 (left
-# with only a mini-TOC), 130 (only the non-Latin table) and 133 (only a URL).
+# with only a mini-TOC), 130 (only the non-Latin table) and 133 (only a URL);
+# 6d added 95 and 100 (left with only a question lead-in).
 EMPTY_PAGES = {
     ENVY: {
-        7, 8, 10, 14, 23, 30, 42, 53, 60, 70, 74, 79, 84, 86, 93, 109,
+        7, 8, 10, 14, 23, 30, 42, 53, 60, 70, 74, 79, 84, 86, 93, 95, 100, 109,
         121, 122, 123, 124, 130, 131, 132, 133,
     },
     OMEN: set(),
