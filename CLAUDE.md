@@ -41,7 +41,8 @@ The PDFs are copyrighted by HP. Never commit them or large verbatim extracts. In
 | Search | Hybrid dense + BM25 with reciprocal rank fusion, then rerank top 20 down to 5 |
 | LLM | Anthropic API behind a provider interface; a deterministic stub provider for tests and load tests |
 | Chat history | Stored in Postgres; follow-up questions are rewritten into standalone queries before retrieval |
-| Users | Anonymous client ID per browser; schema ready for real auth later |
+| Users | Anonymous client ID per browser, kept by the Streamlit app in a URL query parameter and sent to the API as `X-Client-ID`; schema ready for real auth later |
+| Rate limiting | Chat endpoints limited per `X-Client-ID` (validated like `X-Request-ID`), falling back to client IP when absent |
 | Answers | English only, always with citations (document, section, page); explicit refusal when the answer is not in the documents; WARNING and CAUTION notes from the source are carried into answers |
 | Icons in PDFs | No vision pass. Button glyphs lost in text extraction are a documented known limitation |
 | Evaluation | Versioned golden dataset; retrieval metrics and LLM-judged generation metrics; ablation of chunking and search variants |
@@ -146,6 +147,24 @@ Rules:
 - Never commit generated artifacts, model caches, PDFs, `.env`, or load test raw output.
 - Do not push, force-push or rewrite history unless asked.
 
+## Conventions learned so far
+
+- Red runs: run new tests against a behavior-free skeleton and report how many
+  passed and why (expected: zero). Tighten tests that pass vacuously.
+- Every fix is its own `fix:` commit. When a line is uncovered, ask whether the
+  branch is needed before adding a test.
+- macOS ships GNU Make 3.81, which ignores .SHELLFLAGS: loops end with `|| exit 1`,
+  and Makefile changes are proven with a failure in the first project, not the last.
+- Never log user content: no request bodies, query strings, exception messages,
+  source lines in tracebacks, validation inputs or SQL parameters.
+- Pin everything: images by digest, actions by commit SHA, pre-commit hooks by SHA,
+  dependencies through lock files. Do not adopt a release in its first 5 days
+  (matches the Dependabot cooldown), except for security fixes.
+- Relax container hardening only after showing it breaks, and document why.
+- CI must not need .env: build images with `docker build`, not `docker compose build`.
+- Integration tests fail, never skip, when their services are missing.
+- Set the author identity repo-locally; never rely on the global git config.
+
 ## Working agreement
 
 - Stay inside the scope of the current phase. If something outside it looks necessary, stop and ask.
@@ -158,7 +177,7 @@ Rules:
 
 | Phase | Scope | Status |
 |---|---|---|
-| 0 | Foundation: repo, tooling, CI, compose skeleton, health endpoints | in progress |
+| 0 | Foundation: repo, tooling, CI, compose skeleton, health endpoints | done |
 | 1 | Ingestion: download, parse, clean, chunk, embed, upsert, manifest | pending |
 | 2 | Retrieval: hybrid search, reranker, golden set, retrieval metrics | pending |
 | 3 | Chat API: LLM gateway, prompt, citations, streaming, history | pending |
