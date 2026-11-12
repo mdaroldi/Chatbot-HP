@@ -59,13 +59,14 @@ coverage-summary: ## Markdown coverage tables (used for the CI job summary)
 		(cd $$project && uv run --frozen coverage report --format=markdown) || exit 1; echo; \
 	done
 
-# Marker expression for test-int. CI overrides it to skip the corpus tests (they
-# download the HP manuals) until a dedicated job with a cached download exists.
-TEST_INT_MARKERS ?= integration or corpus
+# Marker expression for test-int. CI overrides it to skip the corpus and model tests
+# (they download the HP manuals and the embedding models) until a dedicated job with
+# cached downloads exists.
+TEST_INT_MARKERS ?= integration or corpus or model
 
-test-int: ## Integration tests (real Postgres and Qdrant, needs Docker) and corpus tests
+test-int: ## Integration tests (real Postgres and Qdrant, needs Docker), corpus and model tests
 	$(TEST_COMPOSE) up -d --wait
-	status=0; (cd $(BACKEND) && uv run --frozen pytest tests/integration tests/corpus -m "$(TEST_INT_MARKERS)") \
+	status=0; (cd $(BACKEND) && uv run --frozen pytest tests/integration tests/corpus tests/embeddings -m "$(TEST_INT_MARKERS)") \
 		|| status=$$?; $(TEST_COMPOSE) down -v; exit $$status
 
 security: ## bandit, pip-audit (both lock files), gitleaks

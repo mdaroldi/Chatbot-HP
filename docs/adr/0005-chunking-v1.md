@@ -46,8 +46,8 @@ tokens and for counting differences.
 - A word or a table row that fits no chunk raises `ChunkTooLargeError`, naming the
   document, section path and token count: nothing is silently cut or left over the
   limit.
-- **Merging:** a section under `CHUNK_MIN_TOKENS` (50 for v1, re-measured with the
-  real tokenizer) absorbs the next section with the same parent while it stays under
+- **Merging:** a section under `CHUNK_MIN_TOKENS` (65 tokens for v1; see Corrections
+  after implementation) absorbs the next section with the same parent while it stays under
   the minimum and the result fits the limit. A merged chunk carries the **parent's
   path**, the deepest path true for all of its text, and each member's title as a
   heading line, so the citation never names a section that only part of the chunk
@@ -116,3 +116,21 @@ OMEN PDF 3-4), which v1 first left out of the index. PDF page numbers.
   page is null and citations use the PDF page.
 - Measured: ENVY 1 chunk (PDF 2), OMEN 2 chunks (PDF 3 and 4); not indexed: ENVY 15
   and OMEN 83 lines on PDF 1-2.
+
+### Real tokenizer (Phase 1, commit 7)
+
+- **Counter:** `FastembedTokenCounter` counts with the dense model's own tokenizer
+  (fastembed loads it without the ONNX session). Counts include `[CLS]` and `[SEP]`, so
+  the limit is a little stricter than the text alone. They saturate at the model's
+  512-token input: a longer text counts as 512, which is still over the limit.
+  `[icon]` costs 3 tokens.
+- **Model build:** fastembed serves `BAAI/bge-small-en-v1.5` from Qdrant's quantized
+  ONNX export (`Qdrant/bge-small-en-v1.5-onnx-Q`), with the original tokenizer.
+- **Limit holds:** with 450 and the real counts, no chunk of either manual exceeds the
+  limit and `ChunkTooLargeError` never fires (largest: ENVY 442, OMEN 450). The
+  word-counting stand-in had let chunks reach the 512 cap.
+- **Merge floor re-measured:** the earlier floor of 50 counted words. Text runs at
+  about 1.27 tokens per word (median over all sections). 65 tokens is the floor that
+  best reproduces the 50-word merges: 25 mergeable sections fall under each floor,
+  and the two sets differ by one section each way.
+- Measured with 450 and 65: ENVY 149 chunks, OMEN 141.

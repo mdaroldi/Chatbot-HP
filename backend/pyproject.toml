@@ -8,6 +8,7 @@ dependencies = [
     "alembic>=1.20.1",
     "asyncpg>=0.32.0",
     "fastapi>=0.162.5",
+    "fastembed>=0.9.1",
     "httpx>=0.28.1",
     "pdfplumber>=0.11.10",
     "pydantic-settings>=2.16.2",
@@ -35,7 +36,11 @@ package = false
 # pypdfium2 comes with pdfplumber (unused for text). 5.15.1 (2026-11-07) and 5.15.2
 # (2026-11-09) were under 5 days old when adopted on 2026-11-12, so the newest
 # allowed release is pinned; lift this once a newer release has passed the cooldown.
-constraint-dependencies = ["pypdfium2==5.15.0"]
+# loguru comes with fastembed. 0.8.0 (2026-11-11) was under 5 days old when adopted on
+# 2026-11-12 (fastembed 0.9.1 also caps it below 0.8); lift this after the cooldown.
+# filelock comes with huggingface-hub; 4.2.10 (2026-11-09, a bug fix, no advisory) was
+# under 5 days old on 2026-11-12, so 4.2.9 is pinned; lift this after the cooldown.
+constraint-dependencies = ["pypdfium2==5.15.0", "loguru==0.7.3", "filelock==4.2.9"]
 
 # ---------------------------------------------------------------- ruff
 [tool.ruff]
@@ -84,6 +89,7 @@ addopts = "-ra --strict-markers --strict-config"
 markers = [
   "integration: needs real Postgres and Qdrant containers",
   "corpus: needs the real HP manuals (downloaded and verified into CORPUS_DIR)",
+  "model: needs the real embedding models (downloaded into EMBEDDING_CACHE_DIR)",
 ]
 filterwarnings = ["error"]
 

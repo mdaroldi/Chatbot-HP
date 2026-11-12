@@ -121,6 +121,22 @@ class Settings(BaseSettings):
         description="Per-phase HTTP timeout and total deadline for one PDF download.",
     )
 
+    embedding_dense_model: str = Field(
+        default="BAAI/bge-small-en-v1.5",
+        min_length=1,
+        description="fastembed dense model; its tokenizer also measures chunk size.",
+    )
+    embedding_sparse_model: str = Field(
+        default="Qdrant/bm25", min_length=1, description="fastembed sparse model."
+    )
+    embedding_cache_dir: Path = Field(
+        default=Path("models"),
+        description="Cache directory for the downloaded embedding models; reused offline.",
+    )
+    embedding_batch_size: int = Field(
+        default=32, ge=1, le=1024, description="Texts per embedding batch (bounds memory)."
+    )
+
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
     def _parse_cors_origins(cls, value: object) -> list[str]:

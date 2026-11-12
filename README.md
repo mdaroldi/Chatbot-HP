@@ -86,6 +86,10 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `CORPUS_DIR` | `corpus` | Cache directory for the verified source PDFs; reused offline. |
 | `CORPUS_MAX_BYTES` | `33554432` | Largest accepted source PDF, in bytes. |
 | `CORPUS_DOWNLOAD_TIMEOUT_SECONDS` | `120.0` | Per-phase HTTP timeout and total deadline for one PDF download. |
+| `EMBEDDING_DENSE_MODEL` | `BAAI/bge-small-en-v1.5` | fastembed dense model; its tokenizer also measures chunk size. |
+| `EMBEDDING_SPARSE_MODEL` | `Qdrant/bm25` | fastembed sparse model. |
+| `EMBEDDING_CACHE_DIR` | `models` | Cache directory for the downloaded embedding models; reused offline. |
+| `EMBEDDING_BATCH_SIZE` | `32` | Texts per embedding batch (bounds memory). |
 <!-- settings-table:end -->
 
 A unit test fails if this table, `.env.example` and the `Settings` class disagree.

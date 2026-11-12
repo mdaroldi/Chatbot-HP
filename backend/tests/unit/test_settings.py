@@ -302,3 +302,44 @@ def test_corpus_limits_are_bounded(monkeypatch: pytest.MonkeyPatch, name: str, v
 
     with pytest.raises(ValidationError, match=name.lower()):
         Settings()
+
+
+def test_embedding_defaults_are_the_approved_local_models() -> None:
+    settings = Settings()
+
+    assert settings.embedding_dense_model == "BAAI/bge-small-en-v1.5"
+    assert settings.embedding_sparse_model == "Qdrant/bm25"
+    assert settings.embedding_cache_dir == pathlib.Path("models")
+    assert settings.embedding_batch_size == 32
+
+
+def test_embedding_settings_are_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EMBEDDING_DENSE_MODEL", "BAAI/bge-base-en-v1.5")
+    monkeypatch.setenv("EMBEDDING_SPARSE_MODEL", "prithivida/Splade_PP_en_v1")
+    monkeypatch.setenv("EMBEDDING_CACHE_DIR", "/var/cache/models")
+    monkeypatch.setenv("EMBEDDING_BATCH_SIZE", "8")
+
+    settings = Settings()
+
+    assert settings.embedding_dense_model == "BAAI/bge-base-en-v1.5"
+    assert settings.embedding_sparse_model == "prithivida/Splade_PP_en_v1"
+    assert settings.embedding_cache_dir == pathlib.Path("/var/cache/models")
+    assert settings.embedding_batch_size == 8
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("EMBEDDING_DENSE_MODEL", ""),
+        ("EMBEDDING_SPARSE_MODEL", ""),
+        ("EMBEDDING_BATCH_SIZE", "0"),
+        ("EMBEDDING_BATCH_SIZE", "1025"),
+    ],
+)
+def test_embedding_settings_are_bounded(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError, match=name.lower()):
+        Settings()

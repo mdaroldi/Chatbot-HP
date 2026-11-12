@@ -33,8 +33,8 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 | 6b | `feat(ingestion): drop navigation and table residue` (section mini-TOCs, non-Latin table residue, URL-only sections; see "Commits 6b to 6d") | done |
 | 6c | `feat(ingestion): index front-matter safety and notice content` (with the ADR 0005 update) | done |
 | 6d | `feat(ingestion): treat question lead-ins of mini-TOCs as part of the list` (see "Commits 6b to 6d") | done |
-| 7 | `feat(ingestion): fastembed embedder and token counter` (with the corpus test of the real 450-token limit, and `CHUNK_MIN_TOKENS` re-measured with the real tokenizer) | next |
-| 8 | `feat(ingestion): Qdrant versioned collection and alias swap` | pending |
+| 7 | `feat(ingestion): fastembed embedder and token counter` (with the corpus test of the real 450-token limit, and `CHUNK_MIN_TOKENS` re-measured with the real tokenizer) | done (`app/infra/fastembed_{embedder,tokens}.py`; `CHUNK_MIN_TOKENS` 65, see ADR 0005 corrections) |
+| 8 | `feat(ingestion): Qdrant versioned collection and alias swap` | next |
 | 9 | `feat(db): index_builds manifest (migration 0002)` | pending |
 | 10 | `feat(ingestion): pipeline, CLI, migrate and ingest services, make ingest/inspect-chunks` (with the startup-order ADR and CLAUDE.md update, and the chunk-ID digest corpus test) | pending |
 | 11 | `ci: corpus job with cached download` | pending |
@@ -42,7 +42,10 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 
 Corpus tests land in the commit of the stage they test (item 10), not all at once. They carry
 the `corpus` marker; `make test-int` runs them, and the CI integration job excludes them
-(`-m "integration and not corpus"`) until commit 11 adds the cached corpus job.
+(`-m "integration and not corpus"`) until commit 11 adds the cached corpus job. Tests of
+the real embedding models (`tests/embeddings/`) carry the `model` marker, and so do corpus
+tests that need a model. The CI expression already leaves them out, because they are not
+marked `integration`; commit 11 caches `EMBEDDING_CACHE_DIR` and runs them.
 
 **Phase 3 note:** chunk text contains `[icon]` where the manual shows a button glyph
 (commit 4b). The Phase 3 system prompt must tell the model what `[icon]` means (an
@@ -112,9 +115,10 @@ its first child section.
 | cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause | via pdfminer.six (encrypted PDFs) |
 | cffi | 2.1.1 | MIT-0 | via cryptography |
 | pycparser | 3.12 | BSD-3-Clause | via cffi |
-| fastembed | 0.9.1 | Apache-2.0 | onnxruntime (MIT), tokenizers (Apache-2.0), huggingface-hub (Apache-2.0), numpy (BSD-3), py-rust-stemmers (MIT), mmh3 (MIT) |
-| loguru | 0.7.3 | MIT | pulled by fastembed; 0.8.0 too new |
-| tqdm | via fastembed | MPL-2.0 AND MIT | file-level copyleft, used unmodified; flagged to the user |
+| fastembed | 0.9.1 | Apache-2.0 | adopted 2026-11-12 (released 2026-10-24); new at runtime with it: onnxruntime 1.31.1 (MIT), tokenizers 0.23.3 (Apache-2.0), huggingface-hub 1.33.0 (Apache-2.0; fastembed caps it below 2.0), hf-xet 1.8.0 (Apache-2.0), numpy 2.5.4 (BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0), py-rust-stemmers 0.1.8 (MIT, from the repository; no license in its metadata), mmh3 5.3.1 (MIT), flatbuffers 25.12.19 (Apache-2.0), protobuf 7.36.2 (BSD-3), fsspec 2026.9.0 (BSD-3), requests 2.34.2 (Apache-2.0), urllib3 2.8.0 (MIT), packaging 26.3 (Apache-2.0 OR BSD-2), pyyaml 6.0.3 (MIT), colorama 0.4.6 (BSD-3), win32-setctime 1.2.1 (MIT, Windows only) |
+| loguru | 0.7.3 | MIT | pulled by fastembed; 0.8.0 too new, pinned by a commented `constraint-dependencies` entry (fastembed also caps it below 0.8) |
+| filelock | 4.2.9 | MIT | pulled by huggingface-hub (already a dev dependency); 4.2.10 (2026-11-09, bug fix, no advisory) too new, pinned by a commented `constraint-dependencies` entry |
+| tqdm | 4.70.1 | MPL-2.0 AND MIT | via fastembed; file-level copyleft, used unmodified; flagged to the user |
 | qdrant-client | 1.20.0 | Apache-2.0 | grpcio (Apache-2.0), protobuf (BSD-3), portalocker (BSD-3) |
 | aiosqlite | dev group only | MIT | manifest repository unit tests |
 
@@ -266,12 +270,12 @@ Layers (dependency rule unchanged):
   counted with the bge-small tokenizer.
 - Procedures split at step boundaries, repeating the section title with "(continued)".
 - One table per chunk; when split, the header row is repeated and rows are never cut.
-- Sections under `CHUNK_MIN_TOKENS` (50) merge into the next section under the same parent;
+- Sections under `CHUNK_MIN_TOKENS` (65 tokens, re-measured at commit 7) merge into the next section under the same parent;
   the merged chunk carries the parent's path and each member's title (ADR 0005).
 - A chunk holds at most one table; a word or row that fits no chunk raises
   `ChunkTooLargeError` instead of overflowing.
 - The chunker takes the limits as arguments; the `CHUNK_*` settings are wired in commit 10.
-- The corpus test of the real 450-token limit lands in commit 7 with the tokenizer.
+- The corpus test of the real 450-token limit landed in commit 7 with the tokenizer.
 - WARNING/CAUTION stays with its step and sets `has_warning`.
 - Payload: doc_id, product, section_path, chapter, pdf_page_start/end,
   printed_page_start/end, content_type (procedure|table|reference|specs|parts|front_matter|
