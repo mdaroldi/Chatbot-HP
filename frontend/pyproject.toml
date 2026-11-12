@@ -1,0 +1,69 @@
+[project]
+name = "hp-docs-frontend"
+version = "0.1.0"
+description = "Streamlit UI for the HP Docs RAG chatbot"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+dependencies = [
+    "httpx>=0.28.1",
+    "pydantic-settings>=2.16.2",
+    "streamlit>=1.67.0",
+]
+
+[dependency-groups]
+dev = [
+    "bandit>=1.9.4",
+    "mypy>=2.4.1",
+    "pip-audit>=2.10.1",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.4",
+]
+
+[tool.uv]
+# Application, not a library: dependencies are installed, the code is not packaged.
+package = false
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["."]
+
+[tool.ruff.lint]
+select = [
+  "E", "W", "F", "I", "B", "UP", "N", "S", "C4", "SIM", "RUF",
+  "PT", "RET", "ARG", "PL", "TRY", "ERA", "T20",
+]
+ignore = [
+  "PLR2004", # magic values are fine in tests and HTTP status checks
+  "TRY003",  # explicit exception messages are clearer than a subclass per message
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+files = ["app.py", "hpdocs_ui", "tests"]
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers --strict-config"
+filterwarnings = ["error"]
+
+# ---------------------------------------------------------------- coverage
+[tool.coverage.run]
+branch = true
+source = ["."]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true

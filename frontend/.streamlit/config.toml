@@ -1,0 +1,8 @@
+# Streamlit server configuration. XSRF and CORS protection keep their secure defaults.
+
+[browser]
+# Do not send usage statistics to Streamlit.
+gatherUsageStats = false
+
+[server]
+headless = true

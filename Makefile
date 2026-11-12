@@ -3,6 +3,8 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 BACKEND := backend
+FRONTEND := frontend
+PROJECTS := $(BACKEND) $(FRONTEND)
 TEST_COMPOSE := docker compose -f docker-compose.test.yml
 GITLEAKS_IMAGE := zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
 
@@ -12,28 +14,36 @@ help: ## List available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
 
 setup: ## Install dependencies and pre-commit hooks
-	uv sync --frozen --project $(BACKEND)
+	for project in $(PROJECTS); do uv sync --frozen --project $$project; done
 
-lint: ## ruff check + ruff format --check
-	cd $(BACKEND) && uv run --frozen ruff check . && uv run --frozen ruff format --check .
+lint: ## ruff check + ruff format --check (backend and frontend)
+	for project in $(PROJECTS); do \
+		(cd $$project && uv run --frozen ruff check . && uv run --frozen ruff format --check .); \
+	done
 
-format: ## Apply ruff fixes and formatting
-	cd $(BACKEND) && uv run --frozen ruff check --fix . && uv run --frozen ruff format .
+format: ## Apply ruff fixes and formatting (backend and frontend)
+	for project in $(PROJECTS); do \
+		(cd $$project && uv run --frozen ruff check --fix . && uv run --frozen ruff format .); \
+	done
 
-typecheck: ## mypy --strict
-	cd $(BACKEND) && uv run --frozen mypy
+typecheck: ## mypy --strict (backend and frontend)
+	for project in $(PROJECTS); do (cd $$project && uv run --frozen mypy); done
 
-test: ## Unit tests with branch coverage gate (fail under 90)
+test: ## Unit tests with branch coverage gate, fail under 90 (backend and frontend)
 	cd $(BACKEND) && uv run --frozen pytest tests/unit --cov --cov-report=term-missing
+	cd $(FRONTEND) && uv run --frozen pytest --cov --cov-report=term-missing
 
 test-int: ## Integration tests against real Postgres and Qdrant (needs Docker)
 	$(TEST_COMPOSE) up -d --wait
-	cd $(BACKEND) && uv run --frozen pytest tests/integration -m integration; \
-	status=$$?; cd .. && $(TEST_COMPOSE) down -v; exit $$status
+	status=0; (cd $(BACKEND) && uv run --frozen pytest tests/integration -m integration) \
+		|| status=$$?; $(TEST_COMPOSE) down -v; exit $$status
 
-security: ## bandit, pip-audit, gitleaks
+security: ## bandit, pip-audit (both lock files), gitleaks
 	cd $(BACKEND) && uv run --frozen bandit -q -c pyproject.toml -r app
-	cd $(BACKEND) && uv run --frozen pip-audit --strict --progress-spinner off
+	cd $(FRONTEND) && uv run --frozen bandit -q -r app.py hpdocs_ui
+	for project in $(PROJECTS); do \
+		(cd $$project && uv run --frozen pip-audit --strict --progress-spinner off); \
+	done
 	docker run --rm -v "$(CURDIR)":/repo $(GITLEAKS_IMAGE) git /repo --redact --no-banner
 
 up: ## docker compose up

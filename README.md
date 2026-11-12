@@ -36,6 +36,13 @@ cd backend
 uv run uvicorn app.main:create_app --factory --no-server-header
 ```
 
+Run the Streamlit UI locally (`BACKEND_URL` defaults to the compose service, `http://backend:8000`):
+
+```bash
+cd frontend
+BACKEND_URL=http://localhost:8000 uv run streamlit run app.py
+```
+
 ## Architecture
 
 See [docs/adr](docs/adr) for the architecture decision records.
