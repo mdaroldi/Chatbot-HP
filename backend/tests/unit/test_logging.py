@@ -3,6 +3,7 @@
 import json
 import logging
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,8 +27,8 @@ def make_record(
     return record
 
 
-def render(record: logging.LogRecord) -> dict[str, Any]:
-    line = JsonFormatter().format(record)
+def render(record: logging.LogRecord, *, include_messages: bool = False) -> dict[str, Any]:
+    line = JsonFormatter(include_exception_messages=include_messages).format(record)
     assert "\n" not in line
     assert "\r" not in line
     parsed: dict[str, Any] = json.loads(line)
@@ -69,21 +70,163 @@ def test_newlines_and_quotes_in_message_stay_on_one_line() -> None:
     assert parsed["message"] == message
 
 
-def fail_with_multiline_error() -> None:
-    raise ValueError("boom\nwith newline")
+USER_TEXT = "secret user text"
+
+
+class CustomError(Exception):
+    pass
+
+
+def raise_secret() -> None:
+    raise ValueError(USER_TEXT)
+
+
+def capture(fn: Callable[[], None]) -> logging.LogRecord:
+    try:
+        fn()
+    except BaseException:
+        return make_record("failed", exc_info=sys.exc_info())
+    raise AssertionError("expected an exception")
 
 
 def test_exception_is_serialized_on_the_same_line() -> None:
-    try:
-        fail_with_multiline_error()
-    except ValueError:
-        record = make_record("failed", exc_info=sys.exc_info())
+    def multiline() -> None:
+        raise ValueError("boom\nwith newline")
 
-    parsed = render(record)
+    parsed = render(capture(multiline), include_messages=True)
 
+    assert parsed["exception"]["message"] == "boom\nwith newline"
+
+
+def test_exception_logs_type_and_frames_but_not_message_by_default() -> None:
+    record = capture(raise_secret)
+    line = JsonFormatter().format(record)
+    parsed = json.loads(line)
+
+    assert USER_TEXT not in line
     assert parsed["exception_type"] == "ValueError"
-    assert "Traceback (most recent call last)" in parsed["exception"]
-    assert "ValueError: boom" in parsed["exception"]
+    exception = parsed["exception"]
+    assert exception["type"] == "ValueError"
+    assert "message" not in exception
+    assert [frame["function"] for frame in exception["frames"]][-2:] == [
+        "capture",
+        "raise_secret",
+    ]
+
+
+def test_frames_carry_location_only_never_source_lines() -> None:
+    """The source line of `raise ValueError(USER_TEXT)` would leak a literal."""
+    frames = render(capture(raise_secret))["exception"]["frames"]
+
+    assert all(frame.keys() == {"file", "line", "function"} for frame in frames)
+    assert frames[-1]["file"].endswith("test_logging.py")
+    assert isinstance(frames[-1]["line"], int)
+
+
+def test_explicit_cause_is_included_and_redacted() -> None:
+    def chained() -> None:
+        try:
+            raise_secret()
+        except ValueError as exc:
+            raise RuntimeError("outer secret user text") from exc
+
+    record = capture(chained)
+    line = JsonFormatter().format(record)
+    exception = json.loads(line)["exception"]
+
+    assert "secret user text" not in line
+    assert exception["type"] == "RuntimeError"
+    assert exception["cause"]["type"] == "ValueError"
+    assert exception["cause"]["frames"][-1]["function"] == "raise_secret"
+    assert "context" not in exception
+
+
+def test_implicit_context_is_included_and_redacted() -> None:
+    def during_handling() -> None:
+        try:
+            raise_secret()
+        except ValueError:
+            raise KeyError("context secret user text")  # noqa: B904 - implicit context on purpose
+
+    line = JsonFormatter().format(capture(during_handling))
+    exception = json.loads(line)["exception"]
+
+    assert "secret user text" not in line
+    assert exception["type"] == "KeyError"
+    assert exception["context"]["type"] == "ValueError"
+
+
+def test_suppressed_context_is_omitted() -> None:
+    def suppressed() -> None:
+        try:
+            raise_secret()
+        except ValueError:
+            raise KeyError("x") from None
+
+    exception = render(capture(suppressed))["exception"]
+
+    assert exception["type"] == "KeyError"
+    assert "context" not in exception
+    assert "cause" not in exception
+
+
+def test_exception_group_members_are_included_and_redacted() -> None:
+    def group() -> None:
+        try:
+            raise_secret()
+        except ValueError as inner:
+            raise ExceptionGroup("group secret user text", [inner, CustomError(USER_TEXT)])  # noqa: B904
+
+    line = JsonFormatter().format(capture(group))
+    exception = json.loads(line)["exception"]
+
+    assert "secret user text" not in line
+    assert exception["type"] == "ExceptionGroup"
+    assert [member["type"] for member in exception["exceptions"]] == [
+        "ValueError",
+        "tests.unit.test_logging.CustomError",
+    ]
+
+
+def test_exception_notes_are_redacted_by_default() -> None:
+    def noted() -> None:
+        error = ValueError("x")
+        error.add_note(USER_TEXT)
+        raise error
+
+    line = JsonFormatter().format(capture(noted))
+
+    assert USER_TEXT not in line
+
+
+def test_cyclic_exception_chain_terminates() -> None:
+    def cyclic() -> None:
+        first, second = ValueError("a"), KeyError("b")
+        first.__context__ = second
+        second.__context__ = first
+        raise first
+
+    exception = render(capture(cyclic))["exception"]
+
+    assert exception["type"] == "ValueError"
+    assert exception["context"]["type"] == "KeyError"
+    assert "context" not in exception["context"]
+
+
+def test_flag_restores_messages_and_notes_across_the_chain() -> None:
+    def chained() -> None:
+        error = ValueError(USER_TEXT)
+        error.add_note("a note")
+        try:
+            raise error
+        except ValueError as exc:
+            raise RuntimeError("outer") from exc
+
+    exception = render(capture(chained), include_messages=True)["exception"]
+
+    assert exception["message"] == "outer"
+    assert exception["cause"]["message"] == USER_TEXT
+    assert exception["cause"]["notes"] == ["a note"]
 
 
 def test_extra_fields_are_included() -> None:
@@ -140,6 +283,17 @@ def test_configure_logging_silences_loggers_that_log_full_urls(name: str) -> Non
     configure_logging("DEBUG")
 
     assert logging.getLogger(name).level == logging.WARNING
+
+
+@pytest.mark.parametrize("include", [False, True])
+def test_configure_logging_passes_exception_message_flag_to_formatter(
+    restore_logging: logging.Logger, include: bool
+) -> None:
+    configure_logging("INFO", include_exception_messages=include)
+
+    formatter = restore_logging.handlers[0].formatter
+    assert isinstance(formatter, JsonFormatter)
+    assert formatter.include_exception_messages is include
 
 
 def test_configure_logging_writes_to_stdout(capsys: pytest.CaptureFixture[str]) -> None:

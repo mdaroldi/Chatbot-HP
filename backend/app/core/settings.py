@@ -5,7 +5,7 @@ from functools import lru_cache
 from typing import Annotated
 from urllib.parse import quote, urlsplit
 
-from pydantic import Field, HttpUrl, SecretStr, field_validator
+from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 _ALLOWED_ORIGIN_SCHEMES = frozenset({"http", "https"})
@@ -52,6 +52,8 @@ class Settings(BaseSettings):
 
     app_env: Environment = Environment.DEVELOPMENT
     log_level: LogLevel = LogLevel.INFO
+    # Exception messages often contain user input; local debugging only.
+    log_include_exception_messages: bool = False
     cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:8501"]
     # Interactive docs and the OpenAPI schema; disable to shrink the public surface.
     api_docs_enabled: bool = True
@@ -78,6 +80,12 @@ class Settings(BaseSettings):
         if any(not origin for origin in origins):
             raise ValueError("cors_allowed_origins must not contain empty entries")
         return [_normalize_origin(origin) for origin in origins]
+
+    @model_validator(mode="after")
+    def _no_exception_messages_in_production(self) -> "Settings":
+        if self.app_env is Environment.PRODUCTION and self.log_include_exception_messages:
+            raise ValueError("log_include_exception_messages=true is not allowed in production")
+        return self
 
     @property
     def postgres_dsn(self) -> SecretStr:

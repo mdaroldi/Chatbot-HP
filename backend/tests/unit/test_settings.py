@@ -30,6 +30,30 @@ def test_api_docs_can_be_toggled_from_environment(
     assert Settings().api_docs_enabled is expected
 
 
+def test_exception_messages_are_excluded_from_logs_by_default() -> None:
+    assert Settings().log_include_exception_messages is False
+
+
+@pytest.mark.parametrize("env", ["development", "test"])
+def test_exception_messages_can_be_enabled_outside_production(
+    monkeypatch: pytest.MonkeyPatch, env: str
+) -> None:
+    monkeypatch.setenv("APP_ENV", env)
+    monkeypatch.setenv("LOG_INCLUDE_EXCEPTION_MESSAGES", "true")
+
+    assert Settings().log_include_exception_messages is True
+
+
+def test_exception_messages_in_logs_are_rejected_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("LOG_INCLUDE_EXCEPTION_MESSAGES", "true")
+
+    with pytest.raises(ValidationError, match="not allowed in production"):
+        Settings()
+
+
 def test_invalid_api_docs_flag_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_DOCS_ENABLED", "maybe")
 

@@ -228,7 +228,7 @@ async def test_unhandled_exception_is_logged_once_with_request_id(
     assert len(errors) == 1
     assert errors[0]["request_id"] == VALID_ID
     assert errors[0]["exception_type"] == "RuntimeError"
-    assert "kaboom" in errors[0]["exception"]
+    assert "kaboom" not in json.dumps(errors[0])
 
 
 async def test_exception_after_response_started_is_reraised() -> None:

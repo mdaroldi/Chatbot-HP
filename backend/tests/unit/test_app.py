@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 import app.main
 from app.core.errors import AppError
+from app.core.logging import JsonFormatter
 from app.core.middleware import REQUEST_ID_HEADER
 from app.core.settings import LogLevel
 from app.main import create_app
@@ -315,6 +316,16 @@ def test_create_app_without_arguments_reads_settings_from_environment(
     application = create_app()
 
     assert application.openapi_url is None
+
+
+def test_create_app_passes_exception_message_flag_to_logging(
+    make_settings: SettingsFactory,
+) -> None:
+    create_app(make_settings(log_include_exception_messages=True))
+
+    formatter = logging.getLogger().handlers[0].formatter
+    assert isinstance(formatter, JsonFormatter)
+    assert formatter.include_exception_messages is True
 
 
 def test_create_app_configures_logging_level(make_settings: SettingsFactory) -> None:

@@ -20,7 +20,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     preflights and rejections also get a request ID and an access log line.
     """
     settings = settings or get_settings()
-    configure_logging(settings.log_level)
+    configure_logging(
+        settings.log_level,
+        include_exception_messages=settings.log_include_exception_messages,
+    )
 
     docs = settings.api_docs_enabled
     app = FastAPI(
