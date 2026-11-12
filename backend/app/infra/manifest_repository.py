@@ -46,6 +46,7 @@ def _to_row(build: IndexBuild) -> IndexBuildRow:
             {"kind": w.kind.value, "collection": w.collection, "error_type": w.error_type}
             for w in build.warnings
         ],
+        error_type=build.error_type,
     )
 
 
@@ -67,6 +68,7 @@ def _to_build(row: IndexBuildRow) -> IndexBuild:
             BuildWarning(BuildWarningKind(w["kind"]), w["collection"], w["error_type"])
             for w in row.warnings
         ),
+        error_type=row.error_type,
     )
 
 

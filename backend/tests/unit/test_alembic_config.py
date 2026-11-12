@@ -73,7 +73,11 @@ def migration_files() -> list[pathlib.Path]:
     return sorted(VERSIONS.glob("*.py"))
 
 
-EXPECTED_MIGRATIONS = (("0001", "baseline", None), ("0002", "index_builds", "0001"))
+EXPECTED_MIGRATIONS = (
+    ("0001", "baseline", None),
+    ("0002", "index_builds", "0001"),
+    ("0003", "index_builds_error_type", "0002"),
+)
 
 
 def assigned_string(tree: ast.Module, name: str) -> str | None:

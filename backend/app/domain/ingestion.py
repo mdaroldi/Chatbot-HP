@@ -427,7 +427,9 @@ class IndexBuild:
     """Manifest entry: what produced a collection, so builds are traceable.
 
     Only builds that started have an entry (ADR 0006): a build that failed partway
-    may have counted only some documents, but a succeeded one counts all of them.
+    may have counted only some documents, but a succeeded one counts all of them. A
+    failed build names its exception type, never the message, which may hold user
+    content or server details (as in BuildWarning).
     """
 
     build_id: str
@@ -441,6 +443,7 @@ class IndexBuild:
     chunk_counts: Mapping[str, int]
     drop_stats: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
     warnings: tuple[BuildWarning, ...] = ()
+    error_type: str | None = None
 
     def __post_init__(self) -> None:
         _require(
@@ -455,6 +458,17 @@ class IndexBuild:
         )
         _require(_non_blank(self.chunking_version), "chunking_version must not be blank")
         self._check_chunk_counts()
+        self._check_error_type()
+
+    def _check_error_type(self) -> None:
+        if self.status is BuildStatus.SUCCEEDED:
+            _require(self.error_type is None, "a succeeded build has no error_type")
+            return
+        _require(self.error_type is not None, "a failed build names its error_type")
+        _require(
+            bool(_TYPE_NAME.fullmatch(self.error_type or "")),
+            "error_type must be an exception type name",
+        )
 
     def _check_chunk_counts(self) -> None:
         counted, documents = self.chunk_counts.keys(), self.document_hashes.keys()

@@ -36,3 +36,10 @@ def make_build(build_id: str = "20261112t143005z", **overrides: object) -> Index
         warnings=(BuildWarning(BuildWarningKind.PRUNE_FAILED, "hpdocs_chunks_v1_old", "OSError"),),
     )
     return replace(build, **overrides)  # type: ignore[arg-type]  # test data
+
+
+def make_failed_build(
+    build_id: str = "20261112t150000z", error_type: str = "OSError", **overrides: object
+) -> IndexBuild:
+    """A build that started and stopped, which must name its exception type."""
+    return make_build(build_id, status=BuildStatus.FAILED, error_type=error_type, **overrides)

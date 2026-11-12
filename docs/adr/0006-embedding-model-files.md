@@ -146,3 +146,14 @@ checked on 2026-11-12. The revisions are the ones pinned first.
   `token` and `key` lines in another file are still reported. The pre-commit hook,
   `make security` and CI (which runs `make security`) all read the root file; a unit
   test pins its content.
+
+### Failed builds (Phase 1, commit 9c)
+
+- **`index_builds.error_type`** (migration 0003, nullable): the exception type name of a
+  failed build, never its message, as in a build warning. `IndexBuild` requires it for
+  `failed` and rejects it for `succeeded`; the check `ck_index_builds_error_type_status`,
+  `(status = 'failed') = (error_type IS NOT NULL)`, enforces the same rule in the
+  database. The allowed status values stay with `ck_index_builds_status`, so each check
+  tests one rule.
+- `alembic check` compares columns, not check constraints; the Postgres integration
+  tests prove the check, its upgrade and its downgrade.

@@ -5,25 +5,32 @@ from collections.abc import AsyncIterator
 from datetime import UTC
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.domain.ingestion import BuildStatus
 from app.infra.db import create_engine, create_session_factory
 from app.infra.manifest_repository import SqlManifestStore
+from app.infra.orm import IndexBuildRow
 from tests.integration.conftest import SettingsFactory, run_alembic
-from tests.manifest_data import make_build
+from tests.manifest_data import make_build, make_failed_build
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-async def store(
+async def sessions(
     scratch_db: str, make_settings: SettingsFactory, tmp_path: pathlib.Path
-) -> AsyncIterator[SqlManifestStore]:
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     run_alembic(scratch_db, "upgrade", "head", cwd=tmp_path)
     engine = create_engine(make_settings(postgres_db=scratch_db))
-    yield SqlManifestStore(create_session_factory(engine))
+    yield create_session_factory(engine)
     await engine.dispose()
+
+
+@pytest.fixture
+def store(sessions: async_sessionmaker[AsyncSession]) -> SqlManifestStore:
+    return SqlManifestStore(sessions)
 
 
 async def test_recorded_build_reads_back_unchanged(store: SqlManifestStore) -> None:
@@ -40,7 +47,7 @@ async def test_recorded_build_reads_back_unchanged(store: SqlManifestStore) -> N
 
 async def test_failed_build_is_never_returned_as_successful(store: SqlManifestStore) -> None:
     succeeded = make_build("20261112t143005z")
-    failed = make_build("20261112t150000z", status=BuildStatus.FAILED)
+    failed = make_failed_build("20261112t150000z")
 
     await store.record(succeeded)
     await store.record(failed)
@@ -54,6 +61,17 @@ async def test_a_build_is_recorded_once(store: SqlManifestStore) -> None:
     await store.record(build)
 
     with pytest.raises(IntegrityError):
-        await store.record(make_build(status=BuildStatus.FAILED))
+        await store.record(make_failed_build(make_build().build_id))
 
     assert await store.latest_successful(build.collection) == build
+
+
+async def test_failed_build_keeps_its_error_type(
+    store: SqlManifestStore, sessions: async_sessionmaker[AsyncSession]
+) -> None:
+    await store.record(make_build())
+    await store.record(make_failed_build(error_type="UnexpectedResponse"))
+
+    async with sessions() as session:
+        rows = (await session.execute(select(IndexBuildRow.status, IndexBuildRow.error_type))).all()
+    assert sorted(rows) == [("failed", "UnexpectedResponse"), ("succeeded", None)]

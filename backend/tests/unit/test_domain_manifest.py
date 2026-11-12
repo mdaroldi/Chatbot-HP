@@ -144,15 +144,44 @@ def test_index_build_rejects_invalid_values(field: str, value: object, message: 
 
 def test_failed_build_may_stop_before_every_document_is_chunked() -> None:
     # The same counts are rejected for a succeeded build (above).
-    build = index_build(status=BuildStatus.FAILED, chunk_counts={"demo-guide": 7})
+    build = index_build(
+        status=BuildStatus.FAILED, error_type="OSError", chunk_counts={"demo-guide": 7}
+    )
 
     assert build.chunk_count == 7
 
 
 def test_failed_build_may_have_no_chunks() -> None:
-    build = index_build(status=BuildStatus.FAILED, chunk_counts={})
+    build = index_build(status=BuildStatus.FAILED, error_type="OSError", chunk_counts={})
 
     assert build.chunk_count == 0
+
+
+def test_failed_build_names_its_error_type() -> None:
+    build = index_build(status=BuildStatus.FAILED, error_type="UnexpectedResponse")
+
+    assert build.error_type == "UnexpectedResponse"
+
+
+def test_succeeded_build_has_no_error_type() -> None:
+    assert index_build().error_type is None
+
+
+@pytest.mark.parametrize(
+    ("status", "error_type", "message"),
+    [
+        (BuildStatus.FAILED, None, "a failed build names its error_type"),
+        (BuildStatus.FAILED, "", "error_type must be an exception type name"),
+        # a message, not a type name: the manifest never stores exception text
+        (BuildStatus.FAILED, "disk full on /data", "error_type must be an exception type name"),
+        (BuildStatus.SUCCEEDED, "OSError", "a succeeded build has no error_type"),
+    ],
+)
+def test_error_type_must_match_the_status(
+    status: BuildStatus, error_type: str | None, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        index_build(status=status, error_type=error_type)
 
 
 def test_integrity_error_names_the_model_the_file_and_both_digests() -> None:

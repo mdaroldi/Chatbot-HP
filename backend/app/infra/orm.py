@@ -34,6 +34,11 @@ class BuildWarningJson(TypedDict):
     error_type: str
 
 
+# A failed build names its exception type; a succeeded one has none (IndexBuild).
+# The allowed status values are the status check's job, so each check tests one rule.
+_ERROR_TYPE_MATCHES_STATUS = "(status = 'failed') = (error_type IS NOT NULL)"
+
+
 class IndexBuildRow(Base):
     """One index build (ADR 0006): what produced a Qdrant collection, and whether it went live.
 
@@ -45,6 +50,7 @@ class IndexBuildRow(Base):
     __table_args__ = (
         CheckConstraint("status IN ('succeeded', 'failed')", name="status"),
         CheckConstraint("chunk_count >= 0", name="chunk_count_non_negative"),
+        CheckConstraint(_ERROR_TYPE_MATCHES_STATUS, name="error_type_status"),
     )
 
     build_id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -60,3 +66,4 @@ class IndexBuildRow(Base):
     chunk_counts: Mapped[dict[str, int]] = mapped_column(JSON)
     drop_stats: Mapped[dict[str, dict[str, int]]] = mapped_column(JSON)
     warnings: Mapped[list[BuildWarningJson]] = mapped_column(JSON)
+    error_type: Mapped[str | None] = mapped_column(String(255))  # type name only, never a message

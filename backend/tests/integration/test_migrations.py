@@ -13,7 +13,7 @@ from tests.integration.conftest import PG_PASSWORD, SettingsFactory, run_alembic
 
 pytestmark = pytest.mark.integration
 
-HEAD_REVISION = "0002"
+HEAD_REVISION = "0003"
 
 
 async def versions(settings: Settings) -> list[str]:
@@ -124,18 +124,32 @@ async def test_downgrade_to_baseline_drops_index_builds(
     assert await versions(settings) == ["0001"]
 
 
-ROW = (
-    "INSERT INTO index_builds VALUES (:build_id, now(), :status, :collection, '{}', 'v1', "
+ROW_0002 = (
+    "INSERT INTO index_builds (build_id, created_at, status, collection, document_hashes, "
+    "chunking_version, dense_model, sparse_model, models, chunk_count, chunk_counts, "
+    "drop_stats, warnings) VALUES (:build_id, now(), :status, :collection, '{}', 'v1', "
     "'d', 's', '{}', :chunk_count, '{}', '{}', '[]')"
+)
+ROW = (
+    "INSERT INTO index_builds (build_id, created_at, status, collection, document_hashes, "
+    "chunking_version, dense_model, sparse_model, models, chunk_count, chunk_counts, "
+    "drop_stats, warnings, error_type) VALUES (:build_id, now(), :status, :collection, "
+    "'{}', 'v1', 'd', 's', '{}', :chunk_count, '{}', '{}', '[]', :error_type)"
 )
 
 
-async def insert_row(settings: Settings, **values: object) -> None:
-    params = {"build_id": "b1", "status": "succeeded", "collection": "c1", "chunk_count": 1}
+async def insert_row(settings: Settings, statement: str = ROW, **values: object) -> None:
+    params = {
+        "build_id": "b1",
+        "status": "succeeded",
+        "collection": "c1",
+        "chunk_count": 1,
+        "error_type": None,
+    }
     engine = create_engine(settings)
     try:
         async with engine.begin() as connection:
-            await connection.execute(text(ROW), params | values)
+            await connection.execute(text(statement), params | values)
     finally:
         await engine.dispose()
 
@@ -158,3 +172,51 @@ async def test_index_builds_constraints_hold_in_the_database(
     ):
         with pytest.raises(IntegrityError, match=constraint):
             await insert_row(settings, **values)
+
+
+ERROR_TYPE_CHECK = "ck_index_builds_error_type_status"
+
+
+async def test_migration_0003_adds_a_nullable_error_type(
+    scratch_db: str, make_settings: SettingsFactory, tmp_path: pathlib.Path
+) -> None:
+    settings = make_settings(postgres_db=scratch_db)
+    run_alembic(scratch_db, "upgrade", "0002", cwd=tmp_path)
+    assert "error_type" not in await columns(settings, "index_builds")
+
+    run_alembic(scratch_db, "upgrade", "0003", cwd=tmp_path)
+
+    found = await columns(settings, "index_builds")
+    assert found["error_type"] == ("character varying", "YES")
+    assert {name for name, (_, nullable) in found.items() if nullable == "YES"} == {"error_type"}
+
+
+async def test_error_type_must_match_the_status_in_the_database(
+    scratch_db: str, make_settings: SettingsFactory, tmp_path: pathlib.Path
+) -> None:
+    settings = make_settings(postgres_db=scratch_db)
+    run_alembic(scratch_db, "upgrade", "head", cwd=tmp_path)
+    await insert_row(settings)  # succeeded without an error type is accepted
+    await insert_row(settings, build_id="b2", collection="c2", status="failed", error_type="E")
+
+    for values in (
+        {"status": "failed", "error_type": None},
+        {"status": "succeeded", "error_type": "OSError"},
+    ):
+        with pytest.raises(IntegrityError, match=ERROR_TYPE_CHECK):
+            await insert_row(settings, build_id="b3", collection="c3", **values)
+
+
+async def test_downgrade_to_0002_drops_error_type_and_its_check(
+    scratch_db: str, make_settings: SettingsFactory, tmp_path: pathlib.Path
+) -> None:
+    settings = make_settings(postgres_db=scratch_db)
+    run_alembic(scratch_db, "upgrade", "head", cwd=tmp_path)
+    assert "error_type" in await columns(settings, "index_builds")
+
+    run_alembic(scratch_db, "downgrade", "0002", cwd=tmp_path)
+
+    assert await versions(settings) == ["0002"]
+    assert set(await columns(settings, "index_builds")) == set(INDEX_BUILDS_COLUMNS)
+    # Without the check, a failed row with no error type fits the 0002 schema again.
+    await insert_row(settings, ROW_0002, status="failed")
