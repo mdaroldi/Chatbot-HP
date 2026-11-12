@@ -25,6 +25,7 @@ from app.domain.ingestion import (
     Section,
     TokenCounter,
 )
+from app.ingestion.front_matter import FRONT_MATTER
 
 VERSION = "v1"
 # Fixed forever: chunk ids must not change between runs (uuid5 of NAMESPACE_URL and
@@ -204,6 +205,8 @@ class _Packer:
 
 
 def _content_type(sources: Sequence[tuple[str, ...]], blocks: Sequence[Block]) -> ContentType:
+    if all(path[0] == FRONT_MATTER for path in sources):
+        return ContentType.FRONT_MATTER
     titles = [title for path in sources for title in path]
     if any(_REGULATORY.search(title) for title in titles):
         return ContentType.REGULATORY

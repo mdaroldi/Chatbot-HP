@@ -24,6 +24,7 @@ class ContentType(StrEnum):
     SPECS = "specs"
     PARTS = "parts"
     REGULATORY = "regulatory"
+    FRONT_MATTER = "front_matter"
 
 
 class DropReason(StrEnum):

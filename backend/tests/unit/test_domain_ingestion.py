@@ -56,6 +56,7 @@ def test_content_types_match_the_payload_contract() -> None:
         "specs",
         "parts",
         "regulatory",
+        "front_matter",
     }
 
 

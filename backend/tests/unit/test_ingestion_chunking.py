@@ -291,5 +291,22 @@ def test_content_types_follow_the_bookmark_path() -> None:
     ]
 
 
+def test_front_matter_chunks_have_their_own_type_before_the_title_rules() -> None:
+    warning = block(BlockKind.NOTE, "WARNING! Keep it cool.", note=NoteLabel.WARNING)
+    sections = [
+        section(("Front matter", "Safety warning notice"), warning),  # "notice": regulatory
+        section(("Front matter", "Safety information"), para("Unplug it before cleaning.")),
+        section(("Setup", "Safety notice"), para("Unplug it before cleaning.")),
+    ]
+
+    chunks = chunk(sections)
+
+    assert [(c.content_type, c.has_warning) for c in chunks] == [
+        (ContentType.FRONT_MATTER, True),
+        (ContentType.FRONT_MATTER, False),
+        (ContentType.REGULATORY, False),
+    ]
+
+
 def test_the_chunker_reports_its_version() -> None:
     assert StructureChunker(WordTokenCounter(), 450, 0).version == "v1"

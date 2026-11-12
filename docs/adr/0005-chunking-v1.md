@@ -17,8 +17,9 @@ available for every page after the front matter.
 lines up to the next heading. The section path comes from the bookmark tree, not
 from heading lines: a section keeps the titles of ancestors whose heading line was
 dropped as `empty_after_cleaning`. Heading lines are not content; the chunk prefix
-carries the path. Kept lines before the first heading (cover and legal front matter)
-belong to no section and are counted, not indexed (see Consequences).
+carries the path. Lines before the first bookmarked heading form **front-matter
+sections** when they have a heading of their own; the rest (cover, copyright,
+trademarks) is counted, not indexed (see Corrections after implementation).
 
 **Blocks.** Lines become paragraphs, steps (`1.`, `a.` hanging markers), bullets
 (`●`, `•`, en dash), notes (`WARNING!`, `CAUTION:`, `IMPORTANT:`, `NOTE:`, `TIP:`) and
@@ -51,7 +52,8 @@ tokens and for counting differences.
   path**, the deepest path true for all of its text, and each member's title as a
   heading line, so the citation never names a section that only part of the chunk
   belongs to. Top-level sections never merge.
-- **Content type:** `regulatory` when a title in the path is about regulations,
+- **Content type:** `front_matter` for chunks under `Front matter`; else
+  `regulatory` when a title in the path is about regulations,
   notices, environmental programs, recycling or power cords; else `specs` when a
   title names specifications; else `parts` for a table with spare-part numbers
   (`N12345-001` pattern), `table` for another table; else `procedure` when it has
@@ -78,9 +80,39 @@ wired (Phase 1 plan, commit 10); the chunker takes them as arguments.
 
 - Chunks are deterministic and traceable to a bookmark path and both page ranges.
 - The `Chunker` protocol leaves room for a naive baseline in the Phase 5 ablation.
-- Front matter (cover, legal notices, and safety notices printed before the first
-  bookmark) is not indexed in v1; whether to index it is an open decision.
+- Front-matter safety and notice text is indexed; the cover, copyright and trademark
+  text before the first bookmark is not.
 - Unit tests count tokens with a word-counting fake; the real 450-token limit is
   checked by corpus tests once the tokenizer is available (Phase 1, commit 7).
 - Table quality follows the row-band extractor: tables with spanning title rows yield
   fewer columns (ADR 0004).
+
+## Corrections after implementation
+
+### Front matter (Phase 1, commit 6c)
+
+Both manuals print safety and notice text before their first bookmark (ENVY PDF 2,
+OMEN PDF 3-4), which v1 first left out of the index. PDF page numbers.
+
+- **Sections:** a front-matter heading starts a section that runs to the next one or
+  to the first bookmarked heading. The path is `Front matter > <heading>`. Kept lines
+  before the first front-matter heading are not indexed, and neither is a heading
+  with no content. Front-matter sections come before the bookmarked ones and merge
+  under the usual rule (their parent is `Front matter`).
+- **Headings by layout:** a line at heading size (12 pt or more, as for bookmarked
+  headings) on a page after the cover (PDF 1). OMEN sets its two notice headings at
+  14 pt over a 10 pt body.
+- **Keyword exception (deliberate):** ENVY sets its safety heading in the same size,
+  font and colour as its body (8 pt), so no layout rule finds it. A line with at most
+  5 words, no sentence punctuation at its end, and the word `safety` is therefore a
+  heading too. The keyword list is exactly `{safety}`, pinned by unit tests; it does
+  not match the copyright heading, which stays out with the trademark text. A new
+  keyword needs a new decision.
+- **Content type `front_matter`**, checked before the title rules: the notice
+  headings would otherwise read as `regulatory`. `has_warning` keeps its meaning (a
+  WARNING or CAUTION note): OMEN's heat notice sets it; ENVY's safety list, which
+  has no hazard label, does not.
+- **Pages:** front-matter pages are unnumbered or roman-numbered, so their printed
+  page is null and citations use the PDF page.
+- Measured: ENVY 1 chunk (PDF 2), OMEN 2 chunks (PDF 3 and 4); not indexed: ENVY 15
+  and OMEN 83 lines on PDF 1-2.

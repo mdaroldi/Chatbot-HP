@@ -31,8 +31,8 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 | 5 | `feat(ingestion): cleaning stage with drop statistics` | done (`app/ingestion/{cleaning,language}.py`; `pages.chapter_toc_lines` replaces `chapter_opener_pages`; continuation rule and opener lead-in as approved, see ADR 0004 corrections) |
 | 6 | `feat(ingestion): sections and chunking v1` (with ADR 0005 and the CLAUDE.md chunking row) | done (`app/ingestion/{spans,blocks,sections,chunking}.py`; unit tests use a word-counting fake tokenizer) |
 | 6b | `feat(ingestion): drop navigation and table residue` (section mini-TOCs, non-Latin table residue, URL-only sections; see "Commits 6b and 6c") | done |
-| 6c | `feat(ingestion): index front-matter safety and notice content` (with the ADR 0005 update) | next |
-| 7 | `feat(ingestion): fastembed embedder and token counter` (with the corpus test of the real 450-token limit, and `CHUNK_MIN_TOKENS` re-measured with the real tokenizer) | pending |
+| 6c | `feat(ingestion): index front-matter safety and notice content` (with the ADR 0005 update) | done |
+| 7 | `feat(ingestion): fastembed embedder and token counter` (with the corpus test of the real 450-token limit, and `CHUNK_MIN_TOKENS` re-measured with the real tokenizer) | next |
 | 8 | `feat(ingestion): Qdrant versioned collection and alias swap` | pending |
 | 9 | `feat(db): index_builds manifest (migration 0002)` | pending |
 | 10 | `feat(ingestion): pipeline, CLI, migrate and ingest services, make ingest/inspect-chunks` (with the startup-order ADR and CLAUDE.md update) | pending |
@@ -82,8 +82,11 @@ their subsections keep the titles in their paths. OMEN is unchanged.
 **6c, front matter:** the headed safety and notice parts of the front matter (before
 the first bookmark) are indexed under `Front matter > <heading>`, with `has_warning`
 when they hold a WARNING or CAUTION. Headings are found by font size, not by a keyword
-list. The cover, copyright and trademark text stays out of the index. ADR 0005 is
-updated in the same commit.
+list, with one pinned exception: ENVY sets its safety heading in body size, so a
+short line (at most 5 words, no end punctuation) with the word `safety` is a heading
+too. The cover, copyright and trademark text stays out of the index. New content type
+`front_matter`, checked before the title rules. Measured: ENVY 1 chunk (PDF 2), OMEN
+2 (PDF 3, 4). ADR 0005 is updated in the same commit.
 
 **Deferred to the Phase 5 ablation:** merging a parent's one-line introduction into
 its first child section.
@@ -259,7 +262,7 @@ Layers (dependency rule unchanged):
 - The corpus test of the real 450-token limit lands in commit 7 with the tokenizer.
 - WARNING/CAUTION stays with its step and sets `has_warning`.
 - Payload: doc_id, product, section_path, chapter, pdf_page_start/end,
-  printed_page_start/end, content_type (procedure|table|reference|specs|parts|
+  printed_page_start/end, content_type (procedure|table|reference|specs|parts|front_matter|
   regulatory), has_warning, chunking_version, token_count, text.
 - `chunk_id = uuid5(namespace, doc_id | section_path | index | sha256(text))`:
   re-running yields the same ids.
