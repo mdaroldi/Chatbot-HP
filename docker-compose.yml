@@ -1,0 +1,108 @@
+# Full stack: cp .env.example .env, then `docker compose up --build`.
+# Only the API and the frontend are published, bound to BIND_ADDRESS (default
+# 127.0.0.1). Postgres and Qdrant live on an internal network with no route out.
+name: hpdocs
+
+x-hardening: &hardening
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  read_only: true
+  tmpfs: ["/tmp"]
+  restart: unless-stopped
+
+services:
+  backend:
+    <<: *hardening
+    build: ./backend
+    image: hpdocs-backend:local
+    init: true
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_INCLUDE_EXCEPTION_MESSAGES: ${LOG_INCLUDE_EXCEPTION_MESSAGES:-false}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8501}
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-hpdocs}
+      POSTGRES_USER: ${POSTGRES_USER:-hpdocs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env}
+      POSTGRES_POOL_SIZE: ${POSTGRES_POOL_SIZE:-5}
+      POSTGRES_MAX_OVERFLOW: ${POSTGRES_MAX_OVERFLOW:-5}
+      POSTGRES_CONNECT_TIMEOUT_SECONDS: ${POSTGRES_CONNECT_TIMEOUT_SECONDS:-5}
+      QDRANT_URL: http://qdrant:6333
+      READINESS_TIMEOUT_SECONDS: ${READINESS_TIMEOUT_SECONDS:-2.0}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
+    networks: [edge, data]
+    depends_on:
+      postgres: {condition: service_healthy}
+      qdrant: {condition: service_healthy}
+
+  frontend:
+    <<: *hardening
+    build: ./frontend
+    image: hpdocs-frontend:local
+    init: true
+    environment:
+      BACKEND_URL: http://backend:8000
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-8501}:8501"
+    networks: [edge]
+    depends_on:
+      backend: {condition: service_healthy}
+
+  postgres:
+    <<: *hardening
+    image: postgres:17.9-alpine3.22@sha256:034839bd88128360cda25496ebdb1471e24a4aa09b937160c73df2bb51126308
+    # Run as the image's postgres user (uid 70) from the start, so the entrypoint
+    # needs no root capabilities to drop privileges.
+    user: "70:70"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hpdocs}
+      POSTGRES_USER: ${POSTGRES_USER:-hpdocs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env}
+    # /var/run/postgresql holds the Unix socket and lock file; the root fs is read-only.
+    tmpfs: ["/tmp", "/var/run/postgresql"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  qdrant:
+    <<: *hardening
+    image: qdrant/qdrant:v1.20.0-unprivileged@sha256:8c215051dc7bc15221b5f89c100a84a4b04d0dd8497fb73e6fa86fc948d1a41d
+    environment:
+      # No usage telemetry to telemetry.qdrant.io (the data network has no route out).
+      QDRANT__TELEMETRY_DISABLED: "true"
+    # Qdrant needs a writable snapshots directory at startup; read_only stays on.
+    volumes:
+      - qdrant-data:/qdrant/storage
+      - qdrant-snapshots:/qdrant/snapshots
+    networks: [data]
+    healthcheck:
+      # The image has bash but no curl: speak HTTP over /dev/tcp and require 200.
+      test:
+        - CMD
+        - bash
+        - -c
+        - exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.0\r\n\r\n' >&3 && head -n1 <&3 | grep -q ' 200 '
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+networks:
+  edge: {}
+  data:
+    internal: true
+
+volumes:
+  postgres-data:
+  qdrant-data:
+  qdrant-snapshots:

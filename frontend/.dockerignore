@@ -1,0 +1,10 @@
+# Allowlist: only what the image needs reaches the build context.
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!.streamlit/
+!app.py
+!hpdocs_ui/
+**/__pycache__
+**/*.py[cod]

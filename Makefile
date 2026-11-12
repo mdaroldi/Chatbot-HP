@@ -46,11 +46,11 @@ security: ## bandit, pip-audit (both lock files), gitleaks
 	done
 	docker run --rm -v "$(CURDIR)":/repo $(GITLEAKS_IMAGE) git /repo --redact --no-banner
 
-up: ## docker compose up
-	@echo "not implemented yet"; exit 1
+up: ## Build and start the stack, waiting until every service is healthy
+	docker compose up --build --detach --wait
 
-down: ## docker compose down
-	@echo "not implemented yet"; exit 1
+down: ## Stop the stack (named volumes are kept)
+	docker compose down
 
 ingest: ## Build the vector index
 	@echo "not implemented yet"; exit 1

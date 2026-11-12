@@ -17,7 +17,14 @@ docker compose up --build
 ```
 
 - Frontend: http://localhost:8501
-- API: http://localhost:8000 (`/health`, `/ready`)
+- API: http://localhost:8000 (`/health`, `/ready`, `/docs`)
+
+`POSTGRES_PASSWORD` must be set in `.env`; Compose refuses to start without it.
+
+Only the API and the frontend are published, and only on `127.0.0.1` by default.
+On a remote VM, set `BIND_ADDRESS=0.0.0.0` in `.env` to reach them from outside,
+and restrict access with the VM's firewall. Postgres and Qdrant are never published;
+they sit on an internal network that only the backend joins.
 
 ## Development
 
