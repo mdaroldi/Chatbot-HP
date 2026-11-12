@@ -71,9 +71,16 @@ class RequestIdMiddleware:
         status = 500
         response_started = False
         started_at = time.perf_counter()
+        finished_at: float | None = None
 
         async def send_with_request_id(message: Message) -> None:
-            nonlocal status, response_started
+            nonlocal status, response_started, finished_at
+            if message["type"] == "http.response.body" and not message.get("more_body"):
+                await send(message)
+                # Duration ends at the final body chunk, so streamed responses are timed
+                # completely while post-response work (background tasks) is excluded.
+                finished_at = time.perf_counter()
+                return
             if message["type"] == "http.response.start":
                 response_started = True
                 status = message["status"]
@@ -94,13 +101,14 @@ class RequestIdMiddleware:
                     raise
                 await self._send_internal_error(send_with_request_id, request_id)
             finally:
+                ended_at = finished_at if finished_at is not None else time.perf_counter()
                 _access_logger.info(
                     "request completed",
                     extra={
                         "method": scope["method"],
                         "path": scope["path"],
                         "status": status,
-                        "duration_ms": round((time.perf_counter() - started_at) * 1000, 3),
+                        "duration_ms": round((ended_at - started_at) * 1000, 3),
                     },
                 )
 

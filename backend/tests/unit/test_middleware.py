@@ -349,3 +349,70 @@ async def test_access_log_never_contains_query_string_or_bodies(
     assert "query-secret" not in raw
     assert "body-secret" not in raw
     assert '"fields"' not in raw
+
+
+# ------------------------------------------------------------------ streaming responses
+
+CHUNK_GAP_SECONDS = 0.05
+POST_RESPONSE_WORK_SECONDS = 0.3
+
+
+class EventRecorder(logging.Handler):
+    """Records access log emissions into the same timeline as sent ASGI messages."""
+
+    def __init__(self, timeline: list[str]) -> None:
+        super().__init__()
+        self.timeline = timeline
+        self.durations: list[float] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.timeline.append("access-log")
+        self.durations.append(record.__dict__["duration_ms"])
+
+
+async def run_streaming(post_response_work: float) -> tuple[list[str], list[float]]:
+    timeline: list[str] = []
+
+    async def streaming_app(scope: Scope, receive: Receive, send: Send) -> None:  # noqa: ARG001
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        for chunk in (b"one", b"two"):
+            await send({"type": "http.response.body", "body": chunk, "more_body": True})
+            await asyncio.sleep(CHUNK_GAP_SECONDS)
+        await send({"type": "http.response.body", "body": b"", "more_body": False})
+        await asyncio.sleep(post_response_work)  # like Starlette BackgroundTasks
+
+    async def send(message: Message) -> None:
+        if message["type"] == "http.response.start":
+            timeline.append("start")
+        else:
+            timeline.append("final" if not message.get("more_body") else "chunk")
+
+    recorder = EventRecorder(timeline)
+    access_logger = logging.getLogger("app.access")
+    previous_level = access_logger.level
+    access_logger.addHandler(recorder)
+    access_logger.setLevel(logging.INFO)
+    try:
+        await RequestIdMiddleware(streaming_app)(http_scope([]), empty_receive, send)
+    finally:
+        access_logger.removeHandler(recorder)
+        access_logger.setLevel(previous_level)
+    return timeline, recorder.durations
+
+
+async def test_streaming_access_log_is_written_after_final_chunk() -> None:
+    timeline, _ = await run_streaming(post_response_work=0)
+
+    assert timeline == ["start", "chunk", "chunk", "final", "access-log"]
+
+
+async def test_streaming_duration_covers_every_chunk() -> None:
+    _, durations = await run_streaming(post_response_work=0)
+
+    assert durations[0] >= 2 * CHUNK_GAP_SECONDS * 1000
+
+
+async def test_streaming_duration_stops_at_final_chunk_not_post_response_work() -> None:
+    _, durations = await run_streaming(post_response_work=POST_RESPONSE_WORK_SECONDS)
+
+    assert durations[0] < POST_RESPONSE_WORK_SECONDS * 1000
