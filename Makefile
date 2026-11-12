@@ -15,14 +15,16 @@ IMAGES := hpdocs-backend:local hpdocs-frontend:local
 TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURDIR)":/src:ro \
 	-v trivy-cache:/root/.cache $(TRIVY_IMAGE)
 
-.PHONY: help setup lint lint-workflows format typecheck test coverage-summary test-int \
+.PHONY: help install setup lint lint-workflows format typecheck test coverage-summary test-int \
 	security images scan-images scan-config up down ingest eval load check
 
 help: ## List available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
 
-setup: ## Install dependencies and pre-commit hooks
+install: ## Install locked dependencies for both projects (what CI runs)
 	for project in $(PROJECTS); do uv sync --frozen --project $$project || exit 1; done
+
+setup: install ## install + pre-commit hooks (local development)
 	uv run --frozen --project $(BACKEND) pre-commit install
 
 lint: ## ruff check + ruff format --check (backend and frontend)

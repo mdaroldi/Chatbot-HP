@@ -28,7 +28,7 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
-      - run: make setup
+      - run: make install
       - run: make lint
       - run: make typecheck
       - run: make lint-workflows
@@ -45,7 +45,7 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
-      - run: make setup
+      - run: make install
       - run: make test
       - name: Coverage summary
         if: always()
@@ -63,7 +63,7 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
-      - run: make setup
+      - run: make install
       # Same docker-compose.test.yml as locally; make tears it down even on failure.
       - run: make test-int
 
@@ -81,7 +81,7 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
-      - run: make setup
+      - run: make install
       - run: make security
 
   docker:

@@ -1,11 +1,15 @@
 # Weekly, grouped dependency updates. Each group opens one PR per ecosystem and
-# directory; the open-PR limit keeps review load bounded.
+# directory; the open-PR limit keeps review load bounded. The cooldown skips
+# releases younger than a few days, so a broken or compromised release has time
+# to be noticed and yanked before it is proposed.
 version: 2
 updates:
   - package-ecosystem: uv
     directories: ["/backend", "/frontend"]
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 5
     open-pull-requests-limit: 5
     groups:
       python:
@@ -15,6 +19,8 @@ updates:
     directories: ["/backend", "/frontend"]
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 5
     open-pull-requests-limit: 3
     groups:
       base-images:
@@ -24,6 +30,8 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 5
     open-pull-requests-limit: 3
     groups:
       service-images:
@@ -33,6 +41,8 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 5
     open-pull-requests-limit: 3
     groups:
       actions:
