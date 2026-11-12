@@ -1,14 +1,21 @@
 """Integration fixtures: real Postgres and Qdrant from docker-compose.test.yml."""
 
 import logging
+import os
+import pathlib
 import socket
-from collections.abc import Callable, Iterator
+import subprocess  # nosec B404 - runs the Alembic CLI under test with fixed arguments
+import sys
+import uuid
+from collections.abc import AsyncIterator, Callable, Iterator
 from typing import Any
 
 import pytest
 from pydantic import HttpUrl, SecretStr
+from sqlalchemy import text
 
 from app.core.settings import Settings, get_settings
+from app.infra.db import create_engine
 
 # Must match docker-compose.test.yml. Throwaway values for a local test container.
 PG_HOST, PG_PORT = "127.0.0.1", 55432
@@ -80,3 +87,46 @@ def isolate_globals() -> Iterator[None]:
     get_settings.cache_clear()
     root.handlers[:] = handlers
     root.setLevel(level)
+
+
+BACKEND = pathlib.Path(__file__).resolve().parents[2]
+ALEMBIC_INI = BACKEND / "alembic.ini"
+
+
+@pytest.fixture
+async def scratch_db(make_settings: SettingsFactory) -> AsyncIterator[str]:
+    """A fresh, uniquely named database, dropped (forcefully) after the test."""
+    name = f"it_scratch_{uuid.uuid4().hex[:12]}"
+    admin = create_engine(make_settings(postgres_db=PG_DB)).execution_options(
+        isolation_level="AUTOCOMMIT"
+    )
+    quoted = admin.dialect.identifier_preparer.quote(name)
+    try:
+        async with admin.connect() as connection:
+            await connection.execute(text(f"CREATE DATABASE {quoted}"))
+        yield name
+        async with admin.connect() as connection:
+            await connection.execute(text(f"DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
+    finally:
+        await admin.dispose()
+
+
+def run_alembic(
+    database: str, *args: str, cwd: pathlib.Path, log_level: str = "INFO"
+) -> subprocess.CompletedProcess[str]:
+    """Run the real CLI from an unrelated directory with only env-var configuration."""
+    env = {k: v for k, v in os.environ.items() if k.lower() not in Settings.model_fields}
+    env |= {
+        "POSTGRES_HOST": PG_HOST,
+        "POSTGRES_PORT": str(PG_PORT),
+        "POSTGRES_DB": database,
+        "POSTGRES_USER": PG_USER,
+        "POSTGRES_PASSWORD": PG_PASSWORD,
+        "LOG_LEVEL": log_level,
+    }
+    command = [sys.executable, "-m", "alembic", "-c", str(ALEMBIC_INI), *args]
+    result = subprocess.run(  # noqa: S603 - fixed command, no shell  # nosec B603
+        command, cwd=cwd, env=env, capture_output=True, text=True, timeout=60, check=False
+    )
+    assert result.returncode == 0, f"alembic {' '.join(args)} failed:\n{result.stderr}"
+    return result

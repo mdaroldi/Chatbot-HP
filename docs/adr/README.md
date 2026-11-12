@@ -10,3 +10,4 @@ considered, consequences.
 | [0003](0003-llm-provider-and-local-embeddings.md) | Anthropic behind a provider interface; local embeddings |
 | [0004](0004-pdf-parsing.md) | PDF parsing with pdfplumber |
 | [0005](0005-chunking-v1.md) | Structure-aware chunking v1 (450 tokens, prefix included) |
+| [0006](0006-embedding-model-files.md) | Pinned and verified embedding model files, recorded per build |

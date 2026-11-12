@@ -46,6 +46,6 @@ def test_convention_produces_deterministic_constraint_names() -> None:
     assert index_ddl == ["CREATE UNIQUE INDEX ix_child_email ON child (email)"]
 
 
-def test_no_tables_are_mapped_yet() -> None:
-    """Phase 0 schema is empty; the baseline migration must match it."""
-    assert Base.metadata.tables == {}
+def test_mapped_tables_are_exactly_the_migrated_ones() -> None:
+    """Every mapped table has a migration (0002: index_builds); `alembic check` proves it."""
+    assert set(Base.metadata.tables) == {"index_builds"}

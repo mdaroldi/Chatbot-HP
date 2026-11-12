@@ -9,12 +9,16 @@ numbers from the footers, which are absent for unnumbered front matter.
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Protocol
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _DOC_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_REVISION = re.compile(r"[0-9a-f]{40}")
+_BUILD_ID = re.compile(r"\d{8}t\d{6}z")  # lowercase UTC timestamp, e.g. 20261112t143005z
+_TYPE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
 
 
 class ContentType(StrEnum):
@@ -67,6 +71,10 @@ class BlockKind(StrEnum):
 class BuildStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+
+
+class BuildWarningKind(StrEnum):
+    PRUNE_FAILED = "prune_failed"
 
 
 class CorpusError(Exception):
@@ -324,28 +332,109 @@ class EmbeddedChunks:
         return len(self.dense[0])
 
 
+def _relative_path(path: str) -> bool:
+    parts = PurePosixPath(path).parts
+    return bool(parts) and not PurePosixPath(path).is_absolute() and ".." not in parts
+
+
+@dataclass(frozen=True)
+class ModelFiles:
+    """The exact files one embedding model was loaded from (ADR 0006).
+
+    `name` is the fastembed model name from the settings, `source` the hub repository
+    the files come from, and `files` maps each path inside the revision to its SHA-256.
+    """
+
+    name: str
+    source: str
+    revision: str
+    files: Mapping[str, str]
+
+    def __post_init__(self) -> None:
+        _require(_non_blank(self.name), "name must not be blank")
+        _require(_non_blank(self.source), "source must not be blank")
+        _require(bool(_REVISION.fullmatch(self.revision)), "revision must be a full commit SHA")
+        _require(bool(self.files), "files must not be empty")
+        _require(all(_relative_path(p) for p in self.files), "file paths must be relative")
+        _require(
+            all(_SHA256.fullmatch(h) for h in self.files.values()),
+            "files must hold SHA-256 digests",
+        )
+
+
+@dataclass(frozen=True)
+class BuildWarning:
+    """A problem that did not stop a build, such as an old collection left unpruned.
+
+    It names the exception type only, never its message, which may hold user content
+    or server details.
+    """
+
+    kind: BuildWarningKind
+    collection: str
+    error_type: str
+
+    def __post_init__(self) -> None:
+        _require(_non_blank(self.collection), "collection must not be blank")
+        _require(
+            bool(_TYPE_NAME.fullmatch(self.error_type)),
+            "error_type must be an exception type name",
+        )
+
+
 @dataclass(frozen=True)
 class IndexBuild:
-    """Manifest entry: what produced a collection, so builds are traceable."""
+    """Manifest entry: what produced a collection, so builds are traceable.
+
+    Only builds that started have an entry (ADR 0006): a build that failed partway
+    may have counted only some documents, but a succeeded one counts all of them.
+    """
 
     build_id: str
+    created_at: datetime
     collection: str
     status: BuildStatus
     document_hashes: Mapping[str, str]
     chunking_version: str
-    dense_model: str
-    sparse_model: str
-    chunk_count: int
+    dense: ModelFiles
+    sparse: ModelFiles
+    chunk_counts: Mapping[str, int]
     drop_stats: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
+    warnings: tuple[BuildWarning, ...] = ()
 
     def __post_init__(self) -> None:
+        _require(
+            bool(_BUILD_ID.fullmatch(self.build_id)), "build_id must look like 20261112t143005z"
+        )
+        _require(self.created_at.utcoffset() == timedelta(0), "created_at must be in UTC")
         _require(_non_blank(self.collection), "collection must not be blank")
-        _require(self.chunk_count >= 0, "chunk_count must be >= 0")
         _require(bool(self.document_hashes), "document_hashes must not be empty")
         _require(
             all(_SHA256.fullmatch(h) for h in self.document_hashes.values()),
             "document_hashes must hold SHA-256 digests",
         )
+        _require(_non_blank(self.chunking_version), "chunking_version must not be blank")
+        self._check_chunk_counts()
+
+    def _check_chunk_counts(self) -> None:
+        counted, documents = self.chunk_counts.keys(), self.document_hashes.keys()
+        _require(all(n >= 0 for n in self.chunk_counts.values()), "chunk counts must be >= 0")
+        _require(counted <= documents, "chunk counts must name indexed documents")
+        if self.status is BuildStatus.SUCCEEDED:
+            _require(counted == documents, "a succeeded build counts every document")
+            _require(self.chunk_count > 0, "a succeeded build has chunks")
+
+    @property
+    def chunk_count(self) -> int:
+        return sum(self.chunk_counts.values())
+
+    @property
+    def dense_model(self) -> str:
+        return self.dense.name
+
+    @property
+    def sparse_model(self) -> str:
+        return self.sparse.name
 
 
 # ---------------------------------------------------------------- stage interfaces

@@ -35,8 +35,9 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 | 6d | `feat(ingestion): treat question lead-ins of mini-TOCs as part of the list` (see "Commits 6b to 6d") | done |
 | 7 | `feat(ingestion): fastembed embedder and token counter` (with the corpus test of the real 450-token limit, and `CHUNK_MIN_TOKENS` re-measured with the real tokenizer) | done (`app/infra/fastembed_{embedder,tokens}.py`; `CHUNK_MIN_TOKENS` 65, see ADR 0005 corrections) |
 | 8 | `feat(ingestion): Qdrant versioned collection and alias swap` | done (`app/infra/qdrant_index.py`, `app/ingestion/publish.py`; `fix: anchor the data, model and cache ignore patterns` before it) |
-| 9 | `feat(db): index_builds manifest (migration 0002)` | next |
-| 10 | `feat(ingestion): pipeline, CLI, migrate and ingest services, make ingest/inspect-chunks` (with the startup-order ADR and CLAUDE.md update, and the chunk-ID digest corpus test; the embedder is built only after the `--if-needed` check, and a unit test shows the skip path never constructs it) | pending; first propose how the manifest records and verifies the model files (file hashes after download), with a short ADR |
+| 9 | `feat(db): index_builds manifest (migration 0002)` (with ADR 0006) | done (`app/infra/{orm,manifest_repository}.py`, migration 0002; `ModelFiles`, `BuildWarning` and the new `IndexBuild` in `app/domain/ingestion.py`) |
+| 9b | `feat(ingestion): pinned and verified model files` (ADR 0006: `backend/models.toml`, download of the pinned revision, SHA-256 of every file on every build, loading from the verified folder, the embedder and token counter switched to it, `make model-pins`, huggingface-hub as a direct dependency `<2.0`; the loader lives in `app/infra/` for Phase 2 reuse) | next |
+| 10 | `feat(ingestion): pipeline, CLI, migrate and ingest services, make ingest/inspect-chunks` (with the startup-order ADR and CLAUDE.md update, and the chunk-ID digest corpus test; the embedder is built only after the `--if-needed` check, and a unit test shows the skip path never constructs it; see "Decisions before commit 9") | pending |
 | 11 | `ci: corpus job with cached download` (also runs the `model` tests, with the model cache restored) | pending |
 | 12 | `docs: README ingestion section` (with a third-party licenses section that names tqdm, MPL-2.0) | pending |
 
@@ -46,6 +47,33 @@ the `corpus` marker; `make test-int` runs them, and the CI integration job exclu
 the real embedding models (`tests/embeddings/`) carry the `model` marker, and so do corpus
 tests that need a model. The CI expression already leaves them out, because they are not
 marked `integration`; commit 11 caches `EMBEDDING_CACHE_DIR` and runs them.
+
+## Decisions before commit 9
+
+- **`INDEX_KEEP_PREVIOUS`** is a yes/no setting (`true` or `false`), default `true`.
+- **Pruning failures (commit 10):** pruning runs only after a successful alias swap.
+  If deleting an old build fails, the new build stays live: the failure is a
+  structured warning (collection name and error type, no message text) recorded in
+  the build's manifest row, and ingest still exits 0, so the backend, which waits for
+  `ingest` to complete successfully, is never blocked by leftover collections. A unit
+  test covers it.
+- **Build ID:** the lowercase UTC timestamp of the build start, `%Y%m%dt%H%M%Sz`
+  (for example `20261112t143005z`), which matches the existing build-id pattern.
+- **Collection version:** the `v1` in `hpdocs_chunks_v1_<build id>` follows
+  `chunking_version`, so a new chunking version gets a new prefix. Commit 10 updates
+  `publish.py` and corrects ADR 0002, which still calls it the collection schema.
+- **Local-mode warning filter:** the unit-test filter for qdrant-client's local-mode
+  payload-index warning matches that one message only (category `UserWarning`), never
+  a broader pattern.
+- **Embedding model files:** ADR 0006 (accepted): pinned revision, SHA-256 of every
+  file on every build, one `models` JSON column. A failed model check writes no
+  `index_builds` row (it exits non-zero with its own error and one structured log
+  line); `status` covers builds that started.
+
+**Phase 2 note:** the backend embeds queries with the dense model. It reuses the
+verified-model loader from `app/infra/` (commit 9b), loads from the same verified
+folder, and reports not ready when its digests differ from the live build's `models`
+(ADR 0006).
 
 **Phase 3 note:** chunk text contains `[icon]` where the manual shows a button glyph
 (commit 4b). The Phase 3 system prompt must tell the model what `[icon]` means (an
@@ -120,7 +148,7 @@ its first child section.
 | filelock | 4.2.9 | MIT | pulled by huggingface-hub (already a dev dependency); 4.2.10 (2026-11-09, bug fix, no advisory) too new, pinned by a commented `constraint-dependencies` entry |
 | tqdm | 4.70.1 | MPL-2.0 AND MIT | via fastembed; file-level copyleft, used unmodified; flagged to the user |
 | qdrant-client | 1.20.0 | Apache-2.0 | adopted 2026-11-12 (released 2026-10-22); new at runtime with it: grpcio 1.85.1 (Apache-2.0), portalocker 4.4.2 (BSD-3), h2 4.4.1, hpack 4.2.0, hyperframe 6.1.0 (MIT); protobuf came with fastembed. Later grpcio uploads (1.78.2, 1.80.1, 1.81.2) are backports to older lines; the client talks REST, not gRPC |
-| aiosqlite | dev group only | MIT | manifest repository unit tests |
+| aiosqlite | 0.22.1 (dev group only) | MIT | manifest repository unit tests; released 2025-12-23, no runtime dependencies |
 
 Re-check ages and licenses when adding each one; pick the newest release older
 than 5 days.
@@ -289,14 +317,16 @@ Layers (dependency rule unchanged):
 - Qdrant collection `hpdocs_chunks_v1_<build>`: named vectors `dense`
   (BAAI/bge-small-en-v1.5, CPU) and `sparse` (BM25, IDF modifier), payload indexes on
   `doc_id` and `content_type`; build, verify, switch the alias, keep the previous
-  collection for rollback (`INDEX_KEEP_PREVIOUS=1`), prune older ones.
-- Migration 0002: `index_builds` (build_id, created_at, status, document hashes,
-  chunking_version, dense and sparse model, counts, drop stats, collection name).
+  collection for rollback (`INDEX_KEEP_PREVIOUS=true`), prune older ones.
+- Migration 0002: `index_builds` (build_id, created_at, status, collection name
+  (unique), document hashes, chunking_version, dense and sparse model names, `models`
+  with revisions and file digests, total `chunk_count` and per-document `chunk_counts`,
+  drop stats, `warnings`), all JSON columns with SQLAlchemy's generic `JSON` type.
 - New settings, each documented in `.env.example` (the parity test must pass):
   `CORPUS_DIR`, `CORPUS_MAX_BYTES`, `CORPUS_DOWNLOAD_TIMEOUT_SECONDS`,
   `EMBEDDING_DENSE_MODEL`, `EMBEDDING_SPARSE_MODEL`, `EMBEDDING_CACHE_DIR`,
   `EMBEDDING_BATCH_SIZE`, `CHUNK_MAX_TOKENS=450`, `CHUNK_MIN_TOKENS`,
-  `QDRANT_COLLECTION_ALIAS`, `INDEX_KEEP_PREVIOUS=1`.
+  `QDRANT_COLLECTION_ALIAS`, `INDEX_KEEP_PREVIOUS=true` (yes/no).
 - `make inspect-chunks` writes a git-ignored `ingest-review/chunks.md`; `.gitignore`
   also covers `corpus/`, `ingest-review/` and the model cache.
 

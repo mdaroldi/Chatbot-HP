@@ -5,13 +5,11 @@ import pytest
 from app.domain.ingestion import (
     Block,
     BlockKind,
-    BuildStatus,
     Chunk,
     ContentType,
     CorpusDocument,
     DropReason,
     EmbeddedChunks,
-    IndexBuild,
     NoteLabel,
     OutlineEntry,
     PageRange,
@@ -300,42 +298,6 @@ def test_sparse_vector_rejects_mismatched_duplicate_or_negative_indices(
 ) -> None:
     with pytest.raises(ValueError, match="sparse"):
         SparseVector(indices=indices, values=values)
-
-
-def index_build(**overrides: object) -> IndexBuild:
-    values: dict[str, object] = {
-        "build_id": "20261112T120000Z",
-        "collection": "hpdocs_chunks_v1_20261112T120000Z",
-        "status": BuildStatus.SUCCEEDED,
-        "document_hashes": {"demo-guide": SHA},
-        "chunking_version": "v1",
-        "dense_model": "dense-demo",
-        "sparse_model": "sparse-demo",
-        "chunk_count": 10,
-        "drop_stats": {"demo-guide": {"footer": 3}},
-    }
-    return IndexBuild(**(values | overrides))  # type: ignore[arg-type]  # test data
-
-
-def test_index_build_records_what_produced_a_collection() -> None:
-    build = index_build()
-
-    assert build.status is BuildStatus.SUCCEEDED
-    assert build.document_hashes == {"demo-guide": SHA}
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("chunk_count", -1),
-        ("collection", ""),
-        ("document_hashes", {}),
-        ("document_hashes", {"demo-guide": "not-a-hash"}),
-    ],
-)
-def test_index_build_rejects_invalid_values(field: str, value: object) -> None:
-    with pytest.raises(ValueError, match=field):
-        index_build(**{field: value})
 
 
 # ------------------------------------------------------------------ embedded chunks

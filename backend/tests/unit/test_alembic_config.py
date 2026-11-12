@@ -73,11 +73,28 @@ def migration_files() -> list[pathlib.Path]:
     return sorted(VERSIONS.glob("*.py"))
 
 
-def test_only_the_baseline_migration_exists_and_its_name_is_date_prefixed() -> None:
-    names = [path.name for path in migration_files()]
+EXPECTED_MIGRATIONS = (("0001", "baseline", None), ("0002", "index_builds", "0001"))
 
-    assert len(names) == 1
-    assert re.fullmatch(r"\d{8}_\d{4}_0001_baseline\.py", names[0])
+
+def assigned_string(tree: ast.Module, name: str) -> str | None:
+    for node in tree.body:
+        if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", None) == name:
+            assert isinstance(node.value, ast.Constant)
+            value = node.value.value
+            assert value is None or isinstance(value, str)
+            return value
+    raise AssertionError(f"{name} is not assigned")
+
+
+def test_migrations_are_date_prefixed_and_form_one_chain() -> None:
+    files = migration_files()
+
+    assert len(files) == len(EXPECTED_MIGRATIONS)
+    for path, (revision, slug, down) in zip(files, EXPECTED_MIGRATIONS, strict=True):
+        assert re.fullmatch(rf"\d{{8}}_\d{{4}}_{revision}_{slug}\.py", path.name), path.name
+        tree = ast.parse(path.read_text())
+        assert assigned_string(tree, "revision") == revision
+        assert assigned_string(tree, "down_revision") == down
 
 
 def test_baseline_migration_is_empty() -> None:

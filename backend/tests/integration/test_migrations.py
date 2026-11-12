@@ -1,71 +1,19 @@
 """Alembic migrations against a scratch database per test on the real Postgres."""
 
 import json
-import os
 import pathlib
-import subprocess  # nosec B404 - runs the Alembic CLI under test with fixed arguments
-import sys
-import uuid
-from collections.abc import AsyncIterator
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from app.core.settings import Settings
 from app.infra.db import create_engine
-from tests.integration.conftest import (
-    PG_DB,
-    PG_HOST,
-    PG_PASSWORD,
-    PG_PORT,
-    PG_USER,
-    SettingsFactory,
-)
+from tests.integration.conftest import PG_PASSWORD, SettingsFactory, run_alembic
 
 pytestmark = pytest.mark.integration
 
-BACKEND = pathlib.Path(__file__).resolve().parents[2]
-ALEMBIC_INI = BACKEND / "alembic.ini"
-BASELINE_REVISION = "0001"
-
-
-@pytest.fixture
-async def scratch_db(make_settings: SettingsFactory) -> AsyncIterator[str]:
-    """A fresh, uniquely named database, dropped (forcefully) after the test."""
-    name = f"it_scratch_{uuid.uuid4().hex[:12]}"
-    admin = create_engine(make_settings(postgres_db=PG_DB)).execution_options(
-        isolation_level="AUTOCOMMIT"
-    )
-    quoted = admin.dialect.identifier_preparer.quote(name)
-    try:
-        async with admin.connect() as connection:
-            await connection.execute(text(f"CREATE DATABASE {quoted}"))
-        yield name
-        async with admin.connect() as connection:
-            await connection.execute(text(f"DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
-    finally:
-        await admin.dispose()
-
-
-def run_alembic(
-    database: str, *args: str, cwd: pathlib.Path, log_level: str = "INFO"
-) -> subprocess.CompletedProcess[str]:
-    """Run the real CLI from an unrelated directory with only env-var configuration."""
-    env = {k: v for k, v in os.environ.items() if k.lower() not in Settings.model_fields}
-    env |= {
-        "POSTGRES_HOST": PG_HOST,
-        "POSTGRES_PORT": str(PG_PORT),
-        "POSTGRES_DB": database,
-        "POSTGRES_USER": PG_USER,
-        "POSTGRES_PASSWORD": PG_PASSWORD,
-        "LOG_LEVEL": log_level,
-    }
-    command = [sys.executable, "-m", "alembic", "-c", str(ALEMBIC_INI), *args]
-    result = subprocess.run(  # noqa: S603 - fixed command, no shell  # nosec B603
-        command, cwd=cwd, env=env, capture_output=True, text=True, timeout=60, check=False
-    )
-    assert result.returncode == 0, f"alembic {' '.join(args)} failed:\n{result.stderr}"
-    return result
+HEAD_REVISION = "0002"
 
 
 async def versions(settings: Settings) -> list[str]:
@@ -84,10 +32,10 @@ async def test_upgrade_is_idempotent_and_downgrade_returns_to_base(
     settings = make_settings(postgres_db=scratch_db)
 
     run_alembic(scratch_db, "upgrade", "head", cwd=tmp_path)
-    assert await versions(settings) == [BASELINE_REVISION]
+    assert await versions(settings) == [HEAD_REVISION]
 
     run_alembic(scratch_db, "upgrade", "head", cwd=tmp_path)
-    assert await versions(settings) == [BASELINE_REVISION]
+    assert await versions(settings) == [HEAD_REVISION]
 
     run_alembic(scratch_db, "downgrade", "base", cwd=tmp_path)
     assert await versions(settings) == []
@@ -118,3 +66,95 @@ async def test_verbose_migration_output_never_contains_the_password(
     output = result.stdout + result.stderr
     assert output.strip(), "expected log output at DEBUG"
     assert PG_PASSWORD not in output
+
+
+INDEX_BUILDS_COLUMNS = {
+    "build_id": "character varying",
+    "created_at": "timestamp with time zone",
+    "status": "character varying",
+    "collection": "character varying",
+    "document_hashes": "json",
+    "chunking_version": "character varying",
+    "dense_model": "character varying",
+    "sparse_model": "character varying",
+    "models": "json",
+    "chunk_count": "integer",
+    "chunk_counts": "json",
+    "drop_stats": "json",
+    "warnings": "json",
+}
+
+
+async def columns(settings: Settings, table: str) -> dict[str, tuple[str, str]]:
+    query = text(
+        "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = :table"
+    )
+    engine = create_engine(settings)
+    try:
+        async with engine.connect() as connection:
+            rows = await connection.execute(query, {"table": table})
+            return {name: (data_type, nullable) for name, data_type, nullable in rows}
+    finally:
+        await engine.dispose()
+
+
+async def test_migration_0002_creates_index_builds_with_required_columns(
+    scratch_db: str, make_settings: SettingsFactory, tmp_path: pathlib.Path
+) -> None:
+    settings = make_settings(postgres_db=scratch_db)
+
+    run_alembic(scratch_db, "upgrade", "0002", cwd=tmp_path)
+
+    found = await columns(settings, "index_builds")
+    assert {name: data_type for name, (data_type, _) in found.items()} == INDEX_BUILDS_COLUMNS
+    assert {nullable for _, nullable in found.values()} == {"NO"}
+
+
+async def test_downgrade_to_baseline_drops_index_builds(
+    scratch_db: str, make_settings: SettingsFactory, tmp_path: pathlib.Path
+) -> None:
+    settings = make_settings(postgres_db=scratch_db)
+    run_alembic(scratch_db, "upgrade", "head", cwd=tmp_path)
+    assert await columns(settings, "index_builds"), "head must create index_builds"
+
+    run_alembic(scratch_db, "downgrade", "0001", cwd=tmp_path)
+
+    assert await columns(settings, "index_builds") == {}
+    assert await versions(settings) == ["0001"]
+
+
+ROW = (
+    "INSERT INTO index_builds VALUES (:build_id, now(), :status, :collection, '{}', 'v1', "
+    "'d', 's', '{}', :chunk_count, '{}', '{}', '[]')"
+)
+
+
+async def insert_row(settings: Settings, **values: object) -> None:
+    params = {"build_id": "b1", "status": "succeeded", "collection": "c1", "chunk_count": 1}
+    engine = create_engine(settings)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text(ROW), params | values)
+    finally:
+        await engine.dispose()
+
+
+async def test_index_builds_constraints_hold_in_the_database(
+    scratch_db: str, make_settings: SettingsFactory, tmp_path: pathlib.Path
+) -> None:
+    settings = make_settings(postgres_db=scratch_db)
+    run_alembic(scratch_db, "upgrade", "head", cwd=tmp_path)
+    await insert_row(settings)  # a valid row is accepted
+
+    for values, constraint in (
+        ({"build_id": "b2", "collection": "c2", "status": "running"}, "ck_index_builds_status"),
+        (
+            {"build_id": "b2", "collection": "c2", "chunk_count": -1},
+            "ck_index_builds_chunk_count_non_negative",
+        ),
+        ({"build_id": "b2"}, "uq_index_builds_collection"),
+        ({"collection": "c2"}, "pk_index_builds"),
+    ):
+        with pytest.raises(IntegrityError, match=constraint):
+            await insert_row(settings, **values)

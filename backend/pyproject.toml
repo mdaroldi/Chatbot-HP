@@ -19,6 +19,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.22.1",
     "bandit>=1.9.4",
     "mypy>=2.4.1",
     "pip-audit>=2.10.1",
