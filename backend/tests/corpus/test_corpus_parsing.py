@@ -7,7 +7,7 @@ import pytest
 from app.domain.ingestion import ICON, Table
 from app.ingestion.lines import count_icons
 from app.ingestion.outline import match_headings
-from app.ingestion.pages import chapter_opener_pages, index_pages, toc_pages
+from app.ingestion.pages import chapter_toc_lines, index_pages, toc_pages
 from app.ingestion.tables import extract_tables
 from tests.corpus.conftest import ENVY, OMEN, ParsedCorpusDocument
 
@@ -70,11 +70,12 @@ def test_footer_labels_leave_the_body(corpus: Corpus) -> None:
 @BOTH
 def test_toc_index_and_chapter_opener_pages(corpus: Corpus, doc_id: str) -> None:
     doc = corpus[doc_id]
-    outline = doc.parsed.outline
+    outline, body = doc.parsed.outline, doc.footers.body
+    openers = {body[i].pdf_page for i in chapter_toc_lines(outline, body)}
 
-    assert toc_pages(doc.footers.body) == TOC[doc_id]
+    assert toc_pages(body) == TOC[doc_id]
     assert index_pages(outline, doc.parsed.page_count) == INDEX[doc_id]
-    assert chapter_opener_pages(outline, doc.footers.body) == OPENERS[doc_id]
+    assert openers == OPENERS[doc_id]
 
 
 @BOTH

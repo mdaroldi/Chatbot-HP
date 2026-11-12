@@ -6,6 +6,7 @@ Detection only; the cleaning stage drops what these functions find and counts it
 import re
 from collections import Counter
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from app.domain.ingestion import OutlineEntry, TextLine
 from app.ingestion.outline import clean_title, compact
@@ -53,39 +54,59 @@ def _sections(outline: Sequence[OutlineEntry], chapter: int) -> set[str]:
     return titles
 
 
-def _bullet_items(lines: Sequence[TextLine]) -> list[tuple[int, str]]:
-    """(page, item text) for each bulleted line. With a hanging indent the bullet is
-    its own segment, so its text is the next segment on the same visual line.
+@dataclass(frozen=True)
+class _BulletItem:
+    page: int
+    text: str
+    indices: tuple[int, ...]  # the bullet's line, and its text's line when separate
+
+
+def _bullet_items(lines: Sequence[TextLine]) -> list[_BulletItem]:
+    """Each bulleted line with its text. With a hanging indent the bullet is its own
+    segment, so its text is the next segment on the same visual line.
     """
-    items: list[tuple[int, str]] = []
+    items: list[_BulletItem] = []
     for position, line in enumerate(lines):
         if not line.text.startswith(_BULLETS):
             continue
         text = line.text[1:].strip()
+        indices: tuple[int, ...] = (position,)
         following = lines[position + 1 : position + 2]
         if not text and following:
             beside = following[0]
-            same_line = beside.pdf_page == line.pdf_page and (
-                abs(beside.top - line.top) <= _SAME_LINE
-            )
-            text = beside.text if same_line else ""
-        items.append((line.pdf_page, text))
+            if beside.pdf_page == line.pdf_page and abs(beside.top - line.top) <= _SAME_LINE:
+                text, indices = beside.text, (position, position + 1)
+        items.append(_BulletItem(page=line.pdf_page, text=text, indices=indices))
     return items
 
 
-def chapter_opener_pages(
-    outline: Sequence[OutlineEntry], lines: Sequence[TextLine]
-) -> frozenset[int]:
-    """Chapter first pages that list the chapter's sections as bullets (a mini TOC)."""
+def _lead_in(lines: Sequence[TextLine], first_item: int) -> tuple[int, ...]:
+    """The line that introduces the list, such as "This chapter covers:"."""
+    position = first_item - 1
+    if position >= 0:
+        before = lines[position]
+        if before.pdf_page == lines[first_item].pdf_page and before.text.endswith(":"):
+            return (position,)
+    return ()
+
+
+def chapter_toc_lines(outline: Sequence[OutlineEntry], lines: Sequence[TextLine]) -> frozenset[int]:
+    """Indices of chapter-opener lists: bullets on a chapter's first page that name at
+    least two of its sections (a mini TOC), with the lead-in line just before them.
+
+    Positions, not pages: an opener page can also hold the chapter's introduction,
+    which is content.
+    """
     items = _bullet_items(lines)
-    pages: set[int] = set()
+    found: set[int] = set()
     for position, entry in enumerate(outline):
         if entry.level != 1:
             continue
         sections = _sections(outline, position)
-        listed = sum(
-            1 for page, text in items if page == entry.pdf_page and compact(text) in sections
-        )
-        if listed >= _MIN_LISTED_SECTIONS:
-            pages.add(entry.pdf_page)
-    return frozenset(pages)
+        listed = [
+            item for item in items if item.page == entry.pdf_page and compact(item.text) in sections
+        ]
+        if len(listed) >= _MIN_LISTED_SECTIONS:
+            found.update(_lead_in(lines, listed[0].indices[0]))
+            found.update(index for item in listed for index in item.indices)
+    return frozenset(found)

@@ -1,7 +1,7 @@
 """Behavior of TOC, index and chapter-opener page detection (synthetic data)."""
 
 from app.domain.ingestion import OutlineEntry, TextLine
-from app.ingestion.pages import chapter_opener_pages, index_pages, toc_pages
+from app.ingestion.pages import chapter_toc_lines, index_pages, toc_pages
 
 
 def line(text: str, page: int = 1, top: float = 100) -> TextLine:
@@ -63,7 +63,11 @@ def test_only_a_top_level_index_bookmark_counts() -> None:
 # ------------------------------------------------------------------ chapter openers
 
 
-def test_chapter_page_listing_its_sections_as_bullets_is_an_opener() -> None:
+def texts(lines: tuple[TextLine, ...], indices: frozenset[int]) -> list[str]:
+    return [lines[i].text for i in sorted(indices)]
+
+
+def test_bullets_listing_the_chapter_sections_on_its_first_page_are_chapter_toc() -> None:
     outline = (
         entry("1.\xa0Setup", page=2),
         entry("Connect", 2, page=3),
@@ -77,13 +81,13 @@ def test_chapter_page_listing_its_sections_as_bullets_is_an_opener() -> None:
         line("● Connect", 2),
         line("● Auto-O ff", 2),  # broken ligature still matches
         line("• Detail", 2),  # level 3: not a chapter section
-        line("● Photos", 6),
+        line("● Photos", 6),  # one listed section is not a list
     )
 
-    assert chapter_opener_pages(outline, lines) == frozenset({2})
+    assert texts(lines, chapter_toc_lines(outline, lines)) == ["● Connect", "● Auto-O ff"]
 
 
-def test_one_matching_bullet_is_not_enough_for_an_opener() -> None:
+def test_one_matching_bullet_is_not_enough_for_a_chapter_toc() -> None:
     outline = (
         entry("Setup", page=2),
         entry("Connect", 2, page=3),
@@ -97,23 +101,37 @@ def test_one_matching_bullet_is_not_enough_for_an_opener() -> None:
         line("● Unplug the cable", 2),
         line("Panel", 2),
         line("● Photos", 6),
+        line("● Unplug the cable", 6),  # not a section title: kept
         line("● Scans", 6),
     )
 
-    assert chapter_opener_pages(outline, lines) == frozenset({6})
+    assert texts(lines, chapter_toc_lines(outline, lines)) == ["● Photos", "● Scans"]
 
 
-def test_a_hanging_bullet_pairs_with_the_text_beside_it() -> None:
+def at(text: str, x0: float, top: float, page: int = 2) -> TextLine:
+    return TextLine(
+        text=text, pdf_page=page, font_size=10, x0=x0, top=top, x1=x0 + 30, bottom=top + 5
+    )
+
+
+def test_a_hanging_bullet_and_the_text_beside_it_are_both_chapter_toc() -> None:
     """With a hanging indent the bullet and its text are separate line segments."""
     outline = (entry("Setup", page=2), entry("Connect", 2, page=3), entry("Panel", 2, page=4))
-
-    def at(text: str, x0: float, top: float, page: int = 2) -> TextLine:
-        return TextLine(
-            text=text, pdf_page=page, font_size=10, x0=x0, top=top, x1=x0 + 30, bottom=top + 5
-        )
-
     split = (at("●", 100, 200), at("Connect", 122, 200), at("●", 100, 220), at("Panel", 122, 220))
     stray = (at("●", 100, 300), at("Connect", 122, 340), at("Panel", 122, 360))
 
-    assert chapter_opener_pages(outline, split) == frozenset({2})
-    assert chapter_opener_pages(outline, stray) == frozenset()
+    assert chapter_toc_lines(outline, split) == frozenset({0, 1, 2, 3})
+    assert chapter_toc_lines(outline, stray) == frozenset()
+
+
+def test_the_lead_in_line_before_the_list_is_chapter_toc() -> None:
+    outline = (entry("Setup", page=2), entry("Connect", 2, page=3), entry("Panel", 2, page=4))
+    intro = at("The printer needs a few steps before first use.", 100, 150)
+    lead_in = at("This chapter covers:", 100, 180)
+    items = (at("●", 100, 200), at("Connect", 122, 200), at("●", 100, 220), at("Panel", 122, 220))
+
+    with_lead_in = chapter_toc_lines(outline, (intro, lead_in, *items))
+    without_colon = chapter_toc_lines(outline, (lead_in, intro, *items))
+
+    assert with_lead_in == frozenset({1, 2, 3, 4, 5})
+    assert without_colon == frozenset({2, 3, 4, 5})

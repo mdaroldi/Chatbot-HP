@@ -16,6 +16,7 @@ from app.core.settings import Settings
 from app.domain.ingestion import CorpusError, ParsedDocument, TextLine
 from app.infra.corpus_http import HttpCorpusSource, create_corpus_http_client
 from app.infra.pdfplumber_parser import PdfplumberParser
+from app.ingestion.cleaning import CleanedDocument, clean
 from app.ingestion.corpus import load_corpus
 from app.ingestion.footer import FooterSplit, split_footers
 from app.ingestion.lines import group_lines
@@ -29,6 +30,7 @@ class ParsedCorpusDocument:
     parsed: ParsedDocument
     lines: tuple[TextLine, ...]
     footers: FooterSplit
+    cleaned: CleanedDocument
 
 
 async def _fetch_all() -> dict[str, Path]:
@@ -56,6 +58,9 @@ def corpus(corpus_files: Mapping[str, Path]) -> Mapping[str, ParsedCorpusDocumen
         parsed = parser.parse(corpus_files[document.doc_id], document)
         lines = group_lines(parsed.words, parsed.images)
         result[document.doc_id] = ParsedCorpusDocument(
-            parsed=parsed, lines=lines, footers=split_footers(lines, parsed.page_heights)
+            parsed=parsed,
+            lines=lines,
+            footers=split_footers(lines, parsed.page_heights),
+            cleaned=clean(lines, parsed.outline, parsed.page_heights),
         )
     return result

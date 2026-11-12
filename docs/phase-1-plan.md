@@ -28,8 +28,8 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 | 3 | `feat(ingestion): corpus manifest and verified downloader` | done (`backend/corpus.toml`, `app/infra/corpus_http.py`); `fix: anchor the corpus cache ignore pattern` (da7cf4b) |
 | 4 | `feat(ingestion): pdfplumber parser with footer, bookmark and row-band tables` | done (`app/infra/pdfplumber_parser.py`, `app/ingestion/{lines,footer,outline,pages,tables}.py`) |
 | 4b | `feat(ingestion): [icon] placeholders for inline images` (image boxes in the parser output, `[icon]` inserted during line grouping, lost-icon count in the stats: measured 87 ENVY, 3 OMEN; the spike's 43 was not reproducible, see ADR 0004 corrections) | done |
-| 5 | `feat(ingestion): cleaning stage with drop statistics` | next |
-| 6 | `feat(ingestion): sections and chunking v1` (with ADR 0005 and the CLAUDE.md chunking row) | pending |
+| 5 | `feat(ingestion): cleaning stage with drop statistics` | done (`app/ingestion/{cleaning,language}.py`; `pages.chapter_toc_lines` replaces `chapter_opener_pages`; continuation rule and opener lead-in as approved, see ADR 0004 corrections) |
+| 6 | `feat(ingestion): sections and chunking v1` (with ADR 0005 and the CLAUDE.md chunking row) | next |
 | 7 | `feat(ingestion): fastembed embedder and token counter` | pending |
 | 8 | `feat(ingestion): Qdrant versioned collection and alias swap` | pending |
 | 9 | `feat(db): index_builds manifest (migration 0002)` | pending |
@@ -161,9 +161,12 @@ Layers (dependency rule unchanged):
      (English, German, French, Spanish, Portuguese, Italian, Dutch). Drop when the line
      has **≥ 3 words**, its best non-English score is **≥ 2**, and that score is
      **greater than the English score**.
-   - Continuation rule: a **short** line in the **same block**, between two dropped
-     lines and scoring below 2, is dropped too. A unit test keeps an English line that
-     sits between two dropped lines.
+   - Continuation rule (as approved at commit 5): a line the main rule kept is dropped
+     when the line above it in the **same block** (same page, column and font size, at
+     most 1.5 em apart) was dropped as non-English and its English score is below 2.
+     The tails end their paragraphs, often before a heading, so "between two dropped
+     lines" missed two of the three. A unit test keeps an English line that follows a
+     dropped line in the same block.
    - Lines the strict rule kept on PDF pages 121-132 (10): 5 are `hp.com` URLs
      (correctly kept); 3 are short continuation lines of German/French paragraphs
      (PDF pages 122, 123, 124), which the continuation rule must catch; 2 are real

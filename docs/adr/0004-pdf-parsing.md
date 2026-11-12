@@ -97,3 +97,33 @@ PDF page numbers.
   text on 45 line segments, 30 in table cells), OMEN 3 (table cells). The spike's 43
   could not be reproduced (its scripts were not kept); 45 body-text segments is the
   closest match.
+
+### Cleaning (Phase 1, commit 5)
+
+Measured on both manuals with the implemented cleaning stage; corpus tests pin the
+counts. PDF page numbers.
+
+- **Order:** each line is dropped once, under the first matching rule: footer, TOC
+  page, index page, chapter-opener list, non-Latin, non-English Latin, empty section.
+- **Chapter-opener lists** are dropped by line position, not by page: the bullets that
+  name the chapter's sections, plus the lead-in line just before them when it ends
+  with a colon. The chapter's own introduction on that page is kept.
+- **Function-word lists hold no English words:** a word that is also English ("in",
+  "is", "do", "as", "a", "per", "am") is on the English list only. With shared words, a
+  first draft left six English lines tied with a Dutch or Portuguese score.
+- **Continuation rule, as implemented** (approved change to plan item 3): a line the
+  main rule kept is dropped when the line above it in the same column and block was
+  dropped as non-English, and its English score is below 2. Same block: same page and
+  font size, top-to-top distance of at most 1.5 em. The spike's tails end their
+  paragraphs and are mostly followed by a heading, so "between two dropped lines"
+  missed two of the three. The rule drops 6 tails (PDF 122, 123 ×3, 124, 133).
+- **Empty sections:** a section runs from its heading to the next matched heading; a
+  chapter number or appendix letter on the heading's visual line belongs to the
+  heading. A section with no kept line containing a letter or digit (after removing
+  `[icon]`) is dropped with its heading. ENVY: 21 (8 chapter headings whose only
+  content was the opener list, 12 notices whose text was in another language, and one
+  heading directly followed by its first subsection); OMEN: 0.
+- **Residue, kept by design:** three Latin-script lines in languages or forms the
+  rule cannot judge (a one-word German label, a German label without function words,
+  a Turkish line), and one Latin-script line in a language without a list (Serbian),
+  which is dropped only because it happens to score as Portuguese.
