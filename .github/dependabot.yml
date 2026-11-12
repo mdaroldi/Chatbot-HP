@@ -1,0 +1,39 @@
+# Weekly, grouped dependency updates. Each group opens one PR per ecosystem and
+# directory; the open-PR limit keeps review load bounded.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directories: ["/backend", "/frontend"]
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      python:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directories: ["/backend", "/frontend"]
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      base-images:
+        patterns: ["*"]
+
+  - package-ecosystem: docker-compose
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      service-images:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]
