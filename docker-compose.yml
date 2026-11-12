@@ -15,6 +15,9 @@ services:
     <<: *hardening
     build: ./backend
     image: hpdocs-backend:local
+    # Same numeric non-root user as the image's USER, stated here so it holds
+    # even if the image changes.
+    user: "10001:10001"
     init: true
     environment:
       APP_ENV: ${APP_ENV:-development}
@@ -43,6 +46,9 @@ services:
     <<: *hardening
     build: ./frontend
     image: hpdocs-frontend:local
+    # Same numeric non-root user as the image's USER, stated here so it holds
+    # even if the image changes.
+    user: "10001:10001"
     init: true
     environment:
       BACKEND_URL: http://backend:8000

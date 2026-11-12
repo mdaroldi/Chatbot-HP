@@ -5,6 +5,7 @@ here instead of being checked only by hand.
 """
 
 import pathlib
+import re
 from typing import Any
 
 import pytest
@@ -159,3 +160,45 @@ def test_integration_compose_binds_only_to_loopback() -> None:
     for name, service in load(TEST_COMPOSE)["services"].items():
         for mapping in service.get("ports", []):
             assert str(mapping).startswith("127.0.0.1:"), name
+
+
+# ------------------------------------------------------------------ built images
+
+DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
+NON_ROOT_NUMERIC = re.compile(r"^[1-9][0-9]*:[1-9][0-9]*$")
+
+
+def dockerfile(services: dict[str, Service], name: str) -> str:
+    context = REPO / str(services[name]["build"])
+    return (context / "Dockerfile").read_text()
+
+
+@pytest.mark.parametrize("name", sorted(APP_SERVICES))
+def test_app_services_are_built_from_digest_pinned_base_images(
+    services: dict[str, Service], name: str
+) -> None:
+    """Built images are tagged locally; their pinning lives in each Dockerfile."""
+    text = dockerfile(services, name)
+    image_args = dict(re.findall(r"^ARG (\w+_IMAGE)=(\S+)$", text, flags=re.MULTILINE))
+    stages = re.findall(r"^FROM (\S+)", text, flags=re.MULTILINE)
+
+    assert image_args
+    assert all(DIGEST.search(reference) for reference in image_args.values()), image_args
+    for stage in stages:
+        arg = re.fullmatch(r"\$\{(\w+)\}", stage)
+        assert arg is not None, f"{name}: FROM {stage} must use a pinned *_IMAGE argument"
+        assert arg.group(1) in image_args
+
+
+@pytest.mark.parametrize("name", sorted(APP_SERVICES))
+def test_app_services_run_as_numeric_non_root_user(services: dict[str, Service], name: str) -> None:
+    users = re.findall(r"^USER (\S+)$", dockerfile(services, name), flags=re.MULTILINE)
+
+    assert users, f"{name}: Dockerfile has no USER"
+    assert NON_ROOT_NUMERIC.fullmatch(users[-1]), users[-1]
+    assert services[name]["user"] == users[-1]
+
+
+def test_integration_compose_images_are_pinned_by_digest() -> None:
+    for name, service in load(TEST_COMPOSE)["services"].items():
+        assert DIGEST.search(service["image"]), name
