@@ -29,8 +29,8 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 | 4 | `feat(ingestion): pdfplumber parser with footer, bookmark and row-band tables` | done (`app/infra/pdfplumber_parser.py`, `app/ingestion/{lines,footer,outline,pages,tables}.py`) |
 | 4b | `feat(ingestion): [icon] placeholders for inline images` (image boxes in the parser output, `[icon]` inserted during line grouping, lost-icon count in the stats: measured 87 ENVY, 3 OMEN; the spike's 43 was not reproducible, see ADR 0004 corrections) | done |
 | 5 | `feat(ingestion): cleaning stage with drop statistics` | done (`app/ingestion/{cleaning,language}.py`; `pages.chapter_toc_lines` replaces `chapter_opener_pages`; continuation rule and opener lead-in as approved, see ADR 0004 corrections) |
-| 6 | `feat(ingestion): sections and chunking v1` (with ADR 0005 and the CLAUDE.md chunking row) | next |
-| 7 | `feat(ingestion): fastembed embedder and token counter` | pending |
+| 6 | `feat(ingestion): sections and chunking v1` (with ADR 0005 and the CLAUDE.md chunking row) | done (`app/ingestion/{spans,blocks,sections,chunking}.py`; unit tests use a word-counting fake tokenizer) |
+| 7 | `feat(ingestion): fastembed embedder and token counter` (with the corpus test of the real 450-token limit, and `CHUNK_MIN_TOKENS` re-measured with the real tokenizer) | next |
 | 8 | `feat(ingestion): Qdrant versioned collection and alias swap` | pending |
 | 9 | `feat(db): index_builds manifest (migration 0002)` | pending |
 | 10 | `feat(ingestion): pipeline, CLI, migrate and ingest services, make ingest/inspect-chunks` (with the startup-order ADR and CLAUDE.md update) | pending |
@@ -208,7 +208,12 @@ Layers (dependency rule unchanged):
   counted with the bge-small tokenizer.
 - Procedures split at step boundaries, repeating the section title with "(continued)".
 - One table per chunk; when split, the header row is repeated and rows are never cut.
-- Sections under `CHUNK_MIN_TOKENS` merge into the next section under the same parent.
+- Sections under `CHUNK_MIN_TOKENS` (50) merge into the next section under the same parent;
+  the merged chunk carries the parent's path and each member's title (ADR 0005).
+- A chunk holds at most one table; a word or row that fits no chunk raises
+  `ChunkTooLargeError` instead of overflowing.
+- The chunker takes the limits as arguments; the `CHUNK_*` settings are wired in commit 10.
+- The corpus test of the real 450-token limit lands in commit 7 with the tokenizer.
 - WARNING/CAUTION stays with its step and sets `has_warning`.
 - Payload: doc_id, product, section_path, chapter, pdf_page_start/end,
   printed_page_start/end, content_type (procedure|table|reference|specs|parts|

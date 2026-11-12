@@ -279,3 +279,21 @@ def test_a_heading_only_section_is_empty_and_its_label_goes_with_it() -> None:
         "Print",
         "Print from any app.",
     ]
+
+
+def test_spans_index_the_kept_lines_and_skip_dropped_headings() -> None:
+    lines = (
+        heading("Notices"),
+        line("本机支持无线打印", top=80),
+        line("Read these notices.", top=100),
+        heading("Taiwan", top=120),
+        line("本机支持无线打印", top=150),
+        heading("Canada", top=240),
+        line("Keep the device dry.", top=270),
+    )
+    outline = (entry("Notices"), entry("Taiwan", 2), entry("Canada", 2))
+
+    result = run(lines, outline)
+
+    assert kept(result) == ["Notices", "Read these notices.", "Canada", "Keep the device dry."]
+    assert [(s.entry, s.start, s.body, s.end) for s in result.spans] == [(0, 0, 1, 2), (2, 2, 3, 4)]

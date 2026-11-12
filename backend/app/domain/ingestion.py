@@ -57,6 +57,7 @@ class BlockKind(StrEnum):
     STEP = "step"
     BULLET = "bullet"
     NOTE = "note"
+    TABLE_HEADER = "table_header"
     TABLE_ROW = "table_row"
 
 
@@ -83,6 +84,10 @@ class CorpusDownloadError(CorpusError):
 
 class ChecksumMismatchError(CorpusError):
     """The bytes were fetched but are not the pinned document."""
+
+
+class ChunkTooLargeError(Exception):
+    """A piece the chunker may not split (a word or a table row) exceeds the limit."""
 
 
 class DocumentParseError(Exception):
@@ -194,6 +199,9 @@ class Block:
     text: str
     pages: PageRange
     note: NoteLabel | None = None
+    # x0 of the block's first line (points): tells a note indented under a step from
+    # one at the step's own level.
+    indent: float = 0.0
 
     def __post_init__(self) -> None:
         _require(_non_blank(self.text), "block text must not be blank")

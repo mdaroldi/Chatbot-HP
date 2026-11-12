@@ -22,3 +22,12 @@ class FakeProbe:
             await asyncio.sleep(self.delay_seconds)
         if self.error is not None:
             raise self.error
+
+
+class WordTokenCounter:
+    """TokenCounter that counts whitespace-separated words; the real bge-small
+    tokenizer arrives with the embedder, and its limit is checked by corpus tests.
+    """
+
+    def count(self, text: str) -> int:
+        return len(text.split())

@@ -20,6 +20,7 @@ from app.ingestion.cleaning import CleanedDocument, clean
 from app.ingestion.corpus import load_corpus
 from app.ingestion.footer import FooterSplit, split_footers
 from app.ingestion.lines import group_lines
+from app.ingestion.sections import SectionedDocument, build_sections
 
 ENVY = "envy-6000-user-guide"
 OMEN = "omen-17-service-guide"
@@ -31,6 +32,7 @@ class ParsedCorpusDocument:
     lines: tuple[TextLine, ...]
     footers: FooterSplit
     cleaned: CleanedDocument
+    sectioned: SectionedDocument
 
 
 async def _fetch_all() -> dict[str, Path]:
@@ -57,10 +59,12 @@ def corpus(corpus_files: Mapping[str, Path]) -> Mapping[str, ParsedCorpusDocumen
     for document in load_corpus():
         parsed = parser.parse(corpus_files[document.doc_id], document)
         lines = group_lines(parsed.words, parsed.images)
+        cleaned = clean(lines, parsed.outline, parsed.page_heights)
         result[document.doc_id] = ParsedCorpusDocument(
             parsed=parsed,
             lines=lines,
             footers=split_footers(lines, parsed.page_heights),
-            cleaned=clean(lines, parsed.outline, parsed.page_heights),
+            cleaned=cleaned,
+            sectioned=build_sections(document.doc_id, cleaned, parsed.outline, parsed.rules),
         )
     return result

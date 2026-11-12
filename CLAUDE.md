@@ -37,7 +37,7 @@ The PDFs are copyrighted by HP. Never commit them or large verbatim extracts. In
 | Relational DB | PostgreSQL, SQLAlchemy 2 async, asyncpg, Alembic migrations |
 | Embeddings | Local open-source models on CPU via fastembed: dense `BAAI/bge-small-en-v1.5`, sparse BM25 |
 | Reranker | Local cross-encoder on CPU via fastembed, switchable by env var |
-| Chunking | Structure-aware: follow the heading hierarchy, one procedure or table per chunk, about 500 tokens max, each chunk prefixed with "document > chapter > section" |
+| Chunking | Structure-aware: follow the heading hierarchy, one procedure or table per chunk, at most 450 tokens including the "document > chapter > section" prefix (bge-small truncates at 512 tokens); see ADR 0005 |
 | Search | Hybrid dense + BM25 with reciprocal rank fusion, then rerank top 20 down to 5 |
 | LLM | Anthropic API behind a provider interface; a deterministic stub provider for tests and load tests |
 | Chat history | Stored in Postgres; follow-up questions are rewritten into standalone queries before retrieval |

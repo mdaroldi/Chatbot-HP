@@ -3,8 +3,8 @@
 Each line is dropped at most once, under the first rule that matches, in the order
 of `DropReason`: footer, TOC page, index page, chapter-opener list, non-Latin
 script, non-English Latin text, and finally sections that cleaning left empty.
-Heading matching runs before any drop, so a section keeps its bounds even when
-the lines around it go.
+Heading spans are found before any drop, so a section keeps its bounds even when
+the lines around it go; the result carries them re-indexed onto the kept lines.
 """
 
 from collections import Counter
@@ -14,9 +14,8 @@ from dataclasses import dataclass
 from app.domain.ingestion import ICON, DropReason, OutlineEntry, TextLine
 from app.ingestion.footer import PageFooter, split_footers
 from app.ingestion.language import MIN_SCORE, is_non_latin, score_line
-from app.ingestion.lines import LINE_TOLERANCE
-from app.ingestion.outline import HeadingMatch, match_headings
 from app.ingestion.pages import chapter_toc_lines, index_pages, toc_pages
+from app.ingestion.spans import HeadingSpan, heading_spans
 
 # Lines of one paragraph are about 1.2 ems apart (top to top); paragraphs about 2.
 BLOCK_LEADING_EM = 1.5
@@ -47,6 +46,7 @@ class CleanedDocument:
     footers: Mapping[int, PageFooter]
     dropped: tuple[DroppedLine, ...]
     stats: CleaningStats
+    spans: tuple[HeadingSpan, ...]  # over `lines`
 
 
 def _footer_lines(lines: Sequence[TextLine], body: Sequence[TextLine]) -> list[TextLine]:
@@ -114,40 +114,19 @@ def _drop_paragraph_tails(body: Sequence[TextLine], reasons: Reasons) -> None:
             reasons[position] = DropReason.NON_ENGLISH_LATIN
 
 
-def _heading_starts(body: Sequence[TextLine], matches: Sequence[HeadingMatch]) -> list[int]:
-    """A heading starts with its visual line: a chapter number or appendix letter set
-    before the title belongs to the heading, not to the section above.
-    """
-    starts: list[int] = []
-    for number, match in enumerate(matches):
-        floor = matches[number - 1].last_line + 1 if number else 0
-        title, start = body[match.first_line], match.first_line
-        while start > floor and (
-            body[start - 1].pdf_page == title.pdf_page
-            and abs(body[start - 1].top - title.top) <= LINE_TOLERANCE
-        ):
-            start -= 1
-        starts.append(start)
-    return starts
-
-
 def _has_text(line: TextLine) -> bool:
     return any(char.isalnum() for char in line.text.replace(ICON, ""))
 
 
 def _drop_empty_sections(
-    body: Sequence[TextLine], reasons: Reasons, outline: Sequence[OutlineEntry]
+    body: Sequence[TextLine], reasons: Reasons, spans: Sequence[HeadingSpan]
 ) -> int:
     """Drop each section whose kept content has no text, with its heading. Sections
     whose heading another rule removed were already counted under that rule.
     """
-    matches = [match for match in match_headings(outline, body) if match]
-    starts = _heading_starts(body, matches)
-    ends = [*starts[1:], len(body)]
     empty = 0
-    for match, start, end in zip(matches, starts, ends, strict=True):
-        heading = range(start, match.last_line + 1)
-        content = range(match.last_line + 1, end)
+    for span in spans:
+        heading, content = range(span.start, span.body), range(span.body, span.end)
         if any(reasons[i] for i in heading):
             continue
         if not any(reasons[i] is None and _has_text(body[i]) for i in content):
@@ -155,6 +134,23 @@ def _drop_empty_sections(
             for i in (*heading, *content):
                 reasons[i] = reasons[i] or DropReason.EMPTY_AFTER_CLEANING
     return empty
+
+
+def _kept_spans(spans: Sequence[HeadingSpan], reasons: Reasons) -> tuple[HeadingSpan, ...]:
+    """Spans re-indexed onto the kept lines, for spans whose heading survived. Kept
+    content of a span whose heading went (rare) joins the span before it.
+    """
+    position, kept_index = 0, []
+    for reason in reasons:
+        kept_index.append(position)
+        position += reason is None
+    survivors = [s for s in spans if not any(reasons[i] for i in range(s.start, s.body))]
+    starts = [kept_index[s.start] for s in survivors]
+    ends = [*starts[1:], position][: len(starts)]
+    return tuple(
+        HeadingSpan(entry=s.entry, start=start, body=start + (s.body - s.start), end=end)
+        for s, start, end in zip(survivors, starts, ends, strict=True)
+    )
 
 
 def clean(
@@ -167,7 +163,8 @@ def clean(
     body = split.body
     reasons, toc, index = _line_reasons(body, outline, len(page_heights))
     _drop_paragraph_tails(body, reasons)
-    empty = _drop_empty_sections(body, reasons, outline)
+    spans = heading_spans(outline, body)
+    empty = _drop_empty_sections(body, reasons, spans)
     dropped = (
         *(DroppedLine(line, DropReason.FOOTER) for line in _footer_lines(lines, body)),
         *(DroppedLine(line, reason) for line, reason in zip(body, reasons, strict=True) if reason),
@@ -182,4 +179,5 @@ def clean(
             pages={DropReason.TOC: len(toc), DropReason.INDEX: len(index)},
             empty_sections=empty,
         ),
+        spans=_kept_spans(spans, reasons),
     )
