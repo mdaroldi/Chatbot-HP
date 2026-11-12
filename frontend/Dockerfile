@@ -22,9 +22,13 @@ FROM ${PYTHON_IMAGE} AS runtime
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
-# Apply pending Debian security updates (the pinned base can lag behind them), drop
-# pip and ensurepip's bundled wheels (no Python package managers at runtime) and add
-# the numeric non-root user the container runs as.
+# 1. Apply pending Debian security updates. Added for CVE-2026-76844 and
+#    CVE-2026-85091 (zlib1g; fixed in 1:1.3.dfsg+really1.3.1-1+deb13u1), which the
+#    pinned base image still ships. Remove the `apt-get update/upgrade` lines once
+#    the PYTHON_IMAGE digest is bumped to a base that already contains that zlib1g
+#    or newer, and `make scan-images` passes without them.
+# 2. Drop pip and ensurepip's bundled wheels: no Python package managers at runtime.
+# 3. Add the numeric non-root user the container runs as.
 RUN apt-get update \
     && apt-get upgrade --yes --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
