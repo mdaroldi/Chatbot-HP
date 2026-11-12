@@ -5,7 +5,7 @@ name: hpdocs-test
 
 services:
   postgres:
-    image: postgres:17.9-alpine3.22@sha256:034839bd88128360cda25496ebdb1471e24a4aa09b937160c73df2bb51126308
+    image: postgres:18.4-alpine3.22@sha256:774521500f4c22761b25a6bdb772a0a3c2e8dd32468210bdad9231c5752ea398
     environment:
       POSTGRES_DB: hpdocs_it
       POSTGRES_USER: it_user
