@@ -50,27 +50,58 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=None, case_sensitive=False, frozen=True)
 
-    app_env: Environment = Environment.DEVELOPMENT
-    log_level: LogLevel = LogLevel.INFO
-    # Exception messages often contain user input; local debugging only.
-    log_include_exception_messages: bool = False
-    cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:8501"]
-    # Interactive docs and the OpenAPI schema; disable to shrink the public surface.
-    api_docs_enabled: bool = True
+    app_env: Environment = Field(
+        default=Environment.DEVELOPMENT,
+        description="`development`, `test` or `production`.",
+    )
+    log_level: LogLevel = Field(
+        default=LogLevel.INFO, description="`DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`."
+    )
+    log_include_exception_messages: bool = Field(
+        default=False,
+        description="Log exception messages (they may contain user text). "
+        "Local debugging only; rejected in production.",
+    )
+    cors_allowed_origins: Annotated[list[str], NoDecode] = Field(
+        default=["http://localhost:8501"],
+        description="Comma-separated browser origins allowed by CORS; `*` is rejected.",
+    )
+    api_docs_enabled: bool = Field(
+        default=True, description="Serve `/docs`, `/redoc` and `/openapi.json`."
+    )
 
-    postgres_host: str = Field(default="postgres", min_length=1)
-    postgres_port: int = Field(default=5432, ge=1, le=65535)
-    postgres_db: str = Field(default="hpdocs", min_length=1)
-    postgres_user: str = Field(default="hpdocs", min_length=1)
-    postgres_password: SecretStr = Field(min_length=1)
-    # Bounded pool: at most pool_size + max_overflow connections per process.
-    postgres_pool_size: int = Field(default=5, ge=1, le=100)
-    postgres_max_overflow: int = Field(default=5, ge=0, le=100)
-    postgres_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    postgres_host: str = Field(
+        default="postgres", min_length=1, description="Postgres host (fixed in Compose)."
+    )
+    postgres_port: int = Field(
+        default=5432, ge=1, le=65535, description="Postgres port (fixed in Compose)."
+    )
+    postgres_db: str = Field(default="hpdocs", min_length=1, description="Database name.")
+    postgres_user: str = Field(default="hpdocs", min_length=1, description="Database user.")
+    postgres_password: SecretStr = Field(
+        min_length=1, description="Database password. Required; never has a default."
+    )
+    postgres_pool_size: int = Field(
+        default=5, ge=1, le=100, description="Pooled connections kept per API process."
+    )
+    postgres_max_overflow: int = Field(
+        default=5,
+        ge=0,
+        le=100,
+        description="Extra connections beyond the pool; the cap is pool size plus this.",
+    )
+    postgres_connect_timeout_seconds: float = Field(
+        default=5.0, gt=0, le=60, description="Timeout for opening a Postgres connection."
+    )
 
-    qdrant_url: HttpUrl = HttpUrl("http://qdrant:6333")
+    qdrant_url: HttpUrl = Field(
+        default=HttpUrl("http://qdrant:6333"),
+        description="Qdrant REST base URL (fixed in Compose).",
+    )
 
-    readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+    readiness_timeout_seconds: float = Field(
+        default=2.0, gt=0, le=30, description="Per-dependency timeout for `GET /ready`."
+    )
 
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod

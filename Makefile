@@ -15,7 +15,7 @@ IMAGES := hpdocs-backend:local hpdocs-frontend:local
 TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURDIR)":/src:ro \
 	-v trivy-cache:/root/.cache $(TRIVY_IMAGE)
 
-.PHONY: help install setup lint lint-workflows format typecheck test coverage-summary test-int \
+.PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int \
 	security images scan-images scan-config up down ingest eval load check
 
 help: ## List available targets
@@ -48,6 +48,10 @@ typecheck: ## mypy --strict (backend and frontend)
 test: ## Unit tests with branch coverage gate, fail under 90 (backend and frontend)
 	cd $(BACKEND) && uv run --frozen pytest tests/unit --cov --cov-report=term-missing
 	cd $(FRONTEND) && uv run --frozen pytest --cov --cov-report=term-missing
+
+docs-config: ## Print the README configuration table generated from Settings
+	@cd $(BACKEND) && uv run --frozen python -c \
+		"import sys; from app.core.settings_docs import settings_markdown_table as t; sys.stdout.write(t())"
 
 coverage-summary: ## Markdown coverage tables (used for the CI job summary)
 	@for project in $(PROJECTS); do \
