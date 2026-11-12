@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# Copyrighted source documents and local notes: never commit
+*.pdf
+job-description.txt
+
+# Generated artifacts
+data/
+models/
+.cache/
+loadtest/results/
+eval/reports/runs/
+
+# OS and editors
+.DS_Store
+.idea/
+.vscode/
