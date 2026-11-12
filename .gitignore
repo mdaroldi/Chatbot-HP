@@ -20,6 +20,7 @@ htmlcov/
 job-description.txt
 
 # Generated artifacts
+corpus/
 data/
 models/
 .cache/

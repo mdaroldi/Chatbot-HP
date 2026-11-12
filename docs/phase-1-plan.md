@@ -25,8 +25,8 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 |---|---|---|
 | 1 | `docs: ADR 0004 PDF parsing` | done (4e3bfef) |
 | 2 | `feat(ingestion): domain IR and protocols` | done (`app/domain/ingestion.py`) |
-| 3 | `feat(ingestion): corpus manifest and verified downloader` | next |
-| 4 | `feat(ingestion): pdfplumber parser with footer, bookmark and row-band tables` | pending |
+| 3 | `feat(ingestion): corpus manifest and verified downloader` | done (`backend/corpus.toml`, `app/infra/corpus_http.py`) |
+| 4 | `feat(ingestion): pdfplumber parser with footer, bookmark and row-band tables` | next |
 | 5 | `feat(ingestion): cleaning stage with drop statistics` | pending |
 | 6 | `feat(ingestion): sections and chunking v1` (with ADR 0005 and the CLAUDE.md chunking row) | pending |
 | 7 | `feat(ingestion): fastembed embedder and token counter` | pending |

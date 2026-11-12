@@ -65,6 +65,26 @@ class BuildStatus(StrEnum):
     FAILED = "failed"
 
 
+class CorpusError(Exception):
+    """Base for corpus failures; messages name the document, never its content."""
+
+
+class CorpusManifestError(CorpusError):
+    """The corpus manifest is unreadable or breaks the allowlist rules."""
+
+
+class CorpusNotAllowedError(CorpusError):
+    """A document outside the manifest was requested."""
+
+
+class CorpusDownloadError(CorpusError):
+    """The document could not be fetched: network, HTTP status, size, redirect or type."""
+
+
+class ChecksumMismatchError(CorpusError):
+    """The bytes were fetched but are not the pinned document."""
+
+
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise ValueError(message)

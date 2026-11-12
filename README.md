@@ -83,6 +83,9 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `POSTGRES_CONNECT_TIMEOUT_SECONDS` | `5.0` | Timeout for opening a Postgres connection. |
 | `QDRANT_URL` | `http://qdrant:6333/` | Qdrant REST base URL (fixed in Compose). |
 | `READINESS_TIMEOUT_SECONDS` | `2.0` | Per-dependency timeout for `GET /ready`. |
+| `CORPUS_DIR` | `corpus` | Cache directory for the verified source PDFs; reused offline. |
+| `CORPUS_MAX_BYTES` | `33554432` | Largest accepted source PDF, in bytes. |
+| `CORPUS_DOWNLOAD_TIMEOUT_SECONDS` | `120.0` | Per-phase HTTP timeout and total deadline for one PDF download. |
 <!-- settings-table:end -->
 
 A unit test fails if this table, `.env.example` and the `Settings` class disagree.

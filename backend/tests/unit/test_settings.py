@@ -1,5 +1,7 @@
 """Behavior of the environment-driven application settings."""
 
+import pathlib
+
 import pytest
 from pydantic import SecretStr, ValidationError
 
@@ -264,3 +266,39 @@ def test_invalid_qdrant_url_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_get_settings_returns_a_cached_instance() -> None:
     assert get_settings() is get_settings()
+
+
+def test_corpus_defaults_fit_both_manuals_and_a_slow_link() -> None:
+    settings = Settings()
+
+    assert settings.corpus_dir == pathlib.Path("corpus")
+    assert settings.corpus_max_bytes == 32 * 1024 * 1024
+    assert settings.corpus_download_timeout_seconds == 120.0
+
+
+def test_corpus_settings_are_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CORPUS_DIR", "/var/cache/corpus")
+    monkeypatch.setenv("CORPUS_MAX_BYTES", "1048576")
+    monkeypatch.setenv("CORPUS_DOWNLOAD_TIMEOUT_SECONDS", "30")
+
+    settings = Settings()
+
+    assert settings.corpus_dir == pathlib.Path("/var/cache/corpus")
+    assert settings.corpus_max_bytes == 1048576
+    assert settings.corpus_download_timeout_seconds == 30.0
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("CORPUS_MAX_BYTES", "0"),
+        ("CORPUS_MAX_BYTES", "1073741825"),
+        ("CORPUS_DOWNLOAD_TIMEOUT_SECONDS", "0"),
+        ("CORPUS_DOWNLOAD_TIMEOUT_SECONDS", "3601"),
+    ],
+)
+def test_corpus_limits_are_bounded(monkeypatch: pytest.MonkeyPatch, name: str, value: str) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError, match=name.lower()):
+        Settings()

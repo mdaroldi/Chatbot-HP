@@ -1,0 +1,17 @@
+# Corpus allowlist: the only documents ingestion may download and index.
+# sha256 pins the exact file; a changed upstream PDF fails ingestion until it is
+# reviewed and the digest is updated here. The PDFs themselves are never committed.
+
+[[documents]]
+doc_id = "envy-6000-user-guide"
+title = "HP ENVY 6000 All-in-One series User Guide"
+product = "HP ENVY 6000 All-in-One series"
+url = "https://h10032.www1.hp.com/ctg/Manual/c06584210.pdf"
+sha256 = "d7f346897f0660b78dea88719a76267c604cbb2ee81de686ceabce56ab7a34d1"
+
+[[documents]]
+doc_id = "omen-17-service-guide"
+title = "OMEN 17.3 inch Gaming Laptop PC Maintenance and Service Guide"
+product = "OMEN 17.3 inch Gaming Laptop PC"
+url = "https://kaas.hpcloud.hp.com/pdf-public/pdf_10301542_en-US-1.pdf"
+sha256 = "e19b003d287283dd409271f72da5ccfa28fd34247a616628a65e198e469b5356"

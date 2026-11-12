@@ -2,6 +2,7 @@
 
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote, urlsplit
 
@@ -101,6 +102,23 @@ class Settings(BaseSettings):
 
     readiness_timeout_seconds: float = Field(
         default=2.0, gt=0, le=30, description="Per-dependency timeout for `GET /ready`."
+    )
+
+    corpus_dir: Path = Field(
+        default=Path("corpus"),
+        description="Cache directory for the verified source PDFs; reused offline.",
+    )
+    corpus_max_bytes: int = Field(
+        default=32 * 1024 * 1024,
+        gt=0,
+        le=1024 * 1024 * 1024,
+        description="Largest accepted source PDF, in bytes.",
+    )
+    corpus_download_timeout_seconds: float = Field(
+        default=120.0,
+        gt=0,
+        le=3600,
+        description="Per-phase HTTP timeout and total deadline for one PDF download.",
     )
 
     @field_validator("cors_allowed_origins", mode="before")
