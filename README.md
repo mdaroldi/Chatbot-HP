@@ -29,6 +29,13 @@ make check   # lint + typecheck + unit tests (coverage gate) + security
 make help    # all targets
 ```
 
+Run the API locally without Docker (needs the variables from `.env.example`):
+
+```bash
+cd backend
+uv run uvicorn app.main:create_app --factory --no-server-header
+```
+
 ## Architecture
 
 See [docs/adr](docs/adr) for the architecture decision records.

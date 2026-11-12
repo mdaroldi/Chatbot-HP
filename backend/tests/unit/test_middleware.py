@@ -1,25 +1,21 @@
 """Behavior of the pure-ASGI request ID and access log middleware."""
 
 import asyncio
-import io
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterator
-from typing import Any
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from starlette.types import Message, Receive, Scope, Send
 
-from app.core.logging import JsonFormatter
 from app.core.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.core.request_context import get_request_id
+from tests.unit.conftest import LogReader
 
 VALID_ID = "abcDEF12-3456-7890"
-
-LogReader = Callable[[], list[dict[str, Any]]]
 
 
 def build_app() -> FastAPI:
@@ -57,25 +53,6 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=build_app())
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
         yield http
-
-
-@pytest.fixture
-def json_logs() -> Iterator[LogReader]:
-    """Capture real formatter output, formatted at emit time like in production."""
-    stream = io.StringIO()
-    handler = logging.StreamHandler(stream)
-    handler.setFormatter(JsonFormatter())
-    root = logging.getLogger()
-    previous_level = root.level
-    root.addHandler(handler)
-    root.setLevel(logging.INFO)
-
-    def read() -> list[dict[str, Any]]:
-        return [json.loads(line) for line in stream.getvalue().splitlines()]
-
-    yield read
-    root.removeHandler(handler)
-    root.setLevel(previous_level)
 
 
 def is_generated_uuid4(value: str) -> bool:
@@ -235,6 +212,7 @@ async def test_unhandled_exception_returns_safe_500_with_request_id(
             "code": "internal_error",
             "message": "Internal server error.",
             "request_id": VALID_ID,
+            "details": [],
         }
     }
     assert "kaboom" not in response.text

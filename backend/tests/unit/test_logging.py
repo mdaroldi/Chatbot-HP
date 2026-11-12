@@ -3,7 +3,6 @@
 import json
 import logging
 import sys
-from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -33,15 +32,6 @@ def render(record: logging.LogRecord) -> dict[str, Any]:
     assert "\r" not in line
     parsed: dict[str, Any] = json.loads(line)
     return parsed
-
-
-@pytest.fixture
-def restore_root_logger() -> Iterator[logging.Logger]:
-    root = logging.getLogger()
-    handlers, level = root.handlers[:], root.level
-    yield root
-    root.handlers[:] = handlers
-    root.setLevel(level)
 
 
 def test_output_is_single_line_json_with_required_keys() -> None:
@@ -110,6 +100,12 @@ def test_non_serializable_extra_falls_back_to_string() -> None:
     assert parsed["when"] == "2026-01-02 00:00:00+00:00"
 
 
+def test_uvicorn_color_message_is_dropped() -> None:
+    parsed = render(make_record("Started", color_message="\x1b[36mStarted\x1b[0m"))
+
+    assert "color_message" not in parsed
+
+
 def test_extra_fields_cannot_overwrite_core_keys() -> None:
     parsed = render(make_record("real", level="FAKE", timestamp="never"))
 
@@ -118,17 +114,16 @@ def test_extra_fields_cannot_overwrite_core_keys() -> None:
 
 
 def test_configure_logging_installs_one_json_handler_at_level(
-    restore_root_logger: logging.Logger,
+    restore_logging: logging.Logger,
 ) -> None:
     configure_logging("DEBUG")
     configure_logging("WARNING")
 
-    assert restore_root_logger.level == logging.WARNING
-    assert len(restore_root_logger.handlers) == 1
-    assert isinstance(restore_root_logger.handlers[0].formatter, JsonFormatter)
+    assert restore_logging.level == logging.WARNING
+    assert len(restore_logging.handlers) == 1
+    assert isinstance(restore_logging.handlers[0].formatter, JsonFormatter)
 
 
-@pytest.mark.usefixtures("restore_root_logger")
 def test_configure_logging_routes_uvicorn_loggers_through_root() -> None:
     uvicorn_logger = logging.getLogger("uvicorn.error")
     uvicorn_logger.addHandler(logging.NullHandler())
@@ -139,16 +134,14 @@ def test_configure_logging_routes_uvicorn_loggers_through_root() -> None:
     assert uvicorn_logger.propagate is True
 
 
-@pytest.mark.usefixtures("restore_root_logger")
-@pytest.mark.parametrize("name", ["httpx", "httpcore"])
-def test_configure_logging_silences_http_client_request_urls(name: str) -> None:
-    """HTTP client INFO logs include full URLs with query strings; keep them out."""
+@pytest.mark.parametrize("name", ["httpx", "httpcore", "uvicorn.access"])
+def test_configure_logging_silences_loggers_that_log_full_urls(name: str) -> None:
+    """These log full URLs with query strings at INFO; our access log replaces them."""
     configure_logging("DEBUG")
 
     assert logging.getLogger(name).level == logging.WARNING
 
 
-@pytest.mark.usefixtures("restore_root_logger")
 def test_configure_logging_writes_to_stdout(capsys: pytest.CaptureFixture[str]) -> None:
     configure_logging("INFO")
 

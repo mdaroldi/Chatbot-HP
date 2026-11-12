@@ -9,16 +9,17 @@ from typing import Any
 from app.core.request_context import get_request_id
 
 # Attributes every LogRecord has; anything else on a record came from `extra=`.
+# uvicorn's `color_message` duplicates the message with ANSI escapes.
 _STANDARD_RECORD_ATTRS = frozenset(
     logging.LogRecord("", logging.INFO, "", 0, "", (), None).__dict__
-) | {"message", "asctime"}
+) | {"message", "asctime", "color_message"}
 
 _CORE_KEYS = ("timestamp", "level", "logger", "message", "request_id")
 
 # Loggers that install their own handlers; they must go through the root JSON handler.
 _THIRD_PARTY_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
-# HTTP clients log full request URLs (query strings included) at INFO.
-_QUIET_LOGGERS = ("httpx", "httpcore")
+# These log full URLs (query strings included) at INFO; app.access replaces them.
+_QUIET_LOGGERS = ("httpx", "httpcore", "uvicorn.access")
 
 
 class JsonFormatter(logging.Formatter):

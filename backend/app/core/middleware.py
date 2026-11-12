@@ -12,6 +12,7 @@ import uuid
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.core.errors import error_body
 from app.core.request_context import bound_request_id
 
 REQUEST_ID_HEADER = "x-request-id"
@@ -41,12 +42,7 @@ def _incoming_request_id(scope: Scope) -> bytes | None:
 
 
 def _internal_error_body(request_id: str) -> bytes:
-    error = {
-        "code": "internal_error",
-        "message": "Internal server error.",
-        "request_id": request_id,
-    }
-    return json.dumps({"error": error}).encode()
+    return json.dumps(error_body("internal_error", "Internal server error.", request_id)).encode()
 
 
 class RequestIdMiddleware:

@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     app_env: Environment = Environment.DEVELOPMENT
     log_level: LogLevel = LogLevel.INFO
     cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:8501"]
+    # Interactive docs and the OpenAPI schema; disable to shrink the public surface.
+    api_docs_enabled: bool = True
 
     postgres_host: str = Field(default="postgres", min_length=1)
     postgres_port: int = Field(default=5432, ge=1, le=65535)

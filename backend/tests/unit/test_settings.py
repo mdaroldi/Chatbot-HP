@@ -1,40 +1,9 @@
 """Behavior of the environment-driven application settings."""
 
-from collections.abc import Iterator
-
 import pytest
 from pydantic import SecretStr, ValidationError
 
 from app.core.settings import Environment, LogLevel, Settings, get_settings
-
-SETTINGS_ENV_VARS = (
-    "APP_ENV",
-    "LOG_LEVEL",
-    "CORS_ALLOWED_ORIGINS",
-    "POSTGRES_HOST",
-    "POSTGRES_PORT",
-    "POSTGRES_DB",
-    "POSTGRES_USER",
-    "POSTGRES_PASSWORD",
-    "QDRANT_URL",
-    "READINESS_TIMEOUT_SECONDS",
-)
-
-
-@pytest.fixture(autouse=True)
-def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Isolate every test from the developer's shell environment."""
-    for name in SETTINGS_ENV_VARS:
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("POSTGRES_PASSWORD", "test-password")
-
-
-@pytest.fixture(autouse=True)
-def clear_settings_cache() -> Iterator[None]:
-    """Keep the cached settings instance from leaking between tests."""
-    get_settings.cache_clear()
-    yield
-    get_settings.cache_clear()
 
 
 def test_safe_defaults_when_only_required_values_are_set() -> None:
@@ -49,6 +18,23 @@ def test_safe_defaults_when_only_required_values_are_set() -> None:
     assert settings.postgres_user == "hpdocs"
     assert str(settings.qdrant_url) == "http://qdrant:6333/"
     assert settings.readiness_timeout_seconds == 2.0
+    assert settings.api_docs_enabled is True
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("false", False), ("0", False), ("true", True)])
+def test_api_docs_can_be_toggled_from_environment(
+    monkeypatch: pytest.MonkeyPatch, raw: str, expected: bool
+) -> None:
+    monkeypatch.setenv("API_DOCS_ENABLED", raw)
+
+    assert Settings().api_docs_enabled is expected
+
+
+def test_invalid_api_docs_flag_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_DOCS_ENABLED", "maybe")
+
+    with pytest.raises(ValidationError, match="api_docs_enabled"):
+        Settings()
 
 
 def test_values_are_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
