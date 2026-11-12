@@ -19,12 +19,9 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 # ---------------------------------------------------------------- runtime
 FROM ${PYTHON_IMAGE} AS runtime
-# HOME points at the /tmp tmpfs: Streamlit writes ~/.streamlit at startup and the
-# root filesystem is read-only.
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    HOME=/tmp
+    PYTHONUNBUFFERED=1
 RUN python -m pip uninstall --yes pip \
     && rm -rf /usr/local/lib/python3.12/ensurepip \
     && groupadd --system --gid 10001 app \
