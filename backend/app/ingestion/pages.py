@@ -1,4 +1,5 @@
-"""Pages and page parts that hold navigation, not content: TOC, index, chapter openers.
+"""Pages and page parts that hold navigation, not content: TOC, index, and the
+mini-TOCs of chapter openers and sections.
 
 Detection only; the cleaning stage drops what these functions find and counts it.
 """
@@ -10,6 +11,7 @@ from dataclasses import dataclass
 
 from app.domain.ingestion import OutlineEntry, TextLine
 from app.ingestion.outline import clean_title, compact
+from app.ingestion.spans import HeadingSpan
 
 # A TOC entry ends with a dot leader and a page number (arabic or roman).
 _DOT_LEADER = re.compile(r"\.{3,}\s*(?:\d+|[ivxlcdm]+)$")
@@ -44,12 +46,14 @@ def index_pages(outline: Sequence[OutlineEntry], page_count: int) -> frozenset[i
     return frozenset(pages)
 
 
-def _sections(outline: Sequence[OutlineEntry], chapter: int) -> set[str]:
+def _children(outline: Sequence[OutlineEntry], parent: int) -> set[str]:
+    """Comparison keys of the titles one level below the bookmark, in its subtree."""
+    level = outline[parent].level
     titles: set[str] = set()
-    for entry in outline[chapter + 1 :]:
-        if entry.level == 1:
+    for entry in outline[parent + 1 :]:
+        if entry.level <= level:
             break
-        if entry.level == 2:
+        if entry.level == level + 1:
             titles.add(compact(clean_title(entry.title)))
     return titles
 
@@ -102,11 +106,46 @@ def chapter_toc_lines(outline: Sequence[OutlineEntry], lines: Sequence[TextLine]
     for position, entry in enumerate(outline):
         if entry.level != 1:
             continue
-        sections = _sections(outline, position)
+        sections = _children(outline, position)
         listed = [
             item for item in items if item.page == entry.pdf_page and compact(item.text) in sections
         ]
         if len(listed) >= _MIN_LISTED_SECTIONS:
             found.update(_lead_in(lines, listed[0].indices[0]))
             found.update(index for item in listed for index in item.indices)
+    return frozenset(found)
+
+
+def _lists(items: Sequence[_BulletItem]) -> list[list[_BulletItem]]:
+    """Items on consecutive lines form one list; any other line ends it."""
+    runs: list[list[_BulletItem]] = []
+    for item in items:
+        if runs and runs[-1][-1].indices[-1] + 1 == item.indices[0]:
+            runs[-1].append(item)
+        else:
+            runs.append([item])
+    return runs
+
+
+def section_toc_lines(
+    outline: Sequence[OutlineEntry], lines: Sequence[TextLine], spans: Sequence[HeadingSpan]
+) -> frozenset[int]:
+    """Indices of section mini-TOCs: a list of at least two bullets in which every
+    item is the title of one of the section's own subsections, with its lead-in.
+
+    Every item must match: one item that is not a child title (a URL, a title with
+    more words, a title wrapped onto a second line) keeps the whole list.
+    """
+    bullets = _bullet_items(lines)
+    found: set[int] = set()
+    for span in spans:
+        titles = _children(outline, span.entry)
+        items = [i for i in bullets if span.body <= i.indices[0] and i.indices[-1] < span.end]
+        for run in _lists(items):
+            if len(run) >= _MIN_LISTED_SECTIONS and all(
+                compact(item.text) in titles for item in run
+            ):
+                lead_in = _lead_in(lines, run[0].indices[0])
+                found.update(i for i in lead_in if i >= span.body)
+                found.update(index for item in run for index in item.indices)
     return frozenset(found)

@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 
-from app.domain.ingestion import DropReason, OutlineEntry, TextLine
+from app.domain.ingestion import DropReason, HorizontalRule, OutlineEntry, TextLine
 from app.ingestion.cleaning import CleanedDocument, clean
 
 HEIGHT = 800.0  # footer zone starts at 744
@@ -33,9 +33,12 @@ def entry(title: str, level: int = 1, page: int = 1) -> OutlineEntry:
 
 
 def run(
-    lines: Sequence[TextLine], outline: Sequence[OutlineEntry], pages: int = 1
+    lines: Sequence[TextLine],
+    outline: Sequence[OutlineEntry],
+    pages: int = 1,
+    rules: Sequence[HorizontalRule] = (),
 ) -> CleanedDocument:
-    return clean(lines, outline, (HEIGHT,) * pages)
+    return clean(lines, outline, (HEIGHT,) * pages, rules)
 
 
 def kept(result: CleanedDocument) -> list[str]:
@@ -297,3 +300,225 @@ def test_spans_index_the_kept_lines_and_skip_dropped_headings() -> None:
 
     assert kept(result) == ["Notices", "Read these notices.", "Canada", "Keep the device dry."]
     assert [(s.entry, s.start, s.body, s.end) for s in result.spans] == [(0, 0, 1, 2), (2, 2, 3, 4)]
+
+
+# ------------------------------------------------------------------ section mini-TOCs
+
+
+def bullet(text: str, top: float, page: int = 1) -> tuple[TextLine, TextLine]:
+    """A hanging bullet: the marker and its text are separate segments."""
+    return line("●", page, top=top, x0=100, x1=105), line(text, page, top=top, x0=122, x1=400)
+
+
+def toc_section(*items: str) -> tuple[TextLine, ...]:
+    """Section "Buttons" on page 1: intro, lead-in, the items; children on page 2."""
+    return (
+        heading("Buttons"),
+        line("The printer has buttons on two sides.", top=100),
+        line("This section covers:", top=130),
+        *(part for n, text in enumerate(items) for part in bullet(text, 150 + 20 * n)),
+        heading("Panel buttons", 2),
+        line("The panel has four buttons.", 2),
+        heading("Back buttons", 2, top=200),
+        line("The back has the power button.", 2, top=230),
+    )
+
+
+TOC_OUTLINE = (
+    entry("Buttons", 2),
+    entry("Panel buttons", 3, page=2),
+    entry("Back buttons", 3, page=2),
+)
+
+
+def test_a_list_naming_only_child_sections_is_dropped_with_its_lead_in() -> None:
+    result = run(toc_section("Panel buttons", "Back  buttons"), TOC_OUTLINE, pages=2)
+
+    assert dropped(result, DropReason.SECTION_TOC) == [
+        "This section covers:",
+        "●",
+        "Panel buttons",
+        "●",
+        "Back  buttons",
+    ]
+    assert kept(result)[:2] == ["Buttons", "The printer has buttons on two sides."]
+    assert result.stats.lines[DropReason.SECTION_TOC] == 5
+
+
+def test_a_list_with_any_item_that_is_not_a_child_title_is_kept_whole() -> None:
+    control = run(toc_section("Panel buttons", "Back buttons"), TOC_OUTLINE, pages=2)
+    assert len(dropped(control, DropReason.SECTION_TOC)) == 5
+
+    for items in (
+        ("Panel buttons", "www.example.com/buttons"),  # a URL
+        ("Panel buttons", "Back buttons: power and Wi-Fi"),  # extra text after a title
+        ("Panel buttons", "Buttons"),  # the section's own title
+    ):
+        result = run(toc_section(*items), TOC_OUTLINE, pages=2)
+
+        assert dropped(result, DropReason.SECTION_TOC) == []
+        assert "This section covers:" in kept(result)
+
+
+def test_a_single_item_list_is_kept() -> None:
+    pair = run(toc_section("Panel buttons", "Back buttons"), TOC_OUTLINE, pages=2)
+    single = run(toc_section("Panel buttons"), TOC_OUTLINE, pages=2)
+
+    assert len(dropped(pair, DropReason.SECTION_TOC)) == 5
+    assert dropped(single, DropReason.SECTION_TOC) == []
+
+
+def test_titles_of_grandchildren_or_siblings_do_not_count_as_children() -> None:
+    children = (
+        entry("Buttons", 2),
+        entry("Front", 3, page=2),
+        entry("Panel buttons", 3, page=2),
+        entry("Back buttons", 3, page=2),
+    )
+    outline = (
+        entry("Buttons", 2),
+        entry("Front", 3, page=2),
+        entry("Panel buttons", 4, page=2),  # a grandchild
+        entry("Back buttons", 2, page=2),  # a sibling
+    )
+    lines = (
+        *toc_section("Panel buttons", "Back buttons")[:-4],
+        heading("Front", 2, top=60),
+        heading("Panel buttons", 2, top=120),
+        line("The panel has four buttons.", 2, top=150),
+        heading("Back buttons", 2, top=200),
+        line("The back has the power button.", 2, top=230),
+    )
+
+    control, result = run(lines, children, pages=2), run(lines, outline, pages=2)
+
+    assert len(dropped(control, DropReason.SECTION_TOC)) == 5
+    assert dropped(result, DropReason.SECTION_TOC) == []
+
+
+def test_an_item_wrapped_onto_a_second_line_does_not_match() -> None:
+    """No corpus item wraps; a wrapped one fails to match, which keeps its list."""
+
+    def items(first: str, second: str | None) -> tuple[TextLine, ...]:
+        wrapped = (line(second, top=162, x0=122, x1=160),) if second else ()
+        return (
+            heading("Buttons"),
+            line("The printer has buttons on two sides.", top=100),
+            *bullet(first, 150),
+            *wrapped,
+            *bullet("Back buttons", 180),
+            *toc_section()[-4:],
+        )
+
+    one_line = run(items("Panel buttons", None), TOC_OUTLINE, pages=2)
+    wrapped = run(items("Panel", "buttons"), TOC_OUTLINE, pages=2)
+
+    assert dropped(one_line, DropReason.SECTION_TOC) == ["●", "Panel buttons", "●", "Back buttons"]
+    assert dropped(wrapped, DropReason.SECTION_TOC) == []
+
+
+def test_a_section_left_with_only_its_mini_toc_is_dropped_as_empty() -> None:
+    lines = (
+        heading("Buttons"),
+        *bullet("Panel buttons", 150),
+        *bullet("Back buttons", 170),
+        *toc_section()[-4:],
+    )
+
+    result = run(lines, TOC_OUTLINE, pages=2)
+
+    assert len(dropped(result, DropReason.SECTION_TOC)) == 4
+    assert dropped(result, DropReason.EMPTY_AFTER_CLEANING) == ["Buttons"]
+    assert kept(result)[0] == "Panel buttons"
+
+
+# ------------------------------------------------------------------ non-Latin tables
+
+
+def cell(text: str, x0: float, top: float) -> TextLine:
+    return line(text, top=top, size=8, x0=x0, x1=x0 + 40)
+
+
+def substance_table(
+    label: str, marks: tuple[str, str]
+) -> tuple[list[TextLine], list[HorizontalRule]]:
+    """Header band, then one row: a label cell and two mark cells."""
+    lines = [
+        cell("部件名称", 55, 105),
+        cell("铅 (Pb)", 200, 105),
+        cell("汞 (Hg)", 300, 105),
+        cell(label, 55, 125),
+        cell(marks[0], 200, 125),
+        cell(marks[1], 300, 125),
+    ]
+    grid = [HorizontalRule(pdf_page=1, y=y, x0=50, x1=500) for y in (100, 120, 140)]
+    return lines, grid
+
+
+def with_section(table: Sequence[TextLine]) -> tuple[TextLine, ...]:
+    return (heading("Substances"), line("The table lists the substances.", top=80), *table)
+
+
+def test_a_table_left_with_symbols_and_marks_only_is_dropped() -> None:
+    table, grid = substance_table("印刷电路板", ("X", "◯"))
+
+    result = run(with_section(table), (entry("Substances"),), rules=grid)
+
+    assert dropped(result, DropReason.NON_LATIN) == ["部件名称", "印刷电路板"]
+    assert dropped(result, DropReason.NON_LATIN_TABLE) == ["铅 (Pb)", "汞 (Hg)", "X", "◯"]
+    assert kept(result) == ["Substances", "The table lists the substances."]
+
+
+def test_a_table_that_keeps_a_latin_word_is_kept() -> None:
+    for label, residue in (("PCB", 5), ("Cr", 5), ("Print engine", 0), ("Câble", 0)):
+        table, grid = substance_table(label, ("X", "◯"))
+
+        result = run(with_section(table), (entry("Substances"),), rules=grid)
+
+        assert len(dropped(result, DropReason.NON_LATIN_TABLE)) == residue, label
+        assert (label in kept(result)) == (residue == 0), label
+
+
+def test_a_table_without_non_latin_lines_is_never_a_candidate() -> None:
+    """Part numbers, numbers and acronyms hold no Latin word: only the lost non-Latin
+    header line makes the first table a candidate.
+    """
+    table, grid = substance_table("N12345-001", ("2", "4"))
+    symbols = [cell("PBB", 200, 105), cell("PBDE", 300, 105), *table[3:]]
+
+    candidate = run(with_section([table[0], *symbols]), (entry("Substances"),), rules=grid)
+    latin = run(with_section([cell("No.", 55, 105), *symbols]), (entry("Substances"),), rules=grid)
+
+    assert dropped(candidate, DropReason.NON_LATIN_TABLE) == ["PBB", "PBDE", "N12345-001", "2", "4"]
+    assert dropped(latin, DropReason.NON_LATIN_TABLE) == []
+    assert kept(latin)[2:] == ["No.", "PBB", "PBDE", "N12345-001", "2", "4"]
+
+
+def test_lines_outside_the_table_box_are_not_table_residue() -> None:
+    table, grid = substance_table("印刷电路板", ("X", "◯"))
+    below = line("X", top=300, size=8, x0=200, x1=240)  # under the last rule
+
+    result = run((*with_section(table), below), (entry("Substances"),), rules=grid)
+
+    assert "X" in kept(result)
+    assert len(dropped(result, DropReason.NON_LATIN_TABLE)) == 4
+
+
+# ------------------------------------------------------------------ URL-only sections
+
+
+def test_a_section_with_only_a_url_is_dropped_as_empty() -> None:
+    lines = (
+        heading("Recycling"),
+        line("www.example.com/recycle", top=80),
+        heading("Paper", top=120),
+        line("See https://example.com/paper for details.", top=150),
+    )
+
+    result = run(lines, (entry("Recycling"), entry("Paper")))
+
+    assert dropped(result, DropReason.EMPTY_AFTER_CLEANING) == [
+        "Recycling",
+        "www.example.com/recycle",
+    ]
+    assert kept(result) == ["Paper", "See https://example.com/paper for details."]

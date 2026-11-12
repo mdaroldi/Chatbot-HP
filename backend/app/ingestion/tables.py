@@ -24,6 +24,7 @@ _EXTENT_TOLERANCE = 2.0  # rules of one table start and end within this distance
 _MIN_TABLE_RULES = 3
 _COLUMN_TOLERANCE = 2.0  # a cell may start this far left of its column
 TABLE_MAX_FONT_SIZE = 9.0  # cells are set below the 10 pt body size
+_TABLE_TOLERANCE = 2.0  # points a cell line may stick out of its table's box
 
 
 def merge_rules(rules: Sequence[HorizontalRule]) -> tuple[HorizontalRule, ...]:
@@ -145,6 +146,20 @@ def _table(
         header=_cells(header, columns),
         rows=tuple(_cells(row, columns) for row in rows),
     )
+
+
+def table_at(line: TextLine, tables: Sequence[Table]) -> Table | None:
+    """The table whose box holds the line, if any."""
+    for table in tables:
+        if (
+            table.pdf_page == line.pdf_page
+            and table.top - _TABLE_TOLERANCE <= line.top
+            and line.bottom <= table.bottom + _TABLE_TOLERANCE
+            and line.x0 < table.x1
+            and line.x1 > table.x0
+        ):
+            return table
+    return None
 
 
 def extract_tables(lines: Sequence[TextLine], rules: Sequence[HorizontalRule]) -> tuple[Table, ...]:

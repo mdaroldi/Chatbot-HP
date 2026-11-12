@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from app.domain.ingestion import Block, BlockKind, NoteLabel, PageRange, Table, TextLine
 from app.ingestion.cleaning import BLOCK_LEADING_EM
 from app.ingestion.lines import LINE_TOLERANCE
+from app.ingestion.tables import table_at
 
 _STEP_MARKER = re.compile(r"(?:\d+|[a-z])\.")
 _BULLETS = frozenset({"●", "•", "\u2013"})  # \u2013: en dash, second-level bullets
@@ -24,7 +25,6 @@ _LABELS = {
     "NOTE:": NoteLabel.NOTE,
     "TIP:": NoteLabel.TIP,
 }
-_TABLE_TOLERANCE = 2.0  # points a cell line may stick out of its table's box
 
 
 @dataclass
@@ -79,19 +79,6 @@ def _close(block: _Open, printed: Mapping[int, int | None]) -> Block:
     )
 
 
-def _table_of(line: TextLine, tables: Sequence[Table]) -> Table | None:
-    for table in tables:
-        if (
-            table.pdf_page == line.pdf_page
-            and table.top - _TABLE_TOLERANCE <= line.top
-            and line.bottom <= table.bottom + _TABLE_TOLERANCE
-            and line.x0 < table.x1
-            and line.x1 > table.x0
-        ):
-            return table
-    return None
-
-
 def _table_blocks(table: Table, printed: Mapping[int, int | None]) -> list[Block]:
     pages = _pages([table.pdf_page], printed)
     rows = [(BlockKind.TABLE_HEADER, table.header), *((BlockKind.TABLE_ROW, r) for r in table.rows)]
@@ -112,7 +99,7 @@ def build_blocks(
     emitted: set[Table] = set()
     current: _Open | None = None
     for line in lines:
-        table = _table_of(line, tables)
+        table = table_at(line, tables)
         start = _start(line)
         if current and (table or start or not _continues(current, line)):
             result.append(_close(current, printed))

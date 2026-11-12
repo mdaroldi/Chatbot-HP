@@ -32,9 +32,11 @@ class DropReason(StrEnum):
     TOC = "toc"
     INDEX = "index"
     CHAPTER_TOC = "chapter_toc"
+    SECTION_TOC = "section_toc"
     FOOTER = "footer"
     NON_LATIN = "non_latin"
     NON_ENGLISH_LATIN = "non_english_latin"
+    NON_LATIN_TABLE = "non_latin_table"
     EMPTY_AFTER_CLEANING = "empty_after_cleaning"
 
 

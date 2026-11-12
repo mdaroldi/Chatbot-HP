@@ -1,21 +1,23 @@
 """Cleaning: drop what is not English content and count every drop by reason.
 
 Each line is dropped at most once, under the first rule that matches, in the order
-of `DropReason`: footer, TOC page, index page, chapter-opener list, non-Latin
-script, non-English Latin text, and finally sections that cleaning left empty.
+of `DropReason`: footer, TOC page, index page, chapter-opener list, section
+mini-TOC, non-Latin script, non-English Latin text, then the residue of tables that
+lost their non-Latin text, and finally sections that cleaning left empty.
 Heading spans are found before any drop, so a section keeps its bounds even when
 the lines around it go; the result carries them re-indexed onto the kept lines.
 """
 
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from app.domain.ingestion import ICON, DropReason, OutlineEntry, TextLine
+from app.domain.ingestion import ICON, DropReason, HorizontalRule, OutlineEntry, Table, TextLine
 from app.ingestion.footer import PageFooter, split_footers
-from app.ingestion.language import MIN_SCORE, is_non_latin, score_line
-from app.ingestion.pages import chapter_toc_lines, index_pages, toc_pages
+from app.ingestion.language import MIN_SCORE, URL, has_latin_word, is_non_latin, score_line
+from app.ingestion.pages import chapter_toc_lines, index_pages, section_toc_lines, toc_pages
 from app.ingestion.spans import HeadingSpan, heading_spans
+from app.ingestion.tables import extract_tables, table_at
 
 # Lines of one paragraph are about 1.2 ems apart (top to top); paragraphs about 2.
 BLOCK_LEADING_EM = 1.5
@@ -62,10 +64,14 @@ def _footer_lines(lines: Sequence[TextLine], body: Sequence[TextLine]) -> list[T
 
 
 def _line_reasons(
-    body: Sequence[TextLine], outline: Sequence[OutlineEntry], page_count: int
+    body: Sequence[TextLine],
+    outline: Sequence[OutlineEntry],
+    spans: Sequence[HeadingSpan],
+    page_count: int,
 ) -> tuple[Reasons, frozenset[int], frozenset[int]]:
     toc, index = toc_pages(body), index_pages(outline, page_count)
     opener_lists = chapter_toc_lines(outline, body)
+    section_lists = section_toc_lines(outline, body, spans)
     reasons: Reasons = []
     for position, line in enumerate(body):
         if line.pdf_page in toc:
@@ -74,6 +80,8 @@ def _line_reasons(
             reasons.append(DropReason.INDEX)
         elif position in opener_lists:
             reasons.append(DropReason.CHAPTER_TOC)
+        elif position in section_lists:
+            reasons.append(DropReason.SECTION_TOC)
         elif is_non_latin(line.text):
             reasons.append(DropReason.NON_LATIN)
         elif score_line(line.text).is_non_english:
@@ -114,8 +122,30 @@ def _drop_paragraph_tails(body: Sequence[TextLine], reasons: Reasons) -> None:
             reasons[position] = DropReason.NON_ENGLISH_LATIN
 
 
+def _drop_table_residue(
+    body: Sequence[TextLine], reasons: Reasons, rules: Sequence[HorizontalRule]
+) -> None:
+    """A table that lost lines as non-Latin and keeps no Latin word holds only what
+    the dropped text labelled (element symbols, marks): drop the rest of it too.
+    Tables that lost no line this way are never touched, whatever their content.
+    """
+    members: defaultdict[Table, list[int]] = defaultdict(list)
+    tables = extract_tables(body, rules)
+    for position, line in enumerate(body):
+        if (table := table_at(line, tables)) is not None:
+            members[table].append(position)
+    for positions in members.values():
+        kept = [i for i in positions if reasons[i] is None]
+        if any(reasons[i] is DropReason.NON_LATIN for i in positions) and not any(
+            has_latin_word(body[i].text) for i in kept
+        ):
+            for i in kept:
+                reasons[i] = DropReason.NON_LATIN_TABLE
+
+
 def _has_text(line: TextLine) -> bool:
-    return any(char.isalnum() for char in line.text.replace(ICON, ""))
+    """Icons and URLs are not text: a section holding only them is empty."""
+    return any(char.isalnum() for char in URL.sub("", line.text.replace(ICON, "")))
 
 
 def _drop_empty_sections(
@@ -154,16 +184,20 @@ def _kept_spans(spans: Sequence[HeadingSpan], reasons: Reasons) -> tuple[Heading
 
 
 def clean(
-    lines: Sequence[TextLine], outline: Sequence[OutlineEntry], page_heights: Sequence[float]
+    lines: Sequence[TextLine],
+    outline: Sequence[OutlineEntry],
+    page_heights: Sequence[float],
+    rules: Sequence[HorizontalRule],
 ) -> CleanedDocument:
     """Lines in reading order (after line grouping) to the lines that later stages
     turn into sections. Every drop is kept with its reason, for statistics and review.
     """
     split = split_footers(lines, page_heights)
     body = split.body
-    reasons, toc, index = _line_reasons(body, outline, len(page_heights))
-    _drop_paragraph_tails(body, reasons)
     spans = heading_spans(outline, body)
+    reasons, toc, index = _line_reasons(body, outline, spans, len(page_heights))
+    _drop_paragraph_tails(body, reasons)
+    _drop_table_residue(body, reasons, rules)
     empty = _drop_empty_sections(body, reasons, spans)
     dropped = (
         *(DroppedLine(line, DropReason.FOOTER) for line in _footer_lines(lines, body)),

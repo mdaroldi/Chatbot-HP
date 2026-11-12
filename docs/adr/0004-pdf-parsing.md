@@ -123,6 +123,13 @@ counts. PDF page numbers.
   `[icon]`) is dropped with its heading. ENVY: 21 (8 chapter headings whose only
   content was the opener list, 12 notices whose text was in another language, and one
   heading directly followed by its first subsection); OMEN: 0.
+- **Navigation and table residue (commit 6b):** three rules run after the language
+  rules. A bullet list of at least two items in which every item is the title of a
+  child bookmark of its section is dropped as `section_toc`, with a colon lead-in
+  (ENVY: 19 lists; chapter openers stay `chapter_toc`). A ruled table that lost a
+  line as `non_latin` and keeps no Latin word (two lowercase Latin letters in a row)
+  is dropped as `non_latin_table` (ENVY PDF 130). URLs are not text for the empty
+  check (ENVY PDF 133). Empty sections: ENVY 32, OMEN 0. Details: Phase 1 plan.
 - **Residue, kept by design:** three Latin-script lines in languages or forms the
   rule cannot judge (a one-word German label, a German label without function words,
   a Turkish line), and one Latin-script line in a language without a list (Serbian),

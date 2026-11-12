@@ -30,7 +30,9 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 | 4b | `feat(ingestion): [icon] placeholders for inline images` (image boxes in the parser output, `[icon]` inserted during line grouping, lost-icon count in the stats: measured 87 ENVY, 3 OMEN; the spike's 43 was not reproducible, see ADR 0004 corrections) | done |
 | 5 | `feat(ingestion): cleaning stage with drop statistics` | done (`app/ingestion/{cleaning,language}.py`; `pages.chapter_toc_lines` replaces `chapter_opener_pages`; continuation rule and opener lead-in as approved, see ADR 0004 corrections) |
 | 6 | `feat(ingestion): sections and chunking v1` (with ADR 0005 and the CLAUDE.md chunking row) | done (`app/ingestion/{spans,blocks,sections,chunking}.py`; unit tests use a word-counting fake tokenizer) |
-| 7 | `feat(ingestion): fastembed embedder and token counter` (with the corpus test of the real 450-token limit, and `CHUNK_MIN_TOKENS` re-measured with the real tokenizer) | next |
+| 6b | `feat(ingestion): drop navigation and table residue` (section mini-TOCs, non-Latin table residue, URL-only sections; see "Commits 6b and 6c") | done |
+| 6c | `feat(ingestion): index front-matter safety and notice content` (with the ADR 0005 update) | next |
+| 7 | `feat(ingestion): fastembed embedder and token counter` (with the corpus test of the real 450-token limit, and `CHUNK_MIN_TOKENS` re-measured with the real tokenizer) | pending |
 | 8 | `feat(ingestion): Qdrant versioned collection and alias swap` | pending |
 | 9 | `feat(db): index_builds manifest (migration 0002)` | pending |
 | 10 | `feat(ingestion): pipeline, CLI, migrate and ingest services, make ingest/inspect-chunks` (with the startup-order ADR and CLAUDE.md update) | pending |
@@ -44,6 +46,47 @@ the `corpus` marker; `make test-int` runs them, and the CI integration job exclu
 **Phase 3 note:** chunk text contains `[icon]` where the manual shows a button glyph
 (commit 4b). The Phase 3 system prompt must tell the model what `[icon]` means (an
 unrecognised button or symbol) and that it must not guess which button it is.
+
+## Commits 6b and 6c (decided after commit 6)
+
+Inserted before commit 7. Each rule is test-first, with its own drop reason and
+counter, and the corpus tests pin which PDF pages it touches; a rule that hits
+anything beyond these pages is reported, not loosened.
+
+**6b, three cleaning rules:**
+
+1. **Section mini-TOCs** (`section_toc`): the `chapter_toc` idea for any section. A
+   bullet list (consecutive bullet items in the section's content) is dropped when it
+   has at least 2 items and **every** item's text equals the title of one of the
+   section's own child bookmarks (compared like headings: case and whitespace
+   ignored). As for chapter openers, a lead-in line just before the list that ends
+   with a colon goes with it. A list with any non-matching item (a URL, a title with
+   more words, a title wrapped onto a second line) is kept whole; no corpus item
+   wraps. Measured: 19 lists with 94 items and 3 lead-ins, all in ENVY (the strict
+   rule hits 20 sections; the 1-item list on PDF 40 is kept by the minimum of 2); 0
+   in OMEN. Chapter-opener lists stay `chapter_toc`, which comes first.
+2. **Non-Latin table residue** (`non_latin_table`): a ruled table that lost at least
+   one line as `non_latin` is dropped when none of its kept lines holds a Latin word,
+   a word being at least two consecutive lowercase Latin letters (so element symbols
+   such as Pb, acronyms and marks do not count). Tables without `non_latin` lines are
+   never candidates, so tables of numbers or part numbers are untouched. Measured:
+   ENVY PDF 130 only (78 lines); the PDF 129 table keeps English cells and stays.
+3. **URL-only sections:** URLs are not text for the `empty_after_cleaning` check, so a
+   section whose only content is a URL is dropped and counted there. Measured: ENVY
+   PDF 133 only.
+
+Sections emptied by these rules are dropped as `empty_after_cleaning` (ENVY 21 → 32:
+8 left with only a mini-TOC, the PDF 130 table section, the PDF 133 URL section);
+their subsections keep the titles in their paths. OMEN is unchanged.
+
+**6c, front matter:** the headed safety and notice parts of the front matter (before
+the first bookmark) are indexed under `Front matter > <heading>`, with `has_warning`
+when they hold a WARNING or CAUTION. Headings are found by font size, not by a keyword
+list. The cover, copyright and trademark text stays out of the index. ADR 0005 is
+updated in the same commit.
+
+**Deferred to the Phase 5 ablation:** merging a parent's one-line introduction into
+its first child section.
 
 ## Dependencies (licenses checked)
 

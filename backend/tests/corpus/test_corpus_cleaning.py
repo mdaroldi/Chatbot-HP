@@ -3,11 +3,13 @@ language rules (PDF page numbers; Phase 1 plan item 3).
 """
 
 import unicodedata
+from collections import Counter
 from collections.abc import Mapping
 
 import pytest
 
 from app.domain.ingestion import DropReason
+from app.ingestion.language import URL
 from app.ingestion.lines import count_icons
 from tests.corpus.conftest import ENVY, OMEN, ParsedCorpusDocument
 
@@ -21,28 +23,52 @@ LINES_DROPPED = {
         DropReason.TOC: 70,
         DropReason.INDEX: 178,
         DropReason.CHAPTER_TOC: 117,
+        DropReason.SECTION_TOC: 191,
         DropReason.FOOTER: 361,
         DropReason.NON_LATIN: 104,
         DropReason.NON_ENGLISH_LATIN: 45,
-        DropReason.EMPTY_AFTER_CLEANING: 29,
+        DropReason.NON_LATIN_TABLE: 78,
+        DropReason.EMPTY_AFTER_CLEANING: 41,
     },
     OMEN: {
         DropReason.TOC: 117,
         DropReason.INDEX: 394,
         DropReason.CHAPTER_TOC: 0,
+        DropReason.SECTION_TOC: 0,
         DropReason.FOOTER: 174,
         DropReason.NON_LATIN: 0,
         DropReason.NON_ENGLISH_LATIN: 0,
+        DropReason.NON_LATIN_TABLE: 0,
         DropReason.EMPTY_AFTER_CLEANING: 0,
     },
 }
 PAGES_DROPPED = {ENVY: (3, 2), OMEN: (3, 3)}  # (TOC, index)
-EMPTY_SECTIONS = {ENVY: 21, OMEN: 0}
+EMPTY_SECTIONS = {ENVY: 32, OMEN: 0}
 # The language rules may only fire in ENVY's regulatory back matter (PDF 116-133).
 NON_ENGLISH_PAGES = {ENVY: {121, 122, 123, 124, 132, 133}, OMEN: set()}
 NON_LATIN_PAGES = {ENVY: {121, 123, 124, 125, 129, 130, 131, 132}, OMEN: set()}
 ICONS = {ENVY: 87, OMEN: 3}
-KEPT = {ENVY: 3380, OMEN: 2738}  # lines left for sectioning
+KEPT = {ENVY: 3099, OMEN: 2738}
+# Section mini-TOCs, lines per PDF page: a marker and a text line per item, plus
+# three lead-ins (PDF 86, 120, 122). 19 lists with 94 items, all in ENVY.
+SECTION_TOC_LINES = {
+    ENVY: {
+        8: 4, 10: 6, 14: 4, 32: 4, 46: 4, 53: 12, 58: 6, 74: 12, 86: 19,
+        93: 4, 95: 4, 100: 4, 102: 8, 106: 10, 120: 21, 122: 13, 123: 8, 126: 48,
+    },
+    OMEN: {},
+}  # fmt: skip
+SECTION_TOC_ITEMS = {ENVY: 94, OMEN: 0}
+NON_LATIN_TABLE_PAGES = {ENVY: {130}, OMEN: set()}
+# Sections emptied by cleaning; 6b added 8, 10, 14, 53, 74, 86, 93 and 122 (left
+# with only a mini-TOC), 130 (only the non-Latin table) and 133 (only a URL).
+EMPTY_PAGES = {
+    ENVY: {
+        7, 8, 10, 14, 23, 30, 42, 53, 60, 70, 74, 79, 84, 86, 93, 109,
+        121, 122, 123, 124, 130, 131, 132, 133,
+    },
+    OMEN: set(),
+}  # fmt: skip  # lines left for sectioning
 
 
 def pages(doc: ParsedCorpusDocument, reason: DropReason) -> set[int]:
@@ -87,3 +113,28 @@ def test_cleaning_keeps_every_icon_placeholder(corpus: Corpus, doc_id: str) -> N
     cleaned = corpus[doc_id].cleaned
 
     assert (len(cleaned.lines), count_icons(cleaned.lines)) == (KEPT[doc_id], ICONS[doc_id])
+
+
+@BOTH
+def test_section_mini_tocs_are_dropped_only_where_expected(corpus: Corpus, doc_id: str) -> None:
+    dropped = [d.line for d in corpus[doc_id].cleaned.dropped if d.reason is DropReason.SECTION_TOC]
+
+    assert Counter(line.pdf_page for line in dropped) == SECTION_TOC_LINES[doc_id]
+    assert sum(line.text == "●" for line in dropped) == SECTION_TOC_ITEMS[doc_id]
+
+
+@BOTH
+def test_non_latin_table_residue_and_empty_sections_by_page(corpus: Corpus, doc_id: str) -> None:
+    doc = corpus[doc_id]
+
+    assert pages(doc, DropReason.NON_LATIN_TABLE) == NON_LATIN_TABLE_PAGES[doc_id]
+    assert pages(doc, DropReason.EMPTY_AFTER_CLEANING) == EMPTY_PAGES[doc_id]
+
+
+@BOTH
+def test_no_section_is_left_with_only_urls(corpus: Corpus, doc_id: str) -> None:
+    sections = corpus[doc_id].sectioned.sections
+    texts = [" ".join(block.text for block in s.blocks) for s in sections]
+
+    assert sections
+    assert all(any(char.isalnum() for char in URL.sub("", text)) for text in texts)

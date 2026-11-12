@@ -32,7 +32,7 @@ def sectioned(
     pages: int,
     rules: Sequence[HorizontalRule] = (),
 ) -> SectionedDocument:
-    cleaned = clean(lines, outline, (HEIGHT,) * pages)
+    cleaned = clean(lines, outline, (HEIGHT,) * pages, rules)
     return build_sections(DOC, cleaned, outline, rules)
 
 

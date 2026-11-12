@@ -64,9 +64,11 @@ def test_drop_reasons_cover_every_cleaning_rule() -> None:
         "toc",
         "index",
         "chapter_toc",
+        "section_toc",
         "footer",
         "non_latin",
         "non_english_latin",
+        "non_latin_table",
         "empty_after_cleaning",
     }
 

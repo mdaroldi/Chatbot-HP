@@ -65,7 +65,7 @@ _OTHER = {
 # fmt: on
 # French elided articles and pronouns ("l'appareil", "d'un") are French evidence.
 _FRENCH_ELISION = re.compile(r"(?:l|d|qu|n)['\u2019]")
-_URL = re.compile(r"(?:https?://|www\.)\S*")
+URL = re.compile(r"(?:https?://|www\.)\S*")
 _WORD = re.compile(r"[^\W\d_]+(?:['\u2019][^\W\d_]+)*")
 
 
@@ -81,6 +81,18 @@ def is_non_latin(text: str) -> bool:
     letters = [char for char in text.replace(ICON, " ") if char.isalpha()]
     non_latin = sum(1 for char in letters if _script(char) in _NON_LATIN_SCRIPTS)
     return 2 * non_latin > len(letters)
+
+
+def has_latin_word(text: str) -> bool:
+    """At least two lowercase Latin letters in a row: a word, not an element symbol
+    ("Pb"), an acronym ("PBDE") or a mark ("X").
+    """
+    run = 0
+    for char in text.replace(ICON, " "):
+        run = run + 1 if char.islower() and _script(char) == "LATIN" else 0
+        if run == 2:
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -105,7 +117,7 @@ def _hits(words: list[str], language: str) -> int:
 
 def score_line(text: str) -> LanguageScores:
     """Scores after removing URLs and icons, whose tokens are not prose."""
-    words = _WORD.findall(_URL.sub(" ", text.replace(ICON, " ")).casefold())
+    words = _WORD.findall(URL.sub(" ", text.replace(ICON, " ")).casefold())
     return LanguageScores(
         words=len(words),
         english=sum(1 for w in words if w in _ENGLISH),
