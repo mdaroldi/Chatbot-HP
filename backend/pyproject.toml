@@ -5,12 +5,14 @@ description = "FastAPI backend for the HP Docs RAG chatbot"
 requires-python = ">=3.12,<3.13"
 license = "MIT"
 dependencies = [
+    "fastapi>=0.162.5",
     "pydantic-settings>=2.16.2",
 ]
 
 [dependency-groups]
 dev = [
     "bandit>=1.9.4",
+    "httpx>=0.28.1",
     "mypy>=2.4.1",
     "pip-audit>=2.10.1",
     "pre-commit>=4.7.0",
