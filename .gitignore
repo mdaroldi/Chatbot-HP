@@ -23,9 +23,14 @@ job-description.txt
 # Corpus cache (CORPUS_DIR=corpus, relative to where ingestion runs)
 /corpus/
 /backend/corpus/
-data/
-models/
-.cache/
+# Anchored (a bare `models/` also matched backend/tests/models/): only the places where
+# runs create them. EMBEDDING_CACHE_DIR=models is relative to where ingestion runs.
+/data/
+/backend/data/
+/models/
+/backend/models/
+/.cache/
+/backend/.cache/
 loadtest/results/
 eval/reports/runs/
 
