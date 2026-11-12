@@ -21,6 +21,14 @@ def read_ini() -> configparser.ConfigParser:
     return parser
 
 
+def test_alembic_folder_is_not_a_python_package() -> None:
+    # backend/alembic/ shares the library's name. As a plain folder (no __init__.py)
+    # the installed `alembic` package always wins on import; as a package it would
+    # shadow the library whenever backend/ is on sys.path (prepend_sys_path does that).
+    assert not (BACKEND / "alembic" / "__init__.py").exists()
+    assert not (VERSIONS / "__init__.py").exists()
+
+
 def test_ini_has_no_database_url() -> None:
     ini = read_ini()
 
