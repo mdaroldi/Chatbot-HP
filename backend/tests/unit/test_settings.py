@@ -19,6 +19,9 @@ def test_safe_defaults_when_only_required_values_are_set() -> None:
     assert str(settings.qdrant_url) == "http://qdrant:6333/"
     assert settings.readiness_timeout_seconds == 2.0
     assert settings.api_docs_enabled is True
+    assert settings.postgres_pool_size == 5
+    assert settings.postgres_max_overflow == 5
+    assert settings.postgres_connect_timeout_seconds == 5.0
 
 
 @pytest.mark.parametrize(("raw", "expected"), [("false", False), ("0", False), ("true", True)])
@@ -229,6 +232,26 @@ def test_readiness_timeout_outside_bounds_is_rejected(
     monkeypatch.setenv("READINESS_TIMEOUT_SECONDS", timeout)
 
     with pytest.raises(ValidationError, match="readiness_timeout_seconds"):
+        Settings()
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("POSTGRES_POOL_SIZE", "0"),
+        ("POSTGRES_POOL_SIZE", "101"),
+        ("POSTGRES_MAX_OVERFLOW", "-1"),
+        ("POSTGRES_MAX_OVERFLOW", "101"),
+        ("POSTGRES_CONNECT_TIMEOUT_SECONDS", "0"),
+        ("POSTGRES_CONNECT_TIMEOUT_SECONDS", "60.1"),
+    ],
+)
+def test_postgres_pool_settings_are_bounded(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError, match=name.lower()):
         Settings()
 
 

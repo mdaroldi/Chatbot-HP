@@ -17,6 +17,10 @@ class DependencyProbe(Protocol):
     async def ping(self) -> None: ...
 
 
+class DependencyUnavailableError(Exception):
+    """A dependency answered, but not in a way that means it can serve requests."""
+
+
 class ProbeStatus(StrEnum):
     OK = "ok"
     DOWN = "down"

@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 BACKEND := backend
-UV_BACKEND := uv run --frozen --project $(BACKEND)
+TEST_COMPOSE := docker compose -f docker-compose.test.yml
 GITLEAKS_IMAGE := zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
 
 .PHONY: help setup lint format typecheck test test-int security up down ingest eval load check
@@ -27,7 +27,9 @@ test: ## Unit tests with branch coverage gate (fail under 90)
 	cd $(BACKEND) && uv run --frozen pytest tests/unit --cov --cov-report=term-missing
 
 test-int: ## Integration tests against real Postgres and Qdrant (needs Docker)
-	@echo "not implemented yet"; exit 1
+	$(TEST_COMPOSE) up -d --wait
+	cd $(BACKEND) && uv run --frozen pytest tests/integration -m integration; \
+	status=$$?; cd .. && $(TEST_COMPOSE) down -v; exit $$status
 
 security: ## bandit, pip-audit, gitleaks
 	cd $(BACKEND) && uv run --frozen bandit -q -c pyproject.toml -r app

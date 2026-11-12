@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     postgres_db: str = Field(default="hpdocs", min_length=1)
     postgres_user: str = Field(default="hpdocs", min_length=1)
     postgres_password: SecretStr = Field(min_length=1)
+    # Bounded pool: at most pool_size + max_overflow connections per process.
+    postgres_pool_size: int = Field(default=5, ge=1, le=100)
+    postgres_max_overflow: int = Field(default=5, ge=0, le=100)
+    postgres_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
 
     qdrant_url: HttpUrl = HttpUrl("http://qdrant:6333")
 

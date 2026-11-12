@@ -1,5 +1,8 @@
 """Application factory. Run with: uvicorn app.main:create_app --factory --no-server-header"""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -8,9 +11,18 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.core.settings import Settings, get_settings
+from app.infra.lifecycle import open_infrastructure
 
 _CORS_METHODS = ["GET", "POST", "DELETE"]
 _CORS_HEADERS = ["Content-Type", "X-Request-ID", "X-Client-ID"]
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async with open_infrastructure(app.state.settings) as infrastructure:
+        app.state.infrastructure = infrastructure
+        app.state.readiness_probes = infrastructure.probes
+        yield
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -32,9 +44,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         docs_url="/docs" if docs else None,
         redoc_url="/redoc" if docs else None,
         openapi_url="/openapi.json" if docs else None,
+        lifespan=_lifespan,
     )
     app.state.settings = settings
-    # Real adapters are registered by the lifespan once infrastructure exists.
+    # Real probes are registered by the lifespan; none exist before startup.
     app.state.readiness_probes = ()
     register_exception_handlers(app)
     app.include_router(health_router)
