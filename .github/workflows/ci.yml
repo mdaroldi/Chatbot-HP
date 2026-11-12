@@ -65,7 +65,8 @@ jobs:
           enable-cache: true
       - run: make install
       # Same docker-compose.test.yml as locally; make tears it down even on failure.
-      - run: make test-int
+      # Corpus tests are excluded until a job with a cached corpus download exists.
+      - run: make test-int TEST_INT_MARKERS="integration and not corpus"
 
   security:
     name: Security (bandit, pip-audit, gitleaks)

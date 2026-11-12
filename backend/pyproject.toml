@@ -9,6 +9,7 @@ dependencies = [
     "asyncpg>=0.32.0",
     "fastapi>=0.162.5",
     "httpx>=0.28.1",
+    "pdfplumber>=0.11.10",
     "pydantic-settings>=2.16.2",
     "sqlalchemy[asyncio]>=2.1.8",
     "uvicorn>=0.54.0",
@@ -31,6 +32,10 @@ dev = [
 [tool.uv]
 # Application, not a library: dependencies are installed, the code is not packaged.
 package = false
+# pypdfium2 comes with pdfplumber (unused for text). 5.15.1 (2026-11-07) and 5.15.2
+# (2026-11-09) were under 5 days old when adopted on 2026-11-12, so the newest
+# allowed release is pinned; lift this once a newer release has passed the cooldown.
+constraint-dependencies = ["pypdfium2==5.15.0"]
 
 # ---------------------------------------------------------------- ruff
 [tool.ruff]
@@ -76,7 +81,10 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra --strict-markers --strict-config"
-markers = ["integration: needs real Postgres and Qdrant containers"]
+markers = [
+  "integration: needs real Postgres and Qdrant containers",
+  "corpus: needs the real HP manuals (downloaded and verified into CORPUS_DIR)",
+]
 filterwarnings = ["error"]
 
 # ---------------------------------------------------------------- coverage

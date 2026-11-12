@@ -61,3 +61,32 @@ strategy, and a single column for OMEN's parts table.
   one build and one dependency set. Way out: a uv dependency group `ingest` for
   pdfplumber and a second Dockerfile target (`--target ingest`) that syncs it, while
   the API target syncs without the group.
+
+## Corrections after implementation
+
+Measured with the implemented parser (Phase 1, commit 4); corpus tests keep these true.
+PDF page numbers.
+
+- **Heading sizes:** bookmark levels 1-4 are set at 24/18/14/12 pt in both manuals (not
+  18/14/12). OMEN's two level-5 headings are set at the 10 pt body size. A heading is
+  the first line matching the title at 12 pt or more on the bookmark's page or the
+  next; failing that, a match at any size is accepted **on the bookmark's own page
+  only**. A leading chapter number or appendix letter ("A") is ignored. All 169 and
+  113 bookmarks find their heading.
+- **Index spans:** the index runs from its bookmark to the last page: ENVY 134-135,
+  OMEN 89-91 (the table above lists only the first page).
+- **Front matter:** pages 1-2 carry no footer; the following front-matter pages (ENVY
+  3-6, OMEN 3-7) are numbered in roman numerals. Roman numerals are not printed page
+  numbers: such pages have `printed_page = null`, and citations fall back to the PDF
+  page. Numbered pages follow PDF − 6 (ENVY, 129 pages) and PDF − 7 (OMEN, 84 pages).
+- **Vertical separators:** some ENVY tables (e.g. the error-code table, page 105) also
+  draw vertical column separators. The extractor does not use them.
+- **Table-row rule:** a table is a run of at least three rules of the same horizontal
+  extent in which every band is a row, and a band is a row only if its text is mostly
+  set at 9 pt or less (cells are 8 pt, captions 9 pt, body 10 pt). Empty bands and
+  bands of body text, headings or boxed notes end a table, which also separates two
+  tables of the same width on one page. Without a top border, the header is taken from
+  the table-size lines just above the first rule, unless another rule lies in between.
+  Tables with spanning title rows yield fewer columns, but rows are never split.
+- **Font sizes** are rounded to 0.01 pt: pdfminer derives them from glyph boxes and
+  reports values such as 8.000000000000057.

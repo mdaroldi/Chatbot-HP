@@ -25,8 +25,9 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 |---|---|---|
 | 1 | `docs: ADR 0004 PDF parsing` | done (4e3bfef) |
 | 2 | `feat(ingestion): domain IR and protocols` | done (`app/domain/ingestion.py`) |
-| 3 | `feat(ingestion): corpus manifest and verified downloader` | done (`backend/corpus.toml`, `app/infra/corpus_http.py`) |
-| 4 | `feat(ingestion): pdfplumber parser with footer, bookmark and row-band tables` | next |
+| 3 | `feat(ingestion): corpus manifest and verified downloader` | done (`backend/corpus.toml`, `app/infra/corpus_http.py`); `fix: anchor the corpus cache ignore pattern` (da7cf4b) |
+| 4 | `feat(ingestion): pdfplumber parser with footer, bookmark and row-band tables` | done (`app/infra/pdfplumber_parser.py`, `app/ingestion/{lines,footer,outline,pages,tables}.py`) |
+| 4b | `feat(ingestion): [icon] placeholders for inline images` (image boxes in the parser output, `[icon]` inserted during line grouping, lost-icon count in the stats: expected 43 ENVY, 3 OMEN) | next |
 | 5 | `feat(ingestion): cleaning stage with drop statistics` | pending |
 | 6 | `feat(ingestion): sections and chunking v1` (with ADR 0005 and the CLAUDE.md chunking row) | pending |
 | 7 | `feat(ingestion): fastembed embedder and token counter` | pending |
@@ -36,14 +37,23 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 | 11 | `ci: corpus job with cached download` | pending |
 | 12 | `docs: README ingestion section` | pending |
 
-Corpus tests land in the commit of the stage they test (item 10), not all at once.
+Corpus tests land in the commit of the stage they test (item 10), not all at once. They carry
+the `corpus` marker; `make test-int` runs them, and the CI integration job excludes them
+(`-m "integration and not corpus"`) until commit 11 adds the cached corpus job.
+
+**Phase 3 note:** chunk text contains `[icon]` where the manual shows a button glyph
+(commit 4b). The Phase 3 system prompt must tell the model what `[icon]` means (an
+unrecognised button or symbol) and that it must not guess which button it is.
 
 ## Dependencies (licenses checked)
 
 | Package | Version | License | Notes |
 |---|---|---|---|
 | pdfplumber | 0.11.10 | MIT | with pdfminer.six 20260107 (MIT), Pillow 13.0.0 (MIT-CMU) |
-| pypdfium2 | 5.15.0 | BSD-3-Clause / Apache-2.0 | 5.15.2 too new; installed with pdfplumber, unused for text |
+| pypdfium2 | 5.15.0 | BSD-3-Clause / Apache-2.0 | installed with pdfplumber, unused for text; 5.15.1 and 5.15.2 too new, pinned by a commented `constraint-dependencies` entry in `backend/pyproject.toml` |
+| cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause | via pdfminer.six (encrypted PDFs) |
+| cffi | 2.1.1 | MIT-0 | via cryptography |
+| pycparser | 3.12 | BSD-3-Clause | via cffi |
 | fastembed | 0.9.1 | Apache-2.0 | onnxruntime (MIT), tokenizers (Apache-2.0), huggingface-hub (Apache-2.0), numpy (BSD-3), py-rust-stemmers (MIT), mmh3 (MIT) |
 | loguru | 0.7.3 | MIT | pulled by fastembed; 0.8.0 too new |
 | tqdm | via fastembed | MPL-2.0 AND MIT | file-level copyleft, used unmodified; flagged to the user |
@@ -219,7 +229,7 @@ Layers (dependency rule unchanged):
 
 No chunk over the limit; every chunk has a section path and both page ranges; no TOC
 or index chunks; no "ENWW"; no non-Latin characters; spare part N96208-001 stays next
-to "Bottom cover"; the E0 to E9 error-code rows stay intact; regulatory model number
+to "Bottom cover"; the 8 error-code rows (E0 to E6 and E9) on PDF page 105 keep code and description in the same row; regulatory model number
 SNPRC-1807-01 present; the Wi-Fi Direct five-device limit present; a tampered file
 fails the checksum check.
 

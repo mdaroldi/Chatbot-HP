@@ -85,6 +85,10 @@ class ChecksumMismatchError(CorpusError):
     """The bytes were fetched but are not the pinned document."""
 
 
+class DocumentParseError(Exception):
+    """The PDF parsed, but lacks the structure ingestion relies on (e.g. bookmarks)."""
+
+
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise ValueError(message)
@@ -127,6 +131,13 @@ class PageRange:
         )
 
 
+def _check_box(pdf_page: int, font_size: float, box: tuple[float, float, float, float]) -> None:
+    x0, top, x1, bottom = box
+    _require(pdf_page >= 1, "pdf_page must be >= 1")
+    _require(font_size > 0, "font_size must be positive")
+    _require(x0 <= x1 and top <= bottom, "geometry is inverted")
+
+
 @dataclass(frozen=True)
 class TextLine:
     """One extracted line with the layout facts the cleaning rules need."""
@@ -140,9 +151,7 @@ class TextLine:
     bottom: float
 
     def __post_init__(self) -> None:
-        _require(self.pdf_page >= 1, "pdf_page must be >= 1")
-        _require(self.font_size > 0, "font_size must be positive")
-        _require(self.x0 <= self.x1 and self.top <= self.bottom, "line geometry is inverted")
+        _check_box(self.pdf_page, self.font_size, (self.x0, self.top, self.x1, self.bottom))
 
 
 @dataclass(frozen=True)
@@ -303,13 +312,85 @@ class IndexBuild:
 
 
 @dataclass(frozen=True)
+class Word:
+    """One word as the parser saw it: PDF points, origin at the page's top-left corner."""
+
+    text: str
+    pdf_page: int
+    font_size: float
+    x0: float
+    top: float
+    x1: float
+    bottom: float
+
+    def __post_init__(self) -> None:
+        _require(_non_blank(self.text), "word text must not be blank")
+        _check_box(self.pdf_page, self.font_size, (self.x0, self.top, self.x1, self.bottom))
+
+
+@dataclass(frozen=True)
+class HorizontalRule:
+    """A drawn horizontal line; table rows are the bands between such rules."""
+
+    pdf_page: int
+    y: float
+    x0: float
+    x1: float
+
+    def __post_init__(self) -> None:
+        _require(self.pdf_page >= 1, "pdf_page must be >= 1")
+        _require(self.x0 < self.x1, "rule length must be positive")
+
+
+@dataclass(frozen=True)
+class Table:
+    """Cells by row band: a row is one band between rules and never loses its cells."""
+
+    pdf_page: int
+    top: float
+    bottom: float
+    x0: float
+    x1: float
+    header: tuple[str, ...]
+    rows: tuple[tuple[str, ...], ...]
+
+    def __post_init__(self) -> None:
+        _require(bool(self.header), "a table needs a header")
+        _require(self.top < self.bottom and self.x0 < self.x1, "table box is inverted")
+        _require(
+            all(len(row) == len(self.header) for row in self.rows),
+            "every row needs one cells entry per header column",
+        )
+
+
+@dataclass(frozen=True)
 class ParsedDocument:
-    """Everything the parser hands to the pure stages."""
+    """Everything the parser hands to the pure stages; pages are 1-based."""
 
     document: CorpusDocument
-    lines: tuple[TextLine, ...]
+    words: tuple[Word, ...]
+    rules: tuple[HorizontalRule, ...]
     outline: tuple[OutlineEntry, ...]
-    page_count: int
+    page_heights: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        _require(bool(self.page_heights), "a document needs at least one page")
+        _require(all(h > 0 for h in self.page_heights), "page heights must be positive")
+        last = self.page_count
+        for kind, pages in (
+            ("word on", (w.pdf_page for w in self.words)),
+            ("rule on", (r.pdf_page for r in self.rules)),
+            ("bookmark to", (e.pdf_page for e in self.outline)),
+        ):
+            beyond = next((p for p in pages if p > last), None)
+            _require(beyond is None, f"{kind} page {beyond} is beyond the last page {last}")
+
+    @property
+    def page_count(self) -> int:
+        return len(self.page_heights)
+
+    def page_height(self, pdf_page: int) -> float:
+        return self.page_heights[pdf_page - 1]
 
 
 class CorpusSource(Protocol):
