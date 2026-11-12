@@ -8,3 +8,4 @@ considered, consequences.
 | [0001](0001-architecture-overview.md) | Architecture overview, with known limitations and deferred decisions |
 | [0002](0002-qdrant-vector-database.md) | Qdrant as the vector database |
 | [0003](0003-llm-provider-and-local-embeddings.md) | Anthropic behind a provider interface; local embeddings |
+| [0004](0004-pdf-parsing.md) | PDF parsing with pdfplumber |
