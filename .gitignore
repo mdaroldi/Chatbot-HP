@@ -20,7 +20,9 @@ htmlcov/
 job-description.txt
 
 # Generated artifacts
-corpus/
+# Corpus cache (CORPUS_DIR=corpus, relative to where ingestion runs)
+/corpus/
+/backend/corpus/
 data/
 models/
 .cache/
