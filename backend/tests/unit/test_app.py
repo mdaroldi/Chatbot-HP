@@ -11,12 +11,14 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 import app.main
+from app.api.dependencies import get_readiness_probes
 from app.core.errors import AppError
 from app.core.logging import JsonFormatter
 from app.core.middleware import REQUEST_ID_HEADER
 from app.core.settings import LogLevel
 from app.main import create_app
 from tests.unit.conftest import LogReader, SettingsFactory
+from tests.unit.fakes import FakeProbe
 
 REQUEST_ID = "test-request-0001"
 FRONTEND = "http://localhost:8501"
@@ -277,6 +279,78 @@ async def test_health_does_not_touch_dependencies(make_settings: SettingsFactory
         response = await http.get("/health")
 
     assert response.json() == {"status": "ok"}
+
+
+def ready_client(
+    make_settings: SettingsFactory, probes: list[FakeProbe], timeout: float = 0.5
+) -> httpx.AsyncClient:
+    application = create_app(make_settings(readiness_timeout_seconds=timeout))
+    application.dependency_overrides[get_readiness_probes] = lambda: probes
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application),
+        base_url="http://test",
+        headers={REQUEST_ID_HEADER: REQUEST_ID},
+    )
+
+
+async def test_ready_returns_200_when_all_dependencies_are_ok(
+    make_settings: SettingsFactory,
+) -> None:
+    async with ready_client(make_settings, [FakeProbe("postgres"), FakeProbe("qdrant")]) as http:
+        response = await http.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "checks": {"postgres": {"status": "ok"}, "qdrant": {"status": "ok"}},
+    }
+    assert response.headers[REQUEST_ID_HEADER] == REQUEST_ID
+
+
+async def test_ready_returns_503_status_document_with_request_id(
+    make_settings: SettingsFactory,
+) -> None:
+    probes = [
+        FakeProbe("postgres", error=OSError("connection to 10.0.0.5 refused")),
+        FakeProbe("qdrant"),
+    ]
+    async with ready_client(make_settings, probes) as http:
+        response = await http.get("/ready")
+
+    assert response.status_code == 503
+    assert response.headers["content-type"] == "application/json"
+    assert response.headers[REQUEST_ID_HEADER] == REQUEST_ID
+    assert response.json() == {
+        "status": "not_ready",
+        "checks": {
+            "postgres": {"status": "down", "detail": "unreachable"},
+            "qdrant": {"status": "ok"},
+        },
+    }
+    assert "error" not in response.json()
+    assert "10.0.0.5" not in response.text
+
+
+async def test_ready_uses_the_configured_timeout(make_settings: SettingsFactory) -> None:
+    async with ready_client(make_settings, [FakeProbe("qdrant", hang=True)], timeout=0.05) as http:
+        response = await http.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["checks"] == {"qdrant": {"status": "down", "detail": "timeout"}}
+
+
+async def test_ready_without_registered_probes_is_ready(client: httpx.AsyncClient) -> None:
+    response = await client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready", "checks": {}}
+
+
+async def test_ready_documents_the_503_status_document(client: httpx.AsyncClient) -> None:
+    schema = (await client.get("/openapi.json")).json()
+
+    responses = schema["paths"]["/ready"]["get"]["responses"]
+    assert {"200", "503"} <= responses.keys()
 
 
 @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])

@@ -33,6 +33,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url="/redoc" if docs else None,
         openapi_url="/openapi.json" if docs else None,
     )
+    app.state.settings = settings
+    # Real adapters are registered by the lifespan once infrastructure exists.
+    app.state.readiness_probes = ()
     register_exception_handlers(app)
     app.include_router(health_router)
 
