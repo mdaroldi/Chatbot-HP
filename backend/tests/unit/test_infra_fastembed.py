@@ -11,16 +11,26 @@ from fastembed.sparse.sparse_embedding_base import SparseEmbedding
 from pydantic import SecretStr
 
 from app.core.settings import Settings
-from app.domain.ingestion import SparseVector
+from app.domain.ingestion import SparseVector, VerifiedModel
 from app.infra.fastembed_embedder import FastembedEmbedder
 from app.infra.fastembed_tokens import FastembedTokenCounter
+from tests.model_data import pin
 
 
 class FakeModel:
     """Records how it was built and called, like a fastembed model class."""
 
-    def __init__(self, model_name: str, *, cache_dir: str, lazy_load: bool) -> None:
+    def __init__(
+        self,
+        model_name: str,
+        *,
+        cache_dir: str,
+        lazy_load: bool,
+        specific_model_path: str,
+        local_files_only: bool,
+    ) -> None:
         self.model_name, self.cache_dir, self.lazy_load = model_name, cache_dir, lazy_load
+        self.path, self.local_only = specific_model_path, local_files_only
         self.batch_sizes: list[int] = []
         self.threads: list[int] = []
         self.built.append(self)
@@ -55,11 +65,19 @@ class FakeSparse(FakeModel):
             )
 
 
+def verified(name: str, folder: str) -> VerifiedModel:
+    return VerifiedModel(files=pin(name=name, source=f"{name}-repo"), path=Path(folder))
+
+
+DENSE = verified("dense-model", "/cache/dense-snapshot")
+SPARSE = verified("sparse-model", "/cache/sparse-snapshot")
+
+
 def embedder(cache_dir: Path = Path("cache"), batch_size: int = 4) -> FastembedEmbedder:
     FakeDense.built, FakeSparse.built = [], []
     return FastembedEmbedder(
-        "dense-model",
-        "sparse-model",
+        DENSE,
+        SPARSE,
         cache_dir,
         batch_size,
         dense_class=FakeDense,
@@ -70,8 +88,6 @@ def embedder(cache_dir: Path = Path("cache"), batch_size: int = 4) -> FastembedE
 def settings() -> Settings:
     return Settings(
         postgres_password=SecretStr("unused"),
-        embedding_dense_model="dense-from-settings",
-        embedding_sparse_model="sparse-from-settings",
         embedding_cache_dir=Path("/var/cache/models"),
         embedding_batch_size=16,
     )
@@ -98,15 +114,19 @@ async def test_sparse_vectors_become_domain_sparse_vectors_in_input_order() -> N
     assert all(type(x) is float for v in vectors for x in v.values)
 
 
-async def test_each_model_is_loaded_once_with_its_name_and_the_cache_dir() -> None:
+async def test_each_model_is_loaded_once_from_its_verified_folder_offline() -> None:
     subject = embedder(cache_dir=Path("/srv/models"))  # a name only, never created
     await subject.embed_dense(["a"])
     await subject.embed_dense(["b"])
     await subject.embed_sparse(["c"])
 
     [dense], [sparse] = FakeDense.built, FakeSparse.built
-    built = [(m.model_name, m.cache_dir, m.lazy_load) for m in (dense, sparse)]
-    assert built == [("dense-model", "/srv/models", False), ("sparse-model", "/srv/models", False)]
+    built = [(m.model_name, m.path, m.local_only, m.lazy_load) for m in (dense, sparse)]
+    assert built == [
+        ("dense-model", "/cache/dense-snapshot", True, False),
+        ("sparse-model", "/cache/sparse-snapshot", True, False),
+    ]
+    assert {dense.cache_dir, sparse.cache_dir} == {"/srv/models"}
     assert (subject.dense_model, subject.sparse_model) == ("dense-model", "sparse-model")
 
 
@@ -131,31 +151,36 @@ async def test_embedding_runs_off_the_event_loop_thread() -> None:
 async def test_embedder_from_settings_uses_the_embedding_settings() -> None:
     FakeDense.built, FakeSparse.built = [], []
     subject = FastembedEmbedder.from_settings(
-        settings(), dense_class=FakeDense, sparse_class=FakeSparse
+        settings(), DENSE, SPARSE, dense_class=FakeDense, sparse_class=FakeSparse
     )
     await subject.embed_dense(["a"])
 
     [dense], [sparse] = FakeDense.built, FakeSparse.built
-    assert (dense.model_name, dense.cache_dir) == ("dense-from-settings", "/var/cache/models")
-    assert (sparse.model_name, sparse.cache_dir) == ("sparse-from-settings", "/var/cache/models")
+    assert (dense.path, dense.cache_dir) == ("/cache/dense-snapshot", "/var/cache/models")
+    assert (sparse.path, sparse.cache_dir) == ("/cache/sparse-snapshot", "/var/cache/models")
     assert dense.batch_sizes == [16]
 
 
 # ------------------------------------------------------------------ token counter
 
 
-def test_tokens_are_counted_by_the_dense_model_tokenizer_only() -> None:
+def test_tokens_are_counted_by_the_dense_tokenizer_from_the_verified_folder() -> None:
     FakeDense.built = []
-    counter = FastembedTokenCounter("dense-model", Path("cache"), model_class=FakeDense)
+    counter = FastembedTokenCounter(DENSE, Path("cache"), model_class=FakeDense)
 
     assert (counter.count("one two three"), counter.count("")) == (5, 2)
     [model] = FakeDense.built
-    assert (model.model_name, model.cache_dir, model.lazy_load) == ("dense-model", "cache", True)
+    assert (model.model_name, model.path, model.local_only) == (
+        "dense-model",
+        "/cache/dense-snapshot",
+        True,
+    )
+    assert (model.cache_dir, model.lazy_load) == ("cache", True)
 
 
-def test_token_counter_from_settings_uses_the_dense_model() -> None:
+def test_token_counter_from_settings_uses_the_cache_dir() -> None:
     FakeDense.built = []
-    FastembedTokenCounter.from_settings(settings(), model_class=FakeDense)
+    FastembedTokenCounter.from_settings(settings(), DENSE, model_class=FakeDense)
 
     [model] = FakeDense.built
-    assert (model.model_name, model.cache_dir) == ("dense-from-settings", "/var/cache/models")
+    assert (model.path, model.cache_dir) == ("/cache/dense-snapshot", "/var/cache/models")

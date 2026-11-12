@@ -9,7 +9,12 @@ from app.domain.ingestion import (
     BuildWarning,
     BuildWarningKind,
     IndexBuild,
+    ModelDownloadError,
+    ModelError,
     ModelFiles,
+    ModelIntegrityError,
+    ModelNotAllowedError,
+    ModelPinsError,
 )
 
 SHA = "a" * 64
@@ -148,3 +153,30 @@ def test_failed_build_may_have_no_chunks() -> None:
     build = index_build(status=BuildStatus.FAILED, chunk_counts={})
 
     assert build.chunk_count == 0
+
+
+def test_integrity_error_names_the_model_the_file_and_both_digests() -> None:
+    error = ModelIntegrityError("demo/dense", "model.onnx", expected=SHA, actual="b" * 64)
+
+    assert (error.model, error.file, error.expected, error.actual) == (
+        "demo/dense",
+        "model.onnx",
+        SHA,
+        "b" * 64,
+    )
+    assert str(error) == f"demo/dense: model.onnx has SHA-256 {'b' * 64}, pinned {SHA}"
+    assert isinstance(error, ModelError)
+
+
+def test_integrity_error_reports_a_missing_file() -> None:
+    error = ModelIntegrityError("demo/dense", "model.onnx", expected=SHA, actual=None)
+
+    assert str(error) == f"demo/dense: model.onnx is missing, pinned {SHA}"
+
+
+def test_model_errors_are_distinct() -> None:
+    kinds = {ModelNotAllowedError, ModelPinsError, ModelDownloadError, ModelIntegrityError}
+
+    assert all(issubclass(kind, ModelError) for kind in kinds)
+    assert not issubclass(ModelDownloadError, ModelIntegrityError)
+    assert not issubclass(ModelIntegrityError, ModelDownloadError)

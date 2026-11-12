@@ -112,3 +112,37 @@ checked on 2026-11-12. The revisions are the ones pinned first.
   `infra/model_files.py` loader, loads from the same verified directory, and reports
   not ready when its digests differ from the live build's `models`. This is recorded
   here and in the Phase 1 plan, and not built in Phase 1.
+
+## Corrections after implementation
+
+### Pinned model files (Phase 1, commit 9b)
+
+- **Files pinned per model:** fastembed's model file and its additional files are
+  required; fastembed's common config and tokenizer files are pinned when the
+  repository has them (the list is copied from fastembed 0.9.1 in
+  `app/infra/model_pins.py`). First pins: 5 files for the dense model (about 66 MB),
+  18 for BM25, all equal to the digests of the cache measured before this ADR.
+- **Hub access:** always anonymous (`token=False`), always at an explicit revision;
+  metadata requests time out after 30 s. A cache that does not match is downloaded
+  again with `force_download`, because a plain download keeps a corrupted file that is
+  already in the snapshot.
+- **Logging:** the source logs one warning (model and file) when it downloads a bad
+  cache again. `ModelIntegrityError` and `ModelDownloadError` carry the model, file and
+  digests; the ingest CLI (commit 10) logs the one structured line and exits non-zero.
+- **`make model-pins`** regenerates the models already pinned, or the ones named in
+  `MODELS="name ..."`; it reads no settings and needs no database.
+- **Offline load:** the models get `specific_model_path` and `local_files_only=True`.
+  A `model` test makes every fastembed hub call fail and still embeds and counts
+  tokens from the verified folder.
+- **Secret scanning:** gitleaks' `generic-api-key` rule reads three digests in
+  `models.toml` as tokens, because their keys are file names such as `tokenizer.json`.
+  The root `.gitleaks.toml` keeps every default rule and exempts only that rule, only
+  in `backend/models.toml`, and only for a value that is exactly a lowercase SHA-256
+  digest (`condition = "AND"`). `targetRules` is required: in gitleaks 8.30.1 a global
+  allowlist with `paths` skips the whole file, so `AND` would not apply (measured).
+  `minVersion` makes an older gitleaks refuse the file instead of ignoring the
+  exemption's scope. Proved by running gitleaks: the pins pass; fake keys added to the
+  pins are still reported (two `generic-api-key`, one `aws-access-token`); digests on
+  `token` and `key` lines in another file are still reported. The pre-commit hook,
+  `make security` and CI (which runs `make security`) all read the root file; a unit
+  test pins its content.

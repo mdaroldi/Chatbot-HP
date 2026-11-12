@@ -10,6 +10,7 @@ from app.domain.ingestion import Chunk
 from app.infra.fastembed_tokens import FastembedTokenCounter
 from app.ingestion.chunking import StructureChunker
 from tests.corpus.conftest import ENVY, OMEN, ParsedCorpusDocument
+from tests.model_data import fetch_verified
 
 pytestmark = [pytest.mark.corpus, pytest.mark.model]
 
@@ -25,7 +26,9 @@ CHUNKS = {ENVY: 149, OMEN: 141}
 
 @pytest.fixture(scope="module")
 def counter() -> FastembedTokenCounter:
-    return FastembedTokenCounter.from_settings(Settings(postgres_password=SecretStr("unused")))
+    settings = Settings(postgres_password=SecretStr("unused"))
+    dense = fetch_verified(settings, settings.embedding_dense_model)
+    return FastembedTokenCounter.from_settings(settings, dense)
 
 
 @pytest.fixture(scope="module")

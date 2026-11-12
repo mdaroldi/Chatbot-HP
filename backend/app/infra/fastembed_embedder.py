@@ -10,7 +10,7 @@ from fastembed.common.types import NumpyArray
 from fastembed.sparse.sparse_embedding_base import SparseEmbedding
 
 from app.core.settings import Settings
-from app.domain.ingestion import SparseVector
+from app.domain.ingestion import SparseVector, VerifiedModel
 
 
 class DenseModel(Protocol):
@@ -22,48 +22,78 @@ class SparseModel(Protocol):
 
 
 class DenseModelClass(Protocol):
-    def __call__(self, model_name: str, *, cache_dir: str, lazy_load: bool) -> DenseModel: ...
+    def __call__(
+        self,
+        model_name: str,
+        *,
+        cache_dir: str,
+        lazy_load: bool,
+        specific_model_path: str,
+        local_files_only: bool,
+    ) -> DenseModel: ...
 
 
 class SparseModelClass(Protocol):
-    def __call__(self, model_name: str, *, cache_dir: str, lazy_load: bool) -> SparseModel: ...
+    def __call__(
+        self,
+        model_name: str,
+        *,
+        cache_dir: str,
+        lazy_load: bool,
+        specific_model_path: str,
+        local_files_only: bool,
+    ) -> SparseModel: ...
 
 
 class FastembedEmbedder:
-    """Embedder over fastembed's ONNX models.
+    """Embedder over fastembed's ONNX models, loaded from verified folders (ADR 0006).
 
-    The models are loaded (and downloaded into the cache on first use) when the
-    embedder is built, so a missing or broken model fails before any work starts;
-    build it only when an index is really built. Inference is CPU-bound and runs in
-    a worker thread so it never blocks the event loop.
+    The models are loaded when the embedder is built, from folders whose files were
+    just hashed, and never from the network (`local_files_only`); build it only when
+    an index is really built. Inference is CPU-bound and runs in a worker thread so it
+    never blocks the event loop.
     """
 
-    def __init__(  # noqa: PLR0913 - four settings plus the two injectable model classes
+    def __init__(  # noqa: PLR0913 - two models, two settings, two injectable model classes
         self,
-        dense_model: str,
-        sparse_model: str,
+        dense: VerifiedModel,
+        sparse: VerifiedModel,
         cache_dir: Path,
         batch_size: int,
         *,
         dense_class: DenseModelClass = TextEmbedding,
         sparse_class: SparseModelClass = SparseTextEmbedding,
     ) -> None:
-        self._dense_name, self._sparse_name = dense_model, sparse_model
+        self._dense_name, self._sparse_name = dense.files.name, sparse.files.name
         self._batch_size = batch_size
-        self._dense = dense_class(dense_model, cache_dir=str(cache_dir), lazy_load=False)
-        self._sparse = sparse_class(sparse_model, cache_dir=str(cache_dir), lazy_load=False)
+        self._dense = dense_class(
+            dense.files.name,
+            cache_dir=str(cache_dir),
+            lazy_load=False,
+            specific_model_path=str(dense.path),
+            local_files_only=True,
+        )
+        self._sparse = sparse_class(
+            sparse.files.name,
+            cache_dir=str(cache_dir),
+            lazy_load=False,
+            specific_model_path=str(sparse.path),
+            local_files_only=True,
+        )
 
     @classmethod
     def from_settings(
         cls,
         settings: Settings,
+        dense: VerifiedModel,
+        sparse: VerifiedModel,
         *,
         dense_class: DenseModelClass = TextEmbedding,
         sparse_class: SparseModelClass = SparseTextEmbedding,
     ) -> Self:
         return cls(
-            settings.embedding_dense_model,
-            settings.embedding_sparse_model,
+            dense,
+            sparse,
             settings.embedding_cache_dir,
             settings.embedding_batch_size,
             dense_class=dense_class,

@@ -97,6 +97,35 @@ class ChecksumMismatchError(CorpusError):
     """The bytes were fetched but are not the pinned document."""
 
 
+class ModelError(Exception):
+    """Base for embedding model file problems (ADR 0006)."""
+
+
+class ModelPinsError(ModelError):
+    """models.toml is unreadable or malformed."""
+
+
+class ModelNotAllowedError(ModelError):
+    """The configured model has no pin, so it may not be downloaded or loaded."""
+
+
+class ModelDownloadError(ModelError):
+    """The hub could not serve the pinned revision."""
+
+
+class ModelIntegrityError(ModelError):
+    """A model file's SHA-256 differs from its pin even after a fresh download.
+
+    Distinct from ModelDownloadError: the hub answered, but with other bytes. The
+    fields let the CLI log one structured line; `actual` is None for a missing file.
+    """
+
+    def __init__(self, model: str, file: str, *, expected: str, actual: str | None) -> None:
+        found = "is missing" if actual is None else f"has SHA-256 {actual}"
+        super().__init__(f"{model}: {file} {found}, pinned {expected}")
+        self.model, self.file, self.expected, self.actual = model, file, expected, actual
+
+
 class IndexPublishError(Exception):
     """A new collection failed its check; the live alias was left untouched."""
 
@@ -363,6 +392,17 @@ class ModelFiles:
 
 
 @dataclass(frozen=True)
+class VerifiedModel:
+    """A model folder whose files were just hashed and matched their pins.
+
+    `files` holds the digests computed from the folder, which is what a build records.
+    """
+
+    files: ModelFiles
+    path: Path
+
+
+@dataclass(frozen=True)
 class BuildWarning:
     """A problem that did not stop a build, such as an old collection left unpruned.
 
@@ -597,6 +637,12 @@ class VectorIndex(Protocol):
     async def delete_collection(self, name: str) -> None: ...
 
     async def list_collections(self, prefix: str) -> list[str]: ...
+
+
+class ModelSource(Protocol):
+    async def fetch(self, name: str) -> VerifiedModel:
+        """Return the pinned files of an allowed model, verified, or raise a ModelError."""
+        ...
 
 
 class ManifestStore(Protocol):

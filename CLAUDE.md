@@ -89,6 +89,7 @@ make test-int     # integration tests (needs Docker)
 make security     # bandit, pip-audit, gitleaks
 make up / down    # docker compose up / down
 make ingest       # build the vector index
+make model-pins   # regenerate backend/models.toml and print the diff (manual, review before committing)
 make eval         # run the quality benchmark
 make load         # run the load test
 make check        # lint + typecheck + test + security (run before every commit)

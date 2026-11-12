@@ -1,0 +1,20 @@
+# gitleaks configuration: the default rules, plus one narrow exemption (ADR 0006).
+minVersion = "v8.30.1"
+
+[extend]
+useDefault = true
+
+# backend/models.toml pins public model files by SHA-256. Its keys are file names such
+# as tokenizer.json, so the generic-api-key rule reads each digest as a token. The
+# exemption applies to that rule only, and only when both hold: the file is
+# backend/models.toml AND the flagged value is exactly a lowercase SHA-256 digest.
+# Anything else in that file, and a digest anywhere else, is still reported.
+# targetRules is required: in gitleaks 8.30.1 a global allowlist with `paths` skips the
+# whole file before any rule runs, so `condition = "AND"` would have no effect.
+[[allowlists]]
+description = "SHA-256 digests of public model files in backend/models.toml (ADR 0006)"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^backend/models\.toml$''']
+regexTarget = "secret"
+regexes = ['''^[0-9a-f]{64}$''']

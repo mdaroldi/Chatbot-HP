@@ -6,6 +6,7 @@ from typing import Protocol, Self
 from fastembed import TextEmbedding
 
 from app.core.settings import Settings
+from app.domain.ingestion import VerifiedModel
 
 
 class TokenizingModel(Protocol):
@@ -13,7 +14,15 @@ class TokenizingModel(Protocol):
 
 
 class TokenizingModelClass(Protocol):
-    def __call__(self, model_name: str, *, cache_dir: str, lazy_load: bool) -> TokenizingModel: ...
+    def __call__(
+        self,
+        model_name: str,
+        *,
+        cache_dir: str,
+        lazy_load: bool,
+        specific_model_path: str,
+        local_files_only: bool,
+    ) -> TokenizingModel: ...
 
 
 class FastembedTokenCounter:
@@ -23,25 +32,34 @@ class FastembedTokenCounter:
     must come from that model's tokenizer, not an approximation. It includes the
     [CLS] and [SEP] tokens, and it saturates at the model's input limit (512 for
     bge-small): a longer text counts as the limit, which is still over any chunk limit
-    below it. `lazy_load` loads the tokenizer only, never the ONNX session.
+    below it. `lazy_load` loads the tokenizer only, never the ONNX session, and it
+    comes from the dense model's verified folder, never the network (ADR 0006).
     """
 
     def __init__(
         self,
-        model_name: str,
+        model: VerifiedModel,
         cache_dir: Path,
         *,
         model_class: TokenizingModelClass = TextEmbedding,
     ) -> None:
-        self._model = model_class(model_name, cache_dir=str(cache_dir), lazy_load=True)
+        self._model = model_class(
+            model.files.name,
+            cache_dir=str(cache_dir),
+            lazy_load=True,
+            specific_model_path=str(model.path),
+            local_files_only=True,
+        )
 
     @classmethod
     def from_settings(
-        cls, settings: Settings, *, model_class: TokenizingModelClass = TextEmbedding
+        cls,
+        settings: Settings,
+        model: VerifiedModel,
+        *,
+        model_class: TokenizingModelClass = TextEmbedding,
     ) -> Self:
-        return cls(
-            settings.embedding_dense_model, settings.embedding_cache_dir, model_class=model_class
-        )
+        return cls(model, settings.embedding_cache_dir, model_class=model_class)
 
     def count(self, text: str) -> int:
         return self._model.token_count(text)
