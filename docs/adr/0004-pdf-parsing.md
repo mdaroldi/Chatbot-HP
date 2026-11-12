@@ -90,3 +90,10 @@ PDF page numbers.
   Tables with spanning title rows yield fewer columns, but rows are never split.
 - **Font sizes** are rounded to 0.01 pt: pdfminer derives them from glyph boxes and
   reports values such as 8.000000000000057.
+- **Icons:** an image becomes an `[icon]` placeholder only when it sits in a gap
+  between two words of one line and is at most 3 ems tall. Images at the start or end
+  of a line (OMEN's 72 margin symbols beside notes, row-start glyphs) and images
+  outside lines (logos, figures) get none. Measured: ENVY 87 placeholders (57 in body
+  text on 45 line segments, 30 in table cells), OMEN 3 (table cells). The spike's 43
+  could not be reproduced (its scripts were not kept); 45 body-text segments is the
+  closest match.

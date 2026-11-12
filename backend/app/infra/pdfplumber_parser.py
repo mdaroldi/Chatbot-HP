@@ -1,7 +1,7 @@
 """Thin pdfplumber adapter: PDF objects in, plain IR out (ADR 0004).
 
 Every layout decision lives in the pure stages under app/ingestion; this module
-only converts words, horizontal lines, page sizes and bookmarks.
+only converts words, horizontal lines, image boxes, page sizes and bookmarks.
 """
 
 from collections.abc import Mapping
@@ -17,6 +17,7 @@ from app.domain.ingestion import (
     CorpusDocument,
     DocumentParseError,
     HorizontalRule,
+    ImageBox,
     OutlineEntry,
     ParsedDocument,
     Word,
@@ -77,6 +78,7 @@ class PdfplumberParser:
     def parse(self, path: Path, document: CorpusDocument) -> ParsedDocument:
         words: list[Word] = []
         rules: list[HorizontalRule] = []
+        images: list[ImageBox] = []
         heights: list[float] = []
         with pdfplumber.open(path) as pdf:
             pages = {page.page_obj.pageid: page.page_number for page in pdf.pages}
@@ -105,6 +107,16 @@ class PdfplumberParser:
                     for line in page.lines
                     if abs(line["bottom"] - line["top"]) < _FLAT and line["x1"] > line["x0"]
                 )
+                images.extend(
+                    ImageBox(
+                        pdf_page=number,
+                        x0=float(image["x0"]),
+                        top=float(image["top"]),
+                        x1=float(image["x1"]),
+                        bottom=float(image["bottom"]),
+                    )
+                    for image in page.images
+                )
             outline = _outline(pdf.doc, pages, document.doc_id)
         return ParsedDocument(
             document=document,
@@ -112,4 +124,5 @@ class PdfplumberParser:
             rules=tuple(rules),
             outline=outline,
             page_heights=tuple(heights),
+            images=tuple(images),
         )

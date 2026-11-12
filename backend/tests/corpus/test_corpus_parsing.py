@@ -4,7 +4,8 @@ from collections.abc import Mapping
 
 import pytest
 
-from app.domain.ingestion import Table
+from app.domain.ingestion import ICON, Table
+from app.ingestion.lines import count_icons
 from app.ingestion.outline import match_headings
 from app.ingestion.pages import chapter_opener_pages, index_pages, toc_pages
 from app.ingestion.tables import extract_tables
@@ -98,3 +99,22 @@ def test_spare_part_number_stays_next_to_its_component(corpus: Corpus) -> None:
 
     assert rows
     assert all(any("Bottom cover" in cell for cell in row) for row in rows)
+
+
+# Images inside a gap between two words of one line (body text and table cells).
+# ENVY: 57 in body text, 30 in table cells. OMEN: 3, all in table cells.
+ICONS = {ENVY: 87, OMEN: 3}
+
+
+@BOTH
+def test_lost_icons_are_marked_and_counted(corpus: Corpus, doc_id: str) -> None:
+    assert count_icons(corpus[doc_id].lines) == ICONS[doc_id]
+
+
+def test_press_and_hold_passages_keep_a_placeholder_for_the_button(corpus: Corpus) -> None:
+    lines = [ln.text for ln in corpus[ENVY].lines]
+    marked = [text for text in lines if f"press and hold {ICON}" in text]
+    unmarked_gaps = [text for text in lines if text.endswith("press and hold")]
+
+    assert len(marked) == 8
+    assert unmarked_gaps == []

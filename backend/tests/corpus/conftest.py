@@ -54,7 +54,7 @@ def corpus(corpus_files: Mapping[str, Path]) -> Mapping[str, ParsedCorpusDocumen
     result: dict[str, ParsedCorpusDocument] = {}
     for document in load_corpus():
         parsed = parser.parse(corpus_files[document.doc_id], document)
-        lines = group_lines(parsed.words)
+        lines = group_lines(parsed.words, parsed.images)
         result[document.doc_id] = ParsedCorpusDocument(
             parsed=parsed, lines=lines, footers=split_footers(lines, parsed.page_heights)
         )

@@ -1,7 +1,7 @@
 """Behavior of word-to-line grouping (synthetic words, no PDF)."""
 
-from app.domain.ingestion import TextLine, Word
-from app.ingestion.lines import group_lines
+from app.domain.ingestion import ICON, ImageBox, TextLine, Word
+from app.ingestion.lines import count_icons, group_lines
 
 
 def word(text: str, x0: float, top: float = 100, size: float = 10, page: int = 1) -> Word:
@@ -65,3 +65,67 @@ def test_line_font_size_is_the_size_of_most_characters() -> None:
     lines = group_lines((word("Model", 50, size=10), word("TM", 77, size=6)))
 
     assert lines[0].font_size == 10
+
+
+# ------------------------------------------------------------------ inline icons
+
+
+def icon(x0: float, top: float = 97, size: float = 18, page: int = 1) -> ImageBox:
+    return ImageBox(pdf_page=page, x0=x0, top=top, x1=x0 + size, bottom=top + size)
+
+
+# "hold" spans 50-70; the gap up to "the" at 92 is where the button glyph was.
+HOLD = (word("hold", 50), word("the", 92))
+
+
+def test_an_image_in_the_gap_between_words_becomes_an_icon_placeholder() -> None:
+    lines = group_lines(HOLD, (icon(72),))
+
+    assert texts(lines) == [f"hold {ICON} the"]
+    assert lines[0].top == 100  # the placeholder keeps the line's own box
+    assert lines[0].bottom == 110
+    assert count_icons(lines) == 1
+
+
+def test_a_lone_icon_in_a_table_cell_gap_is_its_own_segment() -> None:
+    lines = group_lines((word("Power", 50), word("Turn", 300)), (icon(200),))
+
+    assert texts(lines) == ["Power", ICON, "Turn"]
+
+
+def test_images_at_the_start_or_end_of_a_line_get_no_placeholder() -> None:
+    """Margin symbols beside notes sit before the text; nothing marks a lost glyph."""
+    lines = group_lines(HOLD, (icon(28), icon(72), icon(114)))
+
+    assert texts(lines) == [f"hold {ICON} the"]
+    assert count_icons(lines) == 1
+
+
+def test_images_outside_text_lines_get_no_placeholder() -> None:
+    figure = ImageBox(pdf_page=1, x0=60, top=55, x1=400, bottom=155)  # centred, too tall
+    logo = icon(72, top=300)  # no words at its height
+    other_page = icon(72, page=2)
+
+    lines = group_lines((*HOLD, word("x", 50, page=2)), (figure, logo, other_page, icon(72)))
+
+    assert texts(lines) == [f"hold {ICON} the", "x"]
+
+
+def test_each_gap_image_counts_once() -> None:
+    words = (word("a", 50), word("b", 79), word("c", 108))
+
+    lines = group_lines(words, (icon(58), icon(87)))
+
+    assert texts(lines) == [f"a {ICON} b {ICON} c"]
+    assert count_icons(lines) == 2
+
+
+def test_a_tall_image_centred_in_a_gap_between_words_is_a_figure_not_an_icon() -> None:
+    """Safety guard: a picture placed between words must never become [icon]."""
+    words = (*HOLD, word("x", 200))
+    figure = ImageBox(pdf_page=1, x0=120, top=55, x1=180, bottom=155)  # 100 pt > 3 em
+
+    lines = group_lines(words, (figure, icon(72)))
+
+    assert texts(lines) == [f"hold {ICON} the", "x"]
+    assert count_icons(lines) == 1

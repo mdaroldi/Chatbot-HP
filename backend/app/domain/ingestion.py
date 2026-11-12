@@ -342,6 +342,26 @@ class HorizontalRule:
         _require(self.x0 < self.x1, "rule length must be positive")
 
 
+# Stands where an inline image (a button glyph) sat in a line of text: no vision pass
+# reads the glyph, so later stages and the LLM prompt treat it as "an unnamed button".
+ICON = "[icon]"
+
+
+@dataclass(frozen=True)
+class ImageBox:
+    """Where the parser saw an image; its pixels are never read."""
+
+    pdf_page: int
+    x0: float
+    top: float
+    x1: float
+    bottom: float
+
+    def __post_init__(self) -> None:
+        _require(self.pdf_page >= 1, "pdf_page must be >= 1")
+        _require(self.x0 <= self.x1 and self.top <= self.bottom, "image box is inverted")
+
+
 @dataclass(frozen=True)
 class Table:
     """Cells by row band: a row is one band between rules and never loses its cells."""
@@ -372,6 +392,7 @@ class ParsedDocument:
     rules: tuple[HorizontalRule, ...]
     outline: tuple[OutlineEntry, ...]
     page_heights: tuple[float, ...]
+    images: tuple[ImageBox, ...] = ()
 
     def __post_init__(self) -> None:
         _require(bool(self.page_heights), "a document needs at least one page")
@@ -380,6 +401,7 @@ class ParsedDocument:
         for kind, pages in (
             ("word on", (w.pdf_page for w in self.words)),
             ("rule on", (r.pdf_page for r in self.rules)),
+            ("image on", (i.pdf_page for i in self.images)),
             ("bookmark to", (e.pdf_page for e in self.outline)),
         ):
             beyond = next((p for p in pages if p > last), None)

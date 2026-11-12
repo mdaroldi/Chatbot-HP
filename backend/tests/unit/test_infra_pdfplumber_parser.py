@@ -5,13 +5,15 @@ import pathlib
 import pytest
 
 from app.domain.ingestion import (
+    ICON,
     CorpusDocument,
     DocumentParseError,
     OutlineEntry,
     ParsedDocument,
 )
 from app.infra.pdfplumber_parser import PdfplumberParser
-from tests.pdf_builder import Bookmark, Page, Rule, Text, VerticalRule, build_pdf
+from app.ingestion.lines import group_lines
+from tests.pdf_builder import Bookmark, Image, Page, Rule, Text, VerticalRule, build_pdf
 
 DOC = CorpusDocument(
     doc_id="demo-guide",
@@ -121,3 +123,44 @@ def test_font_sizes_are_rounded_so_equal_sizes_compare_equal(tmp_path: pathlib.P
     parsed = parse(tmp_path, noisy, (Bookmark("Cell", 1),))
 
     assert [w.font_size for w in parsed.words] == [8.0]
+
+
+# ------------------------------------------------------------------ images and icons
+# Helvetica 10 pt: "press and hold" spans x 50 to 115.6 at top 100.
+
+LINE = Text(50, 100, 10, "press and hold")
+
+
+def icon_lines(tmp_path: pathlib.Path, *images: Image) -> list[str]:
+    texts = (LINE, Text(138, 100, 10, "the button."))
+    parsed = parse(tmp_path, (Page(texts=texts, images=images),), (Bookmark("Setup", 1),))
+    return [line.text for line in group_lines(parsed.words, parsed.images)]
+
+
+def test_images_become_image_boxes(tmp_path: pathlib.Path) -> None:
+    pages = (Page(texts=(LINE,), images=(Image(118, 97, 18, 18),)),)
+
+    parsed = parse(tmp_path, pages, (Bookmark("Setup", 1),))
+
+    assert [(i.pdf_page, i.x0, i.top, i.x1, i.bottom) for i in parsed.images] == [
+        (1, 118, 97, 136, 115)
+    ]
+
+
+def test_an_image_in_a_text_gap_becomes_a_placeholder_end_to_end(tmp_path: pathlib.Path) -> None:
+    assert icon_lines(tmp_path, Image(118, 97, 18, 18)) == [f"press and hold {ICON} the button."]
+
+
+def test_figures_and_logos_outside_text_lines_get_no_placeholder(tmp_path: pathlib.Path) -> None:
+    figure = Image(50, 80, 400, 200)  # overlaps the line but is far taller than text
+    logo = Image(400, 400, 40, 20)  # no text at its height
+
+    in_gap = Image(118, 97, 18, 18)
+
+    assert icon_lines(tmp_path, figure, logo, in_gap) == [f"press and hold {ICON} the button."]
+
+
+def test_images_at_line_start_or_end_get_no_placeholder(tmp_path: pathlib.Path) -> None:
+    start, in_gap, end = Image(28, 97, 18, 18), Image(118, 97, 18, 18), Image(205, 97, 18, 18)
+
+    assert icon_lines(tmp_path, start, in_gap, end) == [f"press and hold {ICON} the button."]

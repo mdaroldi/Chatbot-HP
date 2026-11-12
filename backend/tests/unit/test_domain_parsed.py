@@ -5,6 +5,7 @@ import pytest
 from app.domain.ingestion import (
     CorpusDocument,
     HorizontalRule,
+    ImageBox,
     OutlineEntry,
     ParsedDocument,
     Table,
@@ -44,6 +45,14 @@ def test_horizontal_rule_needs_a_page_and_a_positive_length() -> None:
         HorizontalRule(pdf_page=1, y=10, x0=5, x1=5)
 
 
+def test_image_box_needs_a_page_and_a_non_inverted_box() -> None:
+    assert ImageBox(pdf_page=1, x0=1, top=2, x1=3, bottom=4).x1 == 3
+    with pytest.raises(ValueError, match="pdf_page"):
+        ImageBox(pdf_page=0, x0=1, top=2, x1=3, bottom=4)
+    with pytest.raises(ValueError, match="inverted"):
+        ImageBox(pdf_page=1, x0=3, top=2, x1=1, bottom=4)
+
+
 def test_table_rows_have_one_cell_per_header_column() -> None:
     table = Table(
         pdf_page=3, top=10, bottom=50, x0=0, x1=100, header=("Code", "Meaning"), rows=(("A", "B"),)
@@ -63,6 +72,7 @@ def test_parsed_document_counts_pages_from_their_heights() -> None:
         document=DOC,
         words=(word(page=2),),
         rules=(HorizontalRule(pdf_page=2, y=1, x0=0, x1=1),),
+        images=(ImageBox(pdf_page=2, x0=0, top=0, x1=1, bottom=1),),
         outline=(OutlineEntry(level=1, title="Setup", pdf_page=2),),
         page_heights=(792.0, 792.0),
     )
@@ -78,6 +88,7 @@ def test_parsed_document_counts_pages_from_their_heights() -> None:
         ({"page_heights": (792.0, 0.0)}, "page heights"),
         ({"words": (word(page=3),)}, "word on page 3"),
         ({"rules": (HorizontalRule(pdf_page=3, y=1, x0=0, x1=1),)}, "rule on page 3"),
+        ({"images": (ImageBox(pdf_page=3, x0=0, top=0, x1=1, bottom=1),)}, "image on page 3"),
         ({"outline": (OutlineEntry(level=1, title="Setup", pdf_page=3),)}, "bookmark to page 3"),
     ],
 )
@@ -88,6 +99,7 @@ def test_parsed_document_rejects_content_beyond_its_pages(
         "document": DOC,
         "words": (),
         "rules": (),
+        "images": (),
         "outline": (),
         "page_heights": (792.0, 792.0),
     }

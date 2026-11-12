@@ -27,8 +27,8 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 | 2 | `feat(ingestion): domain IR and protocols` | done (`app/domain/ingestion.py`) |
 | 3 | `feat(ingestion): corpus manifest and verified downloader` | done (`backend/corpus.toml`, `app/infra/corpus_http.py`); `fix: anchor the corpus cache ignore pattern` (da7cf4b) |
 | 4 | `feat(ingestion): pdfplumber parser with footer, bookmark and row-band tables` | done (`app/infra/pdfplumber_parser.py`, `app/ingestion/{lines,footer,outline,pages,tables}.py`) |
-| 4b | `feat(ingestion): [icon] placeholders for inline images` (image boxes in the parser output, `[icon]` inserted during line grouping, lost-icon count in the stats: expected 43 ENVY, 3 OMEN) | next |
-| 5 | `feat(ingestion): cleaning stage with drop statistics` | pending |
+| 4b | `feat(ingestion): [icon] placeholders for inline images` (image boxes in the parser output, `[icon]` inserted during line grouping, lost-icon count in the stats: measured 87 ENVY, 3 OMEN; the spike's 43 was not reproducible, see ADR 0004 corrections) | done |
+| 5 | `feat(ingestion): cleaning stage with drop statistics` | next |
 | 6 | `feat(ingestion): sections and chunking v1` (with ADR 0005 and the CLAUDE.md chunking row) | pending |
 | 7 | `feat(ingestion): fastembed embedder and token counter` | pending |
 | 8 | `feat(ingestion): Qdrant versioned collection and alias swap` | pending |
@@ -177,6 +177,11 @@ Layers (dependency rule unchanged):
      precision re-check.** The spike scripts were not kept; recreate the check.
    - After cleaning, a section with no substantive text left (for example only a
      heading) is dropped as `empty_after_cleaning` and counted.
+   - **`[icon]` is not text content** (commit 4b): the cleaning rules strip it before
+     scoring a line's language (it never counts as a word for `non_english_latin` or
+     as a script for `non_latin`) and before the `empty_after_cleaning` check, so a
+     section whose only content is a heading and `[icon]` placeholders is still
+     dropped as empty. Commit 5 adds unit tests for both.
    - The stats table reports, per document, how many lines each rule dropped.
 4. Every chunk stores **both** the PDF page range and the printed page range; every
    report says which numbering it uses.

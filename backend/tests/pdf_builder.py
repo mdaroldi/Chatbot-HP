@@ -40,8 +40,19 @@ class VerticalRule:
 
 
 @dataclass(frozen=True)
+class Image:
+    """A 1x1 grey image XObject stretched over this box (top-down coordinates)."""
+
+    x: float
+    top: float
+    width: float
+    height: float
+
+
+@dataclass(frozen=True)
 class Page:
     texts: tuple[Text, ...] = ()
+    images: tuple[Image, ...] = ()
     rules: tuple[Rule, ...] = ()
     verticals: tuple[VerticalRule, ...] = ()
     height: float = 792.0
@@ -97,6 +108,11 @@ def _content(page: Page) -> bytes:
             f"BT /F1 {text.size:g} Tf {text.x:g} {baseline:g} Td ".encode()
             + _literal(text.text)
             + b" Tj ET"
+        )
+    for image in page.images:
+        bottom = page.height - image.top - image.height
+        ops.append(
+            f"q {image.width:g} 0 0 {image.height:g} {image.x:g} {bottom:g} cm /Im1 Do Q".encode()
         )
     return b"\n".join(ops)
 
@@ -164,6 +180,10 @@ def build_pdf(pages: tuple[Page, ...], bookmarks: tuple[Bookmark, ...] = ()) -> 
     catalog = objects.reserve()
     pages_root = objects.reserve()
     font = objects.add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    pixel = objects.add(
+        b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray "
+        b"/BitsPerComponent 8 /Length 1 >>\nstream\n\x80\nendstream"
+    )
     page_refs: list[int] = []
     for page in pages:
         stream = _content(page)
@@ -174,7 +194,8 @@ def build_pdf(pages: tuple[Page, ...], bookmarks: tuple[Bookmark, ...] = ()) -> 
             objects.add(
                 f"<< /Type /Page /Parent {pages_root} 0 R "
                 f"/MediaBox [0 0 {page.width:g} {page.height:g}] "
-                f"/Resources << /Font << /F1 {font} 0 R >> >> /Contents {content} 0 R >>".encode()
+                f"/Resources << /Font << /F1 {font} 0 R >> /XObject << /Im1 {pixel} 0 R >> >> "
+                f"/Contents {content} 0 R >>".encode()
             )
         )
     kids = " ".join(f"{ref} 0 R" for ref in page_refs)
