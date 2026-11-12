@@ -23,9 +23,13 @@ FROM ${PYTHON_IMAGE} AS runtime
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
-# No package managers at runtime: drop pip and ensurepip's bundled wheels; add the
-# numeric non-root user the container runs as.
-RUN python -m pip uninstall --yes pip \
+# Apply pending Debian security updates (the pinned base can lag behind them), drop
+# pip and ensurepip's bundled wheels (no Python package managers at runtime) and add
+# the numeric non-root user the container runs as.
+RUN apt-get update \
+    && apt-get upgrade --yes --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip uninstall --yes pip \
     && rm -rf /usr/local/lib/python3.12/ensurepip \
     && groupadd --system --gid 10001 app \
     && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin app
