@@ -100,6 +100,17 @@ class Settings(BaseSettings):
         description="Qdrant REST base URL (fixed in Compose).",
     )
 
+    qdrant_collection_alias: str = Field(
+        default="hpdocs_chunks",
+        pattern=r"^[A-Za-z0-9_-]+$",
+        description="Alias that always names the live chunk collection.",
+    )
+    index_keep_previous: bool = Field(
+        default=True,
+        description="Keep the previous build's collection after a swap, for rollback; "
+        "older builds are always deleted.",
+    )
+
     readiness_timeout_seconds: float = Field(
         default=2.0, gt=0, le=30, description="Per-dependency timeout for `GET /ready`."
     )

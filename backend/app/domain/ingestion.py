@@ -89,6 +89,10 @@ class ChecksumMismatchError(CorpusError):
     """The bytes were fetched but are not the pinned document."""
 
 
+class IndexPublishError(Exception):
+    """A new collection failed its check; the live alias was left untouched."""
+
+
 class ChunkTooLargeError(Exception):
     """A piece the chunker may not split (a word or a table row) exceeds the limit."""
 
@@ -293,6 +297,31 @@ class SparseVector:
         _require(len(self.indices) == len(self.values), "sparse indices and values differ")
         _require(len(set(self.indices)) == len(self.indices), "sparse indices must be unique")
         _require(all(i >= 0 for i in self.indices), "sparse indices must be non-negative")
+
+
+@dataclass(frozen=True)
+class EmbeddedChunks:
+    """Chunks with their vectors, position by position: what one build publishes.
+
+    Never empty, so a failed or empty run can never replace a live index.
+    """
+
+    chunks: Sequence[Chunk]
+    dense: Sequence[Sequence[float]]
+    sparse: Sequence[SparseVector]
+
+    def __post_init__(self) -> None:
+        _require(bool(self.chunks), "a build needs at least one chunk")
+        _require(
+            len(self.dense) == len(self.chunks) == len(self.sparse),
+            "one dense and one sparse vector per chunk",
+        )
+        sizes = {len(vector) for vector in self.dense}
+        _require(len(sizes) == 1 and 0 not in sizes, "dense vectors must share one non-zero size")
+
+    @property
+    def dense_size(self) -> int:
+        return len(self.dense[0])
 
 
 @dataclass(frozen=True)

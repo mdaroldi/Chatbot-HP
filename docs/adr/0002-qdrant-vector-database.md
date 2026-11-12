@@ -40,3 +40,23 @@ timeouts; the Qdrant client library arrives with ingestion in Phase 1.
   disabled.
 - Readiness depends on Qdrant answering 200 on `/readyz`; any other status, a
   timeout or a connection error reports the backend as not ready.
+
+## Index builds (Phase 1, commit 8)
+
+- **One collection per build**, `hpdocs_chunks_v1_<build id>` (`v1` is the collection
+  schema). Named vectors `dense` (cosine) and `sparse` with `modifier=IDF`, because BM25
+  vectors carry term frequencies only. Keyword payload indexes on `doc_id` and
+  `content_type`.
+- **Readers use an alias** (`QDRANT_COLLECTION_ALIAS`). A build goes live only after its
+  point count equals its chunk count. A lower count also catches duplicate chunk IDs,
+  since Qdrant keeps one point per ID. The alias then moves in one atomic request.
+- **Failure:** before the swap, the new collection is deleted and the alias is left
+  untouched. If the swap reports an error, the collection is deleted only when the
+  alias does not point to it. A swap that succeeded on the server but lost its reply
+  stays live.
+- **Rollback:** with `INDEX_KEEP_PREVIOUS=true`, the previous alias target survives the
+  swap. Every other collection under the prefix is deleted, and nothing outside the
+  prefix is touched.
+- **Local mode:** qdrant-client's in-memory mode supports aliases and the IDF modifier,
+  so unit tests run on it. It ignores payload indexes, which integration tests check
+  on the server.

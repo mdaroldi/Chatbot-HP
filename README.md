@@ -82,6 +82,8 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `POSTGRES_MAX_OVERFLOW` | `5` | Extra connections beyond the pool; the cap is pool size plus this. |
 | `POSTGRES_CONNECT_TIMEOUT_SECONDS` | `5.0` | Timeout for opening a Postgres connection. |
 | `QDRANT_URL` | `http://qdrant:6333/` | Qdrant REST base URL (fixed in Compose). |
+| `QDRANT_COLLECTION_ALIAS` | `hpdocs_chunks` | Alias that always names the live chunk collection. |
+| `INDEX_KEEP_PREVIOUS` | `true` | Keep the previous build's collection after a swap, for rollback; older builds are always deleted. |
 | `READINESS_TIMEOUT_SECONDS` | `2.0` | Per-dependency timeout for `GET /ready`. |
 | `CORPUS_DIR` | `corpus` | Cache directory for the verified source PDFs; reused offline. |
 | `CORPUS_MAX_BYTES` | `33554432` | Largest accepted source PDF, in bytes. |

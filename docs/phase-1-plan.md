@@ -34,11 +34,11 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 | 6c | `feat(ingestion): index front-matter safety and notice content` (with the ADR 0005 update) | done |
 | 6d | `feat(ingestion): treat question lead-ins of mini-TOCs as part of the list` (see "Commits 6b to 6d") | done |
 | 7 | `feat(ingestion): fastembed embedder and token counter` (with the corpus test of the real 450-token limit, and `CHUNK_MIN_TOKENS` re-measured with the real tokenizer) | done (`app/infra/fastembed_{embedder,tokens}.py`; `CHUNK_MIN_TOKENS` 65, see ADR 0005 corrections) |
-| 8 | `feat(ingestion): Qdrant versioned collection and alias swap` | next |
-| 9 | `feat(db): index_builds manifest (migration 0002)` | pending |
-| 10 | `feat(ingestion): pipeline, CLI, migrate and ingest services, make ingest/inspect-chunks` (with the startup-order ADR and CLAUDE.md update, and the chunk-ID digest corpus test) | pending |
-| 11 | `ci: corpus job with cached download` | pending |
-| 12 | `docs: README ingestion section` | pending |
+| 8 | `feat(ingestion): Qdrant versioned collection and alias swap` | done (`app/infra/qdrant_index.py`, `app/ingestion/publish.py`; `fix: anchor the data, model and cache ignore patterns` before it) |
+| 9 | `feat(db): index_builds manifest (migration 0002)` | next |
+| 10 | `feat(ingestion): pipeline, CLI, migrate and ingest services, make ingest/inspect-chunks` (with the startup-order ADR and CLAUDE.md update, and the chunk-ID digest corpus test; the embedder is built only after the `--if-needed` check, and a unit test shows the skip path never constructs it) | pending; first propose how the manifest records and verifies the model files (file hashes after download), with a short ADR |
+| 11 | `ci: corpus job with cached download` (also runs the `model` tests, with the model cache restored) | pending |
+| 12 | `docs: README ingestion section` (with a third-party licenses section that names tqdm, MPL-2.0) | pending |
 
 Corpus tests land in the commit of the stage they test (item 10), not all at once. They carry
 the `corpus` marker; `make test-int` runs them, and the CI integration job excludes them
@@ -119,7 +119,7 @@ its first child section.
 | loguru | 0.7.3 | MIT | pulled by fastembed; 0.8.0 too new, pinned by a commented `constraint-dependencies` entry (fastembed also caps it below 0.8) |
 | filelock | 4.2.9 | MIT | pulled by huggingface-hub (already a dev dependency); 4.2.10 (2026-11-09, bug fix, no advisory) too new, pinned by a commented `constraint-dependencies` entry |
 | tqdm | 4.70.1 | MPL-2.0 AND MIT | via fastembed; file-level copyleft, used unmodified; flagged to the user |
-| qdrant-client | 1.20.0 | Apache-2.0 | grpcio (Apache-2.0), protobuf (BSD-3), portalocker (BSD-3) |
+| qdrant-client | 1.20.0 | Apache-2.0 | adopted 2026-11-12 (released 2026-10-22); new at runtime with it: grpcio 1.85.1 (Apache-2.0), portalocker 4.4.2 (BSD-3), h2 4.4.1, hpack 4.2.0, hyperframe 6.1.0 (MIT); protobuf came with fastembed. Later grpcio uploads (1.78.2, 1.80.1, 1.81.2) are backports to older lines; the client talks REST, not gRPC |
 | aiosqlite | dev group only | MIT | manifest repository unit tests |
 
 Re-check ages and licenses when adding each one; pick the newest release older
@@ -310,8 +310,11 @@ fails the checksum check.
 
 ## Open points to report
 
-- Qdrant local mode: aliases and IDF modifier (stop if missing).
-- Qdrant server/client compatibility (item 7).
+- Qdrant local mode: aliases and the IDF modifier work (commit 8). Payload indexes have no
+  effect there and warn; unit tests filter that one warning, integration tests check the
+  payload schema on the server.
+- Qdrant server/client compatibility (item 7): server image v1.20.0, client 1.20.0; an
+  integration test pins both, and the client's compatibility check raises no warning.
 - Icon placeholder feasibility (item 8) and the lost-icon passage count.
 - Measured first `docker compose up` time, and the backend image size increase.
 - Whether HP blocks the GitHub runners (CI corpus job).

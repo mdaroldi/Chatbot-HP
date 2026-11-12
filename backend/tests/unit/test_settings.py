@@ -343,3 +343,30 @@ def test_embedding_settings_are_bounded(
 
     with pytest.raises(ValidationError, match=name.lower()):
         Settings()
+
+
+def test_index_defaults_name_the_live_alias_and_keep_one_previous_build() -> None:
+    settings = Settings()
+
+    assert settings.qdrant_collection_alias == "hpdocs_chunks"
+    assert settings.index_keep_previous is True
+
+
+def test_index_settings_are_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("QDRANT_COLLECTION_ALIAS", "hpdocs-staging")
+    monkeypatch.setenv("INDEX_KEEP_PREVIOUS", "false")
+
+    settings = Settings()
+
+    assert (settings.qdrant_collection_alias, settings.index_keep_previous) == (
+        "hpdocs-staging",
+        False,
+    )
+
+
+@pytest.mark.parametrize("alias", ["", "has space", "hpdocs/chunks", "hpdocs.chunks"])
+def test_the_alias_must_be_a_plain_name(monkeypatch: pytest.MonkeyPatch, alias: str) -> None:
+    monkeypatch.setenv("QDRANT_COLLECTION_ALIAS", alias)
+
+    with pytest.raises(ValidationError, match="qdrant_collection_alias"):
+        Settings()

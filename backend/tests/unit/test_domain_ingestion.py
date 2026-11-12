@@ -10,6 +10,7 @@ from app.domain.ingestion import (
     ContentType,
     CorpusDocument,
     DropReason,
+    EmbeddedChunks,
     IndexBuild,
     NoteLabel,
     OutlineEntry,
@@ -335,3 +336,41 @@ def test_index_build_records_what_produced_a_collection() -> None:
 def test_index_build_rejects_invalid_values(field: str, value: object) -> None:
     with pytest.raises(ValueError, match=field):
         index_build(**{field: value})
+
+
+# ------------------------------------------------------------------ embedded chunks
+
+
+def embedded(**overrides: object) -> EmbeddedChunks:
+    values: dict[str, object] = {
+        "chunks": [chunk(), chunk(chunk_id="00000000-0000-5000-8000-000000000002")],
+        "dense": [[0.1, 0.2], [0.3, 0.4]],
+        "sparse": [SparseVector(indices=(1,), values=(0.5,)), SparseVector(indices=(), values=())],
+    }
+    return EmbeddedChunks(**(values | overrides))  # type: ignore[arg-type]  # test data
+
+
+def test_embedded_chunks_pair_each_chunk_with_its_vectors() -> None:
+    batch = embedded()
+
+    assert (len(batch.chunks), batch.dense_size) == (2, 2)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("chunks", [chunk()], "one dense and one sparse vector per chunk"),
+        ("dense", [[0.1, 0.2]], "one dense and one sparse vector per chunk"),
+        ("sparse", [SparseVector(indices=(), values=())], "one dense and one sparse vector"),
+        ("dense", [[0.1, 0.2], [0.3]], "dense vectors must share one non-zero size"),
+        ("dense", [[], []], "dense vectors must share one non-zero size"),
+    ],
+)
+def test_embedded_chunks_reject_mismatched_vectors(field: str, value: object, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        embedded(**{field: value})
+
+
+def test_embedded_chunks_need_at_least_one_chunk() -> None:
+    with pytest.raises(ValueError, match="at least one chunk"):
+        embedded(chunks=[], dense=[], sparse=[])
