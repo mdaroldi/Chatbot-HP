@@ -209,3 +209,11 @@ def test_model_errors_are_distinct() -> None:
     assert all(issubclass(kind, ModelError) for kind in kinds)
     assert not issubclass(ModelDownloadError, ModelIntegrityError)
     assert not issubclass(ModelIntegrityError, ModelDownloadError)
+
+
+def test_download_error_names_the_model() -> None:
+    message = "demo/dense: cannot download demo/dense-onnx@abc"
+    error = ModelDownloadError(message, model="demo/dense")
+
+    assert error.model == "demo/dense"
+    assert str(error) == message

@@ -32,6 +32,8 @@ job-description.txt
 /.cache/
 /backend/.cache/
 loadtest/results/
+# Chunk review from `make inspect-chunks`: holds document text, never commit it
+/ingest-review/
 eval/reports/runs/
 
 # OS and editors

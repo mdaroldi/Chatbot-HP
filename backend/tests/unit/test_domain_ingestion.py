@@ -333,6 +333,17 @@ def test_embedded_chunks_reject_mismatched_vectors(field: str, value: object, me
         embedded(**{field: value})
 
 
+def test_embedded_chunks_name_their_chunking_version() -> None:
+    assert embedded().chunking_version == "v1"
+
+
+def test_embedded_chunks_come_from_one_chunking_version() -> None:
+    mixed = [chunk(), chunk(chunk_id="00000000-0000-5000-8000-000000000002", chunking_version="v2")]
+
+    with pytest.raises(ValueError, match="one chunking version per build"):
+        embedded(chunks=mixed)
+
+
 def test_embedded_chunks_need_at_least_one_chunk() -> None:
     with pytest.raises(ValueError, match="at least one chunk"):
         embedded(chunks=[], dense=[], sparse=[])

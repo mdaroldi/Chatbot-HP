@@ -370,3 +370,44 @@ def test_the_alias_must_be_a_plain_name(monkeypatch: pytest.MonkeyPatch, alias: 
 
     with pytest.raises(ValidationError, match="qdrant_collection_alias"):
         Settings()
+
+
+def test_chunk_limits_default_to_chunking_v1() -> None:
+    settings = Settings()
+
+    # 450 includes the prefix and leaves room under bge-small's 512-token input (ADR 0005).
+    assert (settings.chunk_max_tokens, settings.chunk_min_tokens) == (450, 65)
+
+
+def test_chunk_limits_are_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CHUNK_MAX_TOKENS", "300")
+    monkeypatch.setenv("CHUNK_MIN_TOKENS", "40")
+
+    settings = Settings()
+
+    assert (settings.chunk_max_tokens, settings.chunk_min_tokens) == (300, 40)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("CHUNK_MAX_TOKENS", "513"),  # over the dense model's input
+        ("CHUNK_MAX_TOKENS", "31"),
+        ("CHUNK_MIN_TOKENS", "-1"),
+    ],
+)
+def test_chunk_limits_are_bounded(monkeypatch: pytest.MonkeyPatch, name: str, value: str) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError, match=name.lower()):
+        Settings()
+
+
+def test_chunk_merge_floor_must_be_below_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CHUNK_MAX_TOKENS", "100")
+    monkeypatch.setenv("CHUNK_MIN_TOKENS", "99")
+    assert Settings().chunk_min_tokens == 99  # just below is fine
+
+    monkeypatch.setenv("CHUNK_MIN_TOKENS", "100")
+    with pytest.raises(ValidationError, match="chunk_min_tokens must be below chunk_max_tokens"):
+        Settings()

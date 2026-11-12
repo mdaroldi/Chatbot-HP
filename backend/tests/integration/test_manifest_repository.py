@@ -38,7 +38,7 @@ async def test_recorded_build_reads_back_unchanged(store: SqlManifestStore) -> N
 
     await store.record(build)
 
-    loaded = await store.latest_successful(build.collection)
+    loaded = await store.succeeded_build(build.collection)
     assert loaded == build
     assert loaded is not None
     assert loaded.created_at.utcoffset() is not None
@@ -52,8 +52,8 @@ async def test_failed_build_is_never_returned_as_successful(store: SqlManifestSt
     await store.record(succeeded)
     await store.record(failed)
 
-    assert await store.latest_successful(failed.collection) is None
-    assert await store.latest_successful(succeeded.collection) == succeeded
+    assert await store.succeeded_build(failed.collection) is None
+    assert await store.succeeded_build(succeeded.collection) == succeeded
 
 
 async def test_a_build_is_recorded_once(store: SqlManifestStore) -> None:
@@ -63,7 +63,7 @@ async def test_a_build_is_recorded_once(store: SqlManifestStore) -> None:
     with pytest.raises(IntegrityError):
         await store.record(make_failed_build(make_build().build_id))
 
-    assert await store.latest_successful(build.collection) == build
+    assert await store.succeeded_build(build.collection) == build
 
 
 async def test_failed_build_keeps_its_error_type(

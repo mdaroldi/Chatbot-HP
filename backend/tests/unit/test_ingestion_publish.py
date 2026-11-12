@@ -4,14 +4,23 @@ Runs QdrantIndex on qdrant-client local mode; failures are injected by subclasse
 that fail one operation.
 """
 
+import logging
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import replace
 
 import pytest
 from qdrant_client import AsyncQdrantClient
 
-from app.domain.ingestion import Chunk, EmbeddedChunks, IndexPublishError, SparseVector
+from app.domain.ingestion import (
+    BuildWarning,
+    BuildWarningKind,
+    Chunk,
+    EmbeddedChunks,
+    IndexPublishError,
+    SparseVector,
+)
 from app.infra.qdrant_index import QdrantIndex
-from app.ingestion.publish import COLLECTION_PREFIX, collection_name, publish
+from app.ingestion.publish import collection_name, collection_prefix, publish
 from tests.index_data import make_batch
 
 pytestmark = pytest.mark.filterwarnings(
@@ -19,11 +28,13 @@ pytestmark = pytest.mark.filterwarnings(
 )
 
 ALIAS = "hpdocs_chunks"
+PREFIX = collection_prefix("v1")
 
 
-def embedded(count: int = 3, first: int = 0) -> EmbeddedChunks:
+def embedded(count: int = 3, first: int = 0, version: str = "v1") -> EmbeddedChunks:
     batch = make_batch(count, first=first)
-    return EmbeddedChunks(chunks=batch.chunks, dense=batch.dense, sparse=batch.sparse)
+    chunks = [replace(c, chunking_version=version) for c in batch.chunks]
+    return EmbeddedChunks(chunks=chunks, dense=batch.dense, sparse=batch.sparse)
 
 
 @pytest.fixture
@@ -56,6 +67,19 @@ class FailingSwap(QdrantIndex):
         raise ConnectionError("lost the server before the swap")
 
 
+class FailingDelete(QdrantIndex):
+    """Deleting the named collections fails; every other operation works."""
+
+    def __init__(self, client: AsyncQdrantClient, failing: set[str]) -> None:
+        super().__init__(client)
+        self.failing = failing
+
+    async def delete_collection(self, name: str) -> None:
+        if name in self.failing:
+            raise ConnectionError("lost the server while pruning")
+        await super().delete_collection(name)
+
+
 class SwapFailsAfterMoving(QdrantIndex):
     """The server applied the swap, but the reply was lost (e.g. a timeout)."""
 
@@ -67,18 +91,28 @@ class SwapFailsAfterMoving(QdrantIndex):
 # ------------------------------------------------------------------ names
 
 
-def test_collection_names_are_versioned_by_build() -> None:
-    assert collection_name("20261112t160000z") == f"{COLLECTION_PREFIX}20261112t160000z"
-    assert COLLECTION_PREFIX == "hpdocs_chunks_v1_"
+def test_collection_names_follow_the_chunking_version_and_the_build() -> None:
+    assert collection_name("v1", "20261112t160000z") == "hpdocs_chunks_v1_20261112t160000z"
+    assert collection_prefix("v1") == "hpdocs_chunks_v1_"
+    assert collection_prefix("v2") == "hpdocs_chunks_v2_"
 
 
 @pytest.mark.parametrize("build_id", ["", "Build", "a b", "a/b", "a.b"])
 def test_a_build_id_outside_lowercase_letters_digits_and_dashes_is_rejected(
     build_id: str,
 ) -> None:
-    assert collection_name("b-1_x") == f"{COLLECTION_PREFIX}b-1_x"
+    assert collection_name("v1", "b-1_x") == f"{PREFIX}b-1_x"
     with pytest.raises(ValueError, match="build id"):
-        collection_name(build_id)
+        collection_name("v1", build_id)
+
+
+@pytest.mark.parametrize("version", ["", "V1", "v1_", "v 1", "v1-x"])
+def test_a_chunking_version_outside_lowercase_letters_and_digits_is_rejected(
+    version: str,
+) -> None:
+    assert collection_prefix("v10") == "hpdocs_chunks_v10_"
+    with pytest.raises(ValueError, match="chunking version"):
+        collection_prefix(version)
 
 
 # ------------------------------------------------------------------ success
@@ -87,9 +121,9 @@ def test_a_build_id_outside_lowercase_letters_digits_and_dashes_is_rejected(
 async def test_the_first_build_goes_live_under_the_alias(index: QdrantIndex) -> None:
     result = await publish(index, ALIAS, "b1", embedded(3), keep_previous=True)
 
-    assert result.collection == collection_name("b1")
+    assert result.collection == collection_name("v1", "b1")
     assert (result.previous, result.pruned) == (None, ())
-    assert await index.alias_target(ALIAS) == collection_name("b1")
+    assert await index.alias_target(ALIAS) == collection_name("v1", "b1")
     assert await index.count(ALIAS) == 3
 
 
@@ -100,12 +134,15 @@ async def test_a_new_build_moves_the_alias_and_keeps_only_the_previous_one(
     second = await publish(index, ALIAS, "b2", embedded(4), keep_previous=True)
     third = await publish(index, ALIAS, "b3", embedded(2), keep_previous=True)
 
-    assert (second.previous, second.pruned) == (collection_name("b1"), ())
-    assert (third.previous, third.pruned) == (collection_name("b2"), (collection_name("b1"),))
-    assert await index.alias_target(ALIAS) == collection_name("b3")
-    assert await index.list_collections(COLLECTION_PREFIX) == [
-        collection_name("b2"),
-        collection_name("b3"),
+    assert (second.previous, second.pruned) == (collection_name("v1", "b1"), ())
+    assert (third.previous, third.pruned) == (
+        collection_name("v1", "b2"),
+        (collection_name("v1", "b1"),),
+    )
+    assert await index.alias_target(ALIAS) == collection_name("v1", "b3")
+    assert await index.list_collections(PREFIX) == [
+        collection_name("v1", "b2"),
+        collection_name("v1", "b3"),
     ]
 
 
@@ -114,8 +151,11 @@ async def test_without_keep_previous_every_older_build_is_pruned(index: QdrantIn
 
     result = await publish(index, ALIAS, "b2", embedded(3), keep_previous=False)
 
-    assert (result.previous, result.pruned) == (collection_name("b1"), (collection_name("b1"),))
-    assert await index.list_collections(COLLECTION_PREFIX) == [collection_name("b2")]
+    assert (result.previous, result.pruned) == (
+        collection_name("v1", "b1"),
+        (collection_name("v1", "b1"),),
+    )
+    assert await index.list_collections(PREFIX) == [collection_name("v1", "b2")]
 
 
 async def test_pruning_never_touches_collections_outside_the_prefix(index: QdrantIndex) -> None:
@@ -147,8 +187,8 @@ async def test_a_count_mismatch_deletes_the_new_collection_and_keeps_the_alias(
     with pytest.raises(IndexPublishError, match="3 points for 4 chunks"):
         await publish(index, ALIAS, "b2", duplicated, keep_previous=True)
 
-    assert await index.alias_target(ALIAS) == collection_name("b1")
-    assert await index.list_collections(COLLECTION_PREFIX) == [collection_name("b1")]
+    assert await index.alias_target(ALIAS) == collection_name("v1", "b1")
+    assert await index.list_collections(PREFIX) == [collection_name("v1", "b1")]
 
 
 async def test_a_failed_upload_deletes_the_partial_collection_and_keeps_the_alias(
@@ -160,8 +200,8 @@ async def test_a_failed_upload_deletes_the_partial_collection_and_keeps_the_alia
     with pytest.raises(ConnectionError):
         await publish(failing, ALIAS, "b2", embedded(3), keep_previous=True)
 
-    assert await failing.alias_target(ALIAS) == collection_name("b1")
-    assert await failing.list_collections(COLLECTION_PREFIX) == [collection_name("b1")]
+    assert await failing.alias_target(ALIAS) == collection_name("v1", "b1")
+    assert await failing.list_collections(PREFIX) == [collection_name("v1", "b1")]
 
 
 async def test_a_failed_swap_deletes_the_new_collection_and_keeps_the_alias(
@@ -173,8 +213,8 @@ async def test_a_failed_swap_deletes_the_new_collection_and_keeps_the_alias(
     with pytest.raises(ConnectionError):
         await publish(failing, ALIAS, "b2", embedded(3), keep_previous=True)
 
-    assert await failing.alias_target(ALIAS) == collection_name("b1")
-    assert await failing.list_collections(COLLECTION_PREFIX) == [collection_name("b1")]
+    assert await failing.alias_target(ALIAS) == collection_name("v1", "b1")
+    assert await failing.list_collections(PREFIX) == [collection_name("v1", "b1")]
 
 
 async def test_a_swap_that_happened_despite_an_error_keeps_the_live_collection(
@@ -186,5 +226,62 @@ async def test_a_swap_that_happened_despite_an_error_keeps_the_live_collection(
     with pytest.raises(TimeoutError):
         await publish(failing, ALIAS, "b2", embedded(3), keep_previous=True)
 
-    assert await failing.alias_target(ALIAS) == collection_name("b2")
+    assert await failing.alias_target(ALIAS) == collection_name("v1", "b2")
     assert await failing.count(ALIAS) == 3
+
+
+# ------------------------------------------------------------------ versions and pruning
+
+
+async def test_the_collection_is_named_after_the_chunks_version(index: QdrantIndex) -> None:
+    result = await publish(index, ALIAS, "b1", embedded(3, version="v2"), keep_previous=True)
+
+    assert result.collection == "hpdocs_chunks_v2_b1"
+    assert await index.alias_target(ALIAS) == "hpdocs_chunks_v2_b1"
+
+
+async def test_pruning_never_touches_builds_of_another_chunking_version(
+    index: QdrantIndex,
+) -> None:
+    await publish(index, ALIAS, "b1", embedded(3), keep_previous=False)
+    await publish(index, ALIAS, "b2", embedded(3), keep_previous=False)
+
+    result = await publish(index, ALIAS, "b3", embedded(3, version="v2"), keep_previous=False)
+
+    assert result.pruned == ()
+    assert set(await index.list_collections("hpdocs_chunks_")) == {
+        collection_name("v1", "b2"),
+        "hpdocs_chunks_v2_b3",
+    }
+
+
+async def test_a_failed_prune_is_a_warning_and_the_new_build_stays_live(
+    client: AsyncQdrantClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    plain = QdrantIndex(client)
+    for build_id in ("b1", "b2"):
+        await publish(plain, ALIAS, build_id, embedded(3), keep_previous=True)
+    b1, b2, b3 = (collection_name("v1", b) for b in ("b1", "b2", "b3"))
+    failing = FailingDelete(client, failing={b1})
+    caplog.set_level(logging.WARNING, logger="app.ingestion.publish")
+
+    result = await publish(failing, ALIAS, "b3", embedded(5), keep_previous=False)
+
+    assert await failing.alias_target(ALIAS) == b3
+    assert await failing.count(ALIAS) == 5
+    # The other old build is still pruned; only the one that failed is left.
+    assert result.pruned == (b2,)
+    assert result.warnings == (BuildWarning(BuildWarningKind.PRUNE_FAILED, b1, "ConnectionError"),)
+    assert await failing.list_collections(PREFIX) == [b1, b3]
+    [record] = caplog.records
+    assert record.getMessage() == "could not prune an old index build"
+    assert (record.__dict__["collection"], record.__dict__["error_type"]) == (b1, "ConnectionError")
+    assert "lost the server" not in caplog.text
+
+
+async def test_a_clean_publish_has_no_warnings(index: QdrantIndex) -> None:
+    await publish(index, ALIAS, "b1", embedded(3), keep_previous=False)
+
+    result = await publish(index, ALIAS, "b2", embedded(3), keep_previous=False)
+
+    assert (result.pruned, result.warnings) == ((collection_name("v1", "b1"),), ())

@@ -73,7 +73,7 @@ def _pin(name: str, hub: PinsHub, wanted: FastembedFiles, workdir: Path) -> Mode
     digests = hash_files(folder, files)
     absent = [f for f, digest in digests.items() if digest is None]
     if absent:
-        raise ModelDownloadError(f"{name}: the hub did not serve {', '.join(absent)}")
+        raise ModelDownloadError(f"{name}: the hub did not serve {', '.join(absent)}", model=name)
     computed = {f: digest for f, digest in digests.items() if digest is not None}
     return ModelFiles(name, wanted.source, revision, computed)
 

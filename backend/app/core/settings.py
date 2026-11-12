@@ -148,6 +148,21 @@ class Settings(BaseSettings):
         default=32, ge=1, le=1024, description="Texts per embedding batch (bounds memory)."
     )
 
+    chunk_max_tokens: int = Field(
+        default=450,
+        ge=32,
+        le=512,
+        description="Largest chunk in dense-model tokens, prefix included; bge-small reads "
+        "at most 512 (ADR 0005).",
+    )
+    chunk_min_tokens: int = Field(
+        default=65,
+        ge=0,
+        le=511,
+        description="Sections below this many tokens merge with the next one under the "
+        "same parent (ADR 0005).",
+    )
+
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
     def _parse_cors_origins(cls, value: object) -> list[str]:
@@ -165,6 +180,12 @@ class Settings(BaseSettings):
     def _no_exception_messages_in_production(self) -> "Settings":
         if self.app_env is Environment.PRODUCTION and self.log_include_exception_messages:
             raise ValueError("log_include_exception_messages=true is not allowed in production")
+        return self
+
+    @model_validator(mode="after")
+    def _merge_floor_below_the_limit(self) -> "Settings":
+        if self.chunk_min_tokens >= self.chunk_max_tokens:
+            raise ValueError("chunk_min_tokens must be below chunk_max_tokens")
         return self
 
     @property

@@ -43,8 +43,8 @@ timeouts; the Qdrant client library arrives with ingestion in Phase 1.
 
 ## Index builds (Phase 1, commit 8)
 
-- **One collection per build**, `hpdocs_chunks_v1_<build id>` (`v1` is the collection
-  schema). Named vectors `dense` (cosine) and `sparse` with `modifier=IDF`, because BM25
+- **One collection per build**, `hpdocs_chunks_v1_<build id>` (`v1` is the chunking
+  version; see Corrections after implementation). Named vectors `dense` (cosine) and `sparse` with `modifier=IDF`, because BM25
   vectors carry term frequencies only. Keyword payload indexes on `doc_id` and
   `content_type`.
 - **Readers use an alias** (`QDRANT_COLLECTION_ALIAS`). A build goes live only after its
@@ -60,3 +60,22 @@ timeouts; the Qdrant client library arrives with ingestion in Phase 1.
 - **Local mode:** qdrant-client's in-memory mode supports aliases and the IDF modifier,
   so unit tests run on it. It ignores payload indexes, which integration tests check
   on the server.
+
+## Corrections after implementation
+
+### Collection names and pruning (Phase 1, commit 10)
+
+- **The version in the name is the chunking version**, not a collection schema:
+  `hpdocs_chunks_<chunking_version>_<build id>`, with the build ID as the lowercase UTC
+  start time (`20261112t143005z`). A new chunking version gets a new prefix. Pruning
+  stays inside the new build's prefix, so collections of an older chunking version are
+  never deleted automatically; the alias still moves, and they are removed by hand.
+- **A failed prune is a warning.** Pruning runs after the swap, so the new build is
+  already live. A collection that cannot be deleted is logged (collection and error
+  type, never the message), recorded as a `prune_failed` warning in the build's
+  manifest row, and tried again by the next build; the other old builds are still
+  pruned and ingest exits 0.
+- **No client compatibility check at runtime.** The ingest CLI builds the client with
+  `check_compatibility=False`: the check is a background request that would run even
+  when the index is never used, and it reports outside the JSON logs. The server
+  image and the client are pinned together, and an integration test checks them.

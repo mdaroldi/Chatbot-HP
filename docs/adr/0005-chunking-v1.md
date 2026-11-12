@@ -134,3 +134,11 @@ OMEN PDF 3-4), which v1 first left out of the index. PDF page numbers.
   best reproduces the 50-word merges: 25 mergeable sections fall under each floor,
   and the two sets differ by one section each way.
 - Measured with 450 and 65: ENVY 149 chunks, OMEN 141.
+
+### Settings wired (Phase 1, commit 10)
+
+- `CHUNK_MAX_TOKENS` (default 450, at most 512) and `CHUNK_MIN_TOKENS` (default 65,
+  below the maximum) reach the chunker through the ingest CLI. A corpus test pins a
+  digest of the sorted chunk IDs per document with these values; any change in
+  cleaning or chunking output fails it and needs a `chunking_version` bump, because
+  `--if-needed` compares the version, not the code.

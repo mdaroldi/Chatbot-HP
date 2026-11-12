@@ -112,6 +112,10 @@ class ModelNotAllowedError(ModelError):
 class ModelDownloadError(ModelError):
     """The hub could not serve the pinned revision."""
 
+    def __init__(self, message: str, *, model: str) -> None:
+        super().__init__(message)
+        self.model = model  # for the CLI's one structured log line (ADR 0006)
+
 
 class ModelIntegrityError(ModelError):
     """A model file's SHA-256 differs from its pin even after a fresh download.
@@ -355,6 +359,13 @@ class EmbeddedChunks:
         )
         sizes = {len(vector) for vector in self.dense}
         _require(len(sizes) == 1 and 0 not in sizes, "dense vectors must share one non-zero size")
+        # The collection is named after the version, so one build holds one version.
+        versions = {chunk.chunking_version for chunk in self.chunks}
+        _require(len(versions) == 1, "one chunking version per build")
+
+    @property
+    def chunking_version(self) -> str:
+        return self.chunks[0].chunking_version
 
     @property
     def dense_size(self) -> int:
@@ -662,4 +673,4 @@ class ModelSource(Protocol):
 class ManifestStore(Protocol):
     async def record(self, build: IndexBuild) -> None: ...
 
-    async def latest_successful(self, collection: str) -> IndexBuild | None: ...
+    async def succeeded_build(self, collection: str) -> IndexBuild | None: ...

@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import logging
 import pathlib
 from collections.abc import AsyncIterator, Callable
 
@@ -120,6 +121,31 @@ async def test_stale_cache_is_replaced_by_a_verified_download(tmp_path: pathlib.
 
     assert path.read_bytes() == PDF
     assert recorder.urls == [URL]
+
+
+async def test_discarding_a_stale_cache_logs_one_warning_with_the_document_id(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / "demo-guide.pdf").write_bytes(b"%PDF-1.7 older edition")
+    caplog.set_level(logging.WARNING, logger="app.infra.corpus_http")
+
+    await source(Recorder(httpx.Response(200, content=PDF)), tmp_path).fetch(document())
+
+    [record] = caplog.records
+    assert record.levelno == logging.WARNING
+    assert record.getMessage() == "cached corpus file does not match its pin; discarding it"
+    assert record.__dict__["doc_id"] == "demo-guide"
+
+
+async def test_a_valid_cache_logs_nothing(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / "demo-guide.pdf").write_bytes(PDF)
+    caplog.set_level(logging.DEBUG, logger="app.infra.corpus_http")
+
+    await source(Recorder(), tmp_path).fetch(document())
+
+    assert caplog.records == []
 
 
 @pytest.mark.parametrize("status", [301, 302, 303, 307, 308])

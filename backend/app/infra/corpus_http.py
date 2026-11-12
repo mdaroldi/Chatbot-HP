@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import logging
 import os
 from collections.abc import Sequence
 from pathlib import Path
@@ -15,6 +16,8 @@ from app.domain.ingestion import (
     CorpusDownloadError,
     CorpusNotAllowedError,
 )
+
+logger = logging.getLogger(__name__)
 
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _MAX_REDIRECTS = 3
@@ -93,6 +96,10 @@ class HttpCorpusSource:
             return path
         if cached is not None:
             # A stale file (older pin or tampering) must not outlive a failed download.
+            logger.warning(
+                "cached corpus file does not match its pin; discarding it",
+                extra={"doc_id": document.doc_id},
+            )
             await asyncio.to_thread(path.unlink)
         data = await self._download(document)
         if not data.startswith(_PDF_MAGIC):

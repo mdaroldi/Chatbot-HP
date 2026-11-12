@@ -86,7 +86,7 @@ class SqlManifestStore:
         async with self._sessions() as session, session.begin():
             session.add(_to_row(build))
 
-    async def latest_successful(self, collection: str) -> IndexBuild | None:
+    async def succeeded_build(self, collection: str) -> IndexBuild | None:
         query = select(IndexBuildRow).where(
             IndexBuildRow.collection == collection,
             IndexBuildRow.status == BuildStatus.SUCCEEDED.value,

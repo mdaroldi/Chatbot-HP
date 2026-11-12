@@ -232,6 +232,14 @@ class StructureChunker:
     def version(self) -> str:
         return VERSION
 
+    @property
+    def max_tokens(self) -> int:
+        return self._max
+
+    @property
+    def min_tokens(self) -> int:
+        return self._min
+
     @staticmethod
     def _text(
         document: CorpusDocument, path: Sequence[str], continued: bool, blocks: Sequence[Block]

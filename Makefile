@@ -16,7 +16,7 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 	-v trivy-cache:/root/.cache $(TRIVY_IMAGE)
 
 .PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int \
-	security images scan-images scan-config up down ingest model-pins eval load check
+	security images scan-images scan-config up down ingest inspect-chunks model-pins eval load check
 
 help: ## List available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -103,6 +103,11 @@ MODELS ?=
 model-pins: ## Regenerate backend/models.toml from a fresh download and print the diff (manual only)
 	cd $(BACKEND) && uv run --frozen python -c \
 		"import sys; from app.infra.model_pins import main; sys.exit(main(sys.argv[1:]))" $(MODELS)
+
+# Settings require a database password, but this target never opens the database.
+inspect-chunks: ## Write every chunk to ingest-review/chunks.md for local review (git-ignored)
+	cd $(BACKEND) && POSTGRES_PASSWORD=unused-by-inspect-chunks uv run --frozen \
+		python -m app.ingestion --inspect-chunks ../ingest-review/chunks.md
 
 ingest: ## Build the vector index
 	@echo "not implemented yet"; exit 1

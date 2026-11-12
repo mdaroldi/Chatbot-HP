@@ -8,13 +8,14 @@ from qdrant_client import AsyncQdrantClient, models
 
 from app.domain.ingestion import EmbeddedChunks, IndexPublishError
 from app.infra.qdrant_index import QdrantIndex
-from app.ingestion.publish import COLLECTION_PREFIX, collection_name, publish
+from app.ingestion.publish import collection_name, collection_prefix, publish
 from tests.index_data import DENSE_SIZE, make_batch
 from tests.integration.conftest import QDRANT_URL
 
 pytestmark = pytest.mark.integration
 
 ALIAS = "it_hpdocs_chunks"
+PREFIX = collection_prefix("v1")
 SERVER_VERSION = "1.20.0"  # docker-compose.yml and docker-compose.test.yml pin this image
 
 
@@ -32,7 +33,7 @@ async def _clean(client: AsyncQdrantClient) -> None:
             ]
         )
     for collection in (await client.get_collections()).collections:
-        if collection.name.startswith((COLLECTION_PREFIX, "it_")):
+        if collection.name.startswith(("hpdocs_chunks_", "it_")):
             await client.delete_collection(collection.name)
 
 
@@ -115,11 +116,14 @@ async def test_alias_swap_keeps_the_previous_build_and_prunes_older_ones(
     for build_id in ("b1", "b2", "b3"):
         result = await publish(index, ALIAS, build_id, embedded(3), keep_previous=True)
 
-    assert (result.previous, result.pruned) == (collection_name("b2"), (collection_name("b1"),))
-    assert await index.alias_target(ALIAS) == collection_name("b3")
-    assert await index.list_collections(COLLECTION_PREFIX) == [
-        collection_name("b2"),
-        collection_name("b3"),
+    assert (result.previous, result.pruned) == (
+        collection_name("v1", "b2"),
+        (collection_name("v1", "b1"),),
+    )
+    assert await index.alias_target(ALIAS) == collection_name("v1", "b3")
+    assert await index.list_collections(PREFIX) == [
+        collection_name("v1", "b2"),
+        collection_name("v1", "b3"),
     ]
 
 
@@ -137,5 +141,5 @@ async def test_a_failed_check_leaves_the_alias_and_deletes_the_new_collection(
     with pytest.raises(IndexPublishError):
         await publish(index, ALIAS, "b2", duplicated, keep_previous=True)
 
-    assert await index.alias_target(ALIAS) == collection_name("b1")
-    assert await index.list_collections(COLLECTION_PREFIX) == [collection_name("b1")]
+    assert await index.alias_target(ALIAS) == collection_name("v1", "b1")
+    assert await index.list_collections(PREFIX) == [collection_name("v1", "b1")]

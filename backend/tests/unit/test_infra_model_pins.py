@@ -60,8 +60,10 @@ def test_listed_file_the_hub_does_not_serve_is_a_download_error(tmp_path: Path) 
 
     fake.list_files = list_more  # type: ignore[method-assign]  # a hub that lists more than it serves
 
-    with pytest.raises(ModelDownloadError, match=r"config\.json"):
+    with pytest.raises(ModelDownloadError, match=r"config\.json") as caught:
         regenerate(["demo/dense"], fake, describe, tmp_path)
+
+    assert caught.value.model == "demo/dense"
 
 
 def run(pins: Path, *args: str) -> str:

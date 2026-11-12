@@ -211,6 +211,7 @@ async def test_hub_failure_is_a_download_error_not_an_integrity_error(tmp_path: 
         await source(hub, tmp_path).fetch("demo/dense")
 
     assert caught.value.__cause__ is cause
+    assert caught.value.model == "demo/dense"
     assert not isinstance(caught.value, ModelIntegrityError)
 
 
@@ -277,5 +278,7 @@ def test_hub_reports_the_current_revision_and_the_files_of_one() -> None:
 
 
 def test_repository_without_a_revision_is_a_download_error() -> None:
-    with pytest.raises(ModelDownloadError, match="Org/model"):
+    with pytest.raises(ModelDownloadError, match="Org/model") as caught:
         HuggingFaceHub(api=FakeApi(sha=None)).current_revision("Org/model")
+
+    assert caught.value.model == "Org/model"

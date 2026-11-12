@@ -212,7 +212,7 @@ class HuggingFaceHub:
     def current_revision(self, source: str) -> str:
         sha = self._api.model_info(source, timeout=HUB_TIMEOUT_SECONDS, token=False).sha
         if sha is None:
-            raise ModelDownloadError(f"{source}: the hub reported no revision")
+            raise ModelDownloadError(f"{source}: the hub reported no revision", model=source)
         return sha
 
     def list_files(self, source: str, revision: str) -> list[str]:
@@ -255,7 +255,7 @@ class PinnedModelSource:
             )
         except Exception as exc:
             where = f"{pin.source}@{pin.revision}"
-            raise ModelDownloadError(f"{name}: cannot download {where}") from exc
+            raise ModelDownloadError(f"{name}: cannot download {where}", model=name) from exc
         digests = await asyncio.to_thread(hash_files, folder, files)
         bad = _mismatch(pin, digests)
         if bad is not None:

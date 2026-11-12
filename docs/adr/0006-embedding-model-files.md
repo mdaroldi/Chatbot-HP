@@ -108,6 +108,8 @@ checked on 2026-11-12. The revisions are the ones pinned first.
 - Upgrading fastembed can change which files a model needs. The pinned file list
   then no longer matches, and ingestion fails loudly instead of loading something
   unverified.
+- **On any fastembed upgrade, re-run `make model-pins` and review the diff**, even when
+  ingestion still passes: the pinned file list is copied from fastembed's own lists.
 - **Phase 2:** the backend embeds queries with the dense model. It reuses the
   `infra/model_files.py` loader, loads from the same verified directory, and reports
   not ready when its digests differ from the live build's `models`. This is recorded
@@ -157,3 +159,14 @@ checked on 2026-11-12. The revisions are the ones pinned first.
   tests one rule.
 - `alembic check` compares columns, not check constraints; the Postgres integration
   tests prove the check, its upgrade and its downgrade.
+
+### Ingest CLI (Phase 1, commit 10)
+
+- The models are verified before a build ID exists. `ModelIntegrityError`,
+  `ModelDownloadError` and the other model errors end the run with one structured log
+  line (`model`, `file`, `error_type`; never the message, which holds digests and URLs)
+  and exit code 1, with no collection and no `index_builds` row. `ModelDownloadError`
+  now carries the model name for that line.
+- `--if-needed` compares the pins in `models.toml` (source, revision and every file
+  digest) with the live build's `models`; a model with no pin counts as changed, so
+  the build goes on and fails on `ModelNotAllowedError`.
