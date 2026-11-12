@@ -277,9 +277,12 @@ def test_configure_logging_routes_uvicorn_loggers_through_root() -> None:
     assert uvicorn_logger.propagate is True
 
 
-@pytest.mark.parametrize("name", ["httpx", "httpcore", "uvicorn.access"])
-def test_configure_logging_silences_loggers_that_log_full_urls(name: str) -> None:
-    """These log full URLs with query strings at INFO; our access log replaces them."""
+@pytest.mark.parametrize("name", ["httpx", "httpcore", "uvicorn.access", "sqlalchemy"])
+def test_configure_logging_silences_loggers_that_leak_request_data(name: str) -> None:
+    """URLs with query strings (HTTP clients, uvicorn) and SQL with bound parameters
+    (SQLAlchemy, which logs whenever its logger is enabled, regardless of echo)."""
+    logging.getLogger(name).setLevel(logging.DEBUG)  # as a library or a user might
+
     configure_logging("DEBUG")
 
     assert logging.getLogger(name).level == logging.WARNING

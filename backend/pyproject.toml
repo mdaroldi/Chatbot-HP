@@ -5,6 +5,7 @@ description = "FastAPI backend for the HP Docs RAG chatbot"
 requires-python = ">=3.12,<3.13"
 license = "MIT"
 dependencies = [
+    "alembic>=1.20.1",
     "asyncpg>=0.32.0",
     "fastapi>=0.162.5",
     "httpx>=0.28.1",
@@ -45,8 +46,14 @@ ignore = [
   "TRY003",  # explicit exception messages are clearer than a subclass per message
 ]
 
+[tool.ruff.lint.isort]
+# backend/alembic/ holds migration scripts; the `alembic` import is the library.
+known-third-party = ["alembic"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "PLR0913"]
+# Generated migrations always import op and sa, even when a revision uses neither.
+"alembic/versions/*.py" = ["F401"]
 
 # ---------------------------------------------------------------- mypy
 [tool.mypy]
@@ -54,7 +61,7 @@ python_version = "3.12"
 strict = true
 warn_unreachable = true
 plugins = ["pydantic.mypy"]
-files = ["app", "tests"]
+files = ["app", "tests", "alembic"]
 
 [tool.pydantic-mypy]
 init_forbid_extra = true

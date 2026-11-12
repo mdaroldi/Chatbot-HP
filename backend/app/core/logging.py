@@ -19,8 +19,10 @@ _CORE_KEYS = ("timestamp", "level", "logger", "message", "request_id")
 
 # Loggers that install their own handlers; they must go through the root JSON handler.
 _THIRD_PARTY_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
-# These log full URLs (query strings included) at INFO; app.access replaces them.
-_QUIET_LOGGERS = ("httpx", "httpcore", "uvicorn.access")
+# These leak request data when enabled: full URLs with query strings (HTTP clients,
+# uvicorn's access log, replaced by app.access) and SQL with bound parameters
+# (SQLAlchemy logs whenever its logger is enabled, whatever the engine's echo flag).
+_QUIET_LOGGERS = ("httpx", "httpcore", "uvicorn.access", "sqlalchemy")
 
 
 def _qualified_name(cls: type[BaseException]) -> str:

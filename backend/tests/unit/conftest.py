@@ -17,7 +17,14 @@ TEST_PASSWORD = "test-password"  # noqa: S105 - placeholder for unit tests only
 LogReader = Callable[[], list[dict[str, Any]]]
 SettingsFactory = Callable[..., Settings]
 
-_LOGGERS_TOUCHED_BY_CONFIGURE = ("uvicorn", "uvicorn.error", "uvicorn.access", "httpx", "httpcore")
+_LOGGERS_TOUCHED_BY_CONFIGURE = (
+    "uvicorn",
+    "uvicorn.error",
+    "uvicorn.access",
+    "httpx",
+    "httpcore",
+    "sqlalchemy",
+)
 
 
 @pytest.fixture(autouse=True)
