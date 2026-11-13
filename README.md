@@ -256,10 +256,10 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `RATE_LIMIT_SEARCH_BURST` | `10` | Search calls allowed at once. |
 | `RATE_LIMIT_MAX_KEYS` | `10000` | Client IDs or IPs tracked per limiter and replica; the least recent is forgotten. |
 | `LLM_ANSWER_MODEL` | `claude-opus-5-5` | Model that writes the answers (Anthropic model ID). |
-| `LLM_ANSWER_EFFORT` | `low` | Effort sent with each answer request; empty sends none. |
+| `LLM_ANSWER_EFFORT` | `low` | Effort sent with each answer request: `low`, `medium`, `high`, `xhigh` or `max`; empty sends none. |
 | `LLM_ANSWER_MAX_TOKENS` | `2048` | Output cap per answer, thinking included; a long cited procedure needs about 600. |
 | `LLM_REWRITE_MODEL` | `claude-haiku-5-5` | Model that rewrites follow-ups into standalone search queries. |
-| `LLM_REWRITE_EFFORT` | `low` | Effort sent with each rewrite request; empty sends none. |
+| `LLM_REWRITE_EFFORT` | `low` | Effort sent with each rewrite request: `low`, `medium`, `high`, `xhigh` or `max`; empty sends none. |
 | `LLM_REWRITE_MAX_TOKENS` | `100` | Output cap per rewrite; a query is at most 30 words. |
 | `LLM_TOTAL_TIMEOUT_SECONDS` | `120.0` | Deadline for one whole answer. |
 | `LLM_REWRITE_TIMEOUT_SECONDS` | `5.0` | Deadline for one rewrite; past it, retrieval uses the raw message. |

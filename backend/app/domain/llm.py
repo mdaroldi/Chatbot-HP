@@ -103,6 +103,13 @@ class LLMTimeoutError(LLMError):
     message = "The language model did not answer in time."
 
 
+class LLMEmptyAnswerError(LLMError):
+    """The stream ended without any visible text (not even a refusal): nothing to show."""
+
+    code = "llm_error"
+    message = "The language model returned an empty answer."
+
+
 class GenerationStream(Protocol):
     """Text pieces of one answer; usage and the stop reason fill in as it streams, so a
     cancelled or failed stream still reports what was known.

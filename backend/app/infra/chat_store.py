@@ -115,6 +115,7 @@ def _flags_json(flags: AnswerFlags) -> FlagsJson:
         "uncited": flags.uncited,
         "invalid_citations": flags.invalid_citations,
         "rewrite_fallback": flags.rewrite_fallback,
+        "truncated": flags.truncated,
     }
 
 

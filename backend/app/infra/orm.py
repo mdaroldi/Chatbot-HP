@@ -149,6 +149,7 @@ class FlagsJson(TypedDict, total=False):
     uncited: bool
     invalid_citations: int
     rewrite_fallback: str | None
+    truncated: bool
 
 
 class ConversationRow(Base):

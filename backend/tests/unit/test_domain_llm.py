@@ -5,6 +5,7 @@ import pytest
 from app.domain.chat import Role
 from app.domain.llm import (
     GenerationRequest,
+    LLMEmptyAnswerError,
     LLMError,
     LLMRequestError,
     LLMTimeoutError,
@@ -62,6 +63,7 @@ def test_a_prompt_message_is_never_empty() -> None:
         (LLMUnavailableError, "llm_unavailable"),
         (LLMRequestError, "llm_error"),
         (LLMTimeoutError, "llm_timeout"),
+        (LLMEmptyAnswerError, "llm_error"),
     ],
 )
 def test_each_failure_has_a_code_and_a_fixed_message(error: type[LLMError], code: str) -> None:
@@ -74,5 +76,5 @@ def test_each_failure_has_a_code_and_a_fixed_message(error: type[LLMError], code
 
 
 def test_the_failure_messages_differ_so_clients_can_tell_them_apart() -> None:
-    errors = (LLMUnavailableError(), LLMRequestError(), LLMTimeoutError())
+    errors = (LLMUnavailableError(), LLMRequestError(), LLMTimeoutError(), LLMEmptyAnswerError())
     assert len({e.message for e in errors}) == len(errors)

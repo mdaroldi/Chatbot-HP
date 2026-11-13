@@ -13,8 +13,9 @@ from app.domain.ingestion import BM25_DEFAULT_AVG_LEN
 from app.domain.retrieval import DEFAULT_RRF_K, SearchMode
 
 _ALLOWED_ORIGIN_SCHEMES = frozenset({"http", "https"})
-# One lowercase word, such as `low`; the provider adapter checks the accepted values.
-_EFFORT_PATTERN = r"^[a-z]{1,20}$"
+# The values `output_config.effort` accepts on the configured models (Claude API docs,
+# checked 2026-11-13); anything else would fail on every request, so it fails at startup.
+_EFFORT_PATTERN = r"^(low|medium|high|xhigh|max)$"
 
 
 class Environment(StrEnum):
@@ -289,7 +290,8 @@ class Settings(BaseSettings):
     llm_answer_effort: str | None = Field(
         default="low",
         pattern=_EFFORT_PATTERN,
-        description="Effort sent with each answer request; empty sends none.",
+        description="Effort sent with each answer request: `low`, `medium`, `high`, `xhigh` "
+        "or `max`; empty sends none.",
     )
     llm_answer_max_tokens: int = Field(
         default=2048,
@@ -306,7 +308,8 @@ class Settings(BaseSettings):
     llm_rewrite_effort: str | None = Field(
         default="low",
         pattern=_EFFORT_PATTERN,
-        description="Effort sent with each rewrite request; empty sends none.",
+        description="Effort sent with each rewrite request: `low`, `medium`, `high`, "
+        "`xhigh` or `max`; empty sends none.",
     )
     llm_rewrite_max_tokens: int = Field(
         default=100,

@@ -489,6 +489,7 @@ async def test_the_full_answer_trace_is_stored(
         "uncited": False,
         "invalid_citations": 1,
         "rewrite_fallback": None,
+        "truncated": False,
     }
     assert (row.refusal, row.refusal_reason, row.error_code) == (False, None, None)
 
@@ -505,6 +506,20 @@ async def test_a_rewrite_fallback_is_stored_as_its_code(
 
     row = await message_row(sessions, turn.assistant.id)
     assert row.flags["rewrite_fallback"] == "timeout"
+
+
+async def test_a_truncated_answer_is_stored_with_its_flag(
+    store: SqlChatStore, sessions: async_sessionmaker[AsyncSession]
+) -> None:
+    created = await store.create_conversation(CLIENT)
+    turn = await store.start_turn(CLIENT, created.id, "Question?", title="Question")
+
+    await store.finish_answer(
+        CLIENT, turn.assistant.id, completed(flags=AnswerFlags(truncated=True))
+    )
+
+    row = await message_row(sessions, turn.assistant.id)
+    assert row.flags["truncated"] is True
 
 
 async def test_a_refusal_before_the_model_stores_retrieval_but_no_model_data(

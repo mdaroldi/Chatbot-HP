@@ -176,6 +176,8 @@ class AnswerFlags:
     invalid_citations: int = 0
     # Why the follow-up rewrite fell back to the raw message (a code, never text).
     rewrite_fallback: str | None = None
+    # The stream ended some other way than the model ending its turn (e.g. max_tokens).
+    truncated: bool = False
 
     def __post_init__(self) -> None:
         _require(self.invalid_citations >= 0, "invalid_citations must not be negative")

@@ -7,6 +7,7 @@ what the user is shown and what is stored, not how the service is put together.
 
 import asyncio
 import itertools
+import sys
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -28,6 +29,7 @@ from app.domain.chat import (
 from app.domain.chat_store import ConversationNotFoundError, Turn
 from app.domain.citations import snippet
 from app.domain.llm import (
+    LLMEmptyAnswerError,
     LLMError,
     LLMRequestError,
     LLMTimeoutError,
@@ -44,6 +46,7 @@ from app.domain.retrieval import (
     SearchHit,
     SearchMode,
 )
+from app.services import chat as chat_module
 from app.services.chat import (
     ANSWER_WITHDRAWN,
     AnswerDone,
@@ -719,6 +722,24 @@ def stray_hits() -> list[SearchHit]:
 
 PRE_TOKEN_FAILURES = [
     pytest.param(
+        {"answer": FakeProvider(())},
+        LLMEmptyAnswerError,
+        "llm_error",
+        id="empty-answer",
+    ),
+    pytest.param(
+        {"answer": FakeProvider((" \n", "\t"))},
+        LLMEmptyAnswerError,
+        "llm_error",
+        id="whitespace-only-answer",
+    ),
+    pytest.param(
+        {"answer": FakeProvider((), stop=StopReason.MAX_TOKENS)},
+        LLMEmptyAnswerError,
+        "llm_error",
+        id="cut-off-before-any-text",
+    ),
+    pytest.param(
         {"answer": FakeProvider(("never",), error=LLMUnavailableError())},
         LLMUnavailableError,
         "llm_unavailable",
@@ -976,3 +997,66 @@ async def test_a_provider_refusal_after_text_withdraws_the_answer() -> None:
     assert answer.content == REFUSAL_TEXT
     assert answer.error_code == "answer_withdrawn"
     assert (answer.citations, answer.sources) == ((), ())
+
+
+# --- Truncated answers ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "stop",
+    [
+        pytest.param(StopReason.MAX_TOKENS, id="max-tokens"),
+        pytest.param(StopReason.OTHER, id="other"),
+        pytest.param(None, id="no-stop-reason"),
+    ],
+)
+async def test_an_answer_that_did_not_end_its_turn_is_kept_and_flagged_truncated(
+    stop: StopReason | None,
+) -> None:
+    rig = Rig(answer=FakeProvider(("Step one [S1]. Step", " two"), stop=stop))
+
+    _, finished = await ask(rig)
+
+    answer = finished.answer
+    assert answer.outcome is Outcome.COMPLETED
+    assert answer.content == "Step one [S1]. Step two"
+    assert answer.flags.truncated is True
+    assert rig.store.answers[finished.turn.assistant.id].flags.truncated is True
+
+
+async def test_an_answer_that_ended_its_turn_is_not_truncated(json_logs: LogReader) -> None:
+    rig = Rig()
+
+    _, finished = await ask(rig)
+
+    assert finished.answer.flags.truncated is False
+    (line,) = [r for r in json_logs() if r["message"] == "chat answer"]
+    assert line["truncated"] is False
+
+
+# --- Closing the events closes the provider stream at once ----------------------------
+
+
+async def test_closing_the_events_closes_the_provider_stream_without_garbage_collection() -> None:
+    """Generators that are dropped without being closed reach the asyncgen finalizer
+    hook, which normally closes them on a later loop turn. Here the hook keeps a
+    strong reference instead, so only an explicit close can close the stream.
+    """
+    rig = Rig(answer=FakeProvider(("Partial [S1]. ", "never shown")))
+    conversation_id = await rig.conversation()
+    first_iter, finalizer = sys.get_asyncgen_hooks()
+    abandoned: list[Any] = []  # Any: whatever async generator the hook receives
+    sys.set_asyncgen_hooks(firstiter=first_iter, finalizer=abandoned.append)
+    try:
+        events = rig.service().answer(CLIENT, conversation_id, "How?")
+        await anext(events)
+        await events.aclose()
+
+        assert rig.answer.closed == 1
+        # The fake stream's own piece iterator may still be left to the hook; the
+        # upstream is already closed by leaving the provider context.
+        assert [g for g in abandoned if g.ag_code.co_filename == chat_module.__file__] == []
+    finally:
+        sys.set_asyncgen_hooks(firstiter=first_iter, finalizer=finalizer)
+        for generator in abandoned:
+            await generator.aclose()

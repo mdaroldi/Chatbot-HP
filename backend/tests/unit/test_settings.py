@@ -715,3 +715,24 @@ def test_llm_timeouts_are_positive_and_bounded(
         monkeypatch.setenv(name, invalid)
         with pytest.raises(ValidationError):
             Settings()
+
+
+@pytest.mark.parametrize("name", ["LLM_ANSWER_EFFORT", "LLM_REWRITE_EFFORT"])
+@pytest.mark.parametrize("value", ["low", "medium", "high", "xhigh", "max"])
+def test_every_effort_the_api_accepts_is_valid(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    assert getattr(Settings(), name.lower()) == value
+
+
+@pytest.mark.parametrize("name", ["LLM_ANSWER_EFFORT", "LLM_REWRITE_EFFORT"])
+@pytest.mark.parametrize("value", ["none", "minimal", "extreme", "maximum", "auto"])
+def test_an_effort_the_api_does_not_accept_fails_at_startup(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError):
+        Settings()

@@ -41,6 +41,7 @@ from app.domain.chat_store import ChatStore, ConversationNotFoundError, Turn
 from app.domain.citations import snippet, validate_citations
 from app.domain.llm import (
     GenerationRequest,
+    LLMEmptyAnswerError,
     LLMError,
     LLMProvider,
     PromptMessage,
@@ -139,6 +140,7 @@ class _Generation:
     refused: bool = False  # the leading marker (layer 2)
     provider_refused: bool = False  # the provider's own safety stop
     late_marker: bool = False
+    stop_reason: StopReason | None = None
     model: str | None = None
     usage: Usage = field(default_factory=lambda: Usage(None, None))
     ttft: float | None = None  # clock reading of the first visible text
@@ -236,10 +238,13 @@ class ChatService:
         async with contextlib.aclosing(self._generate(messages, generation)) as tokens:
             async for token in tokens:
                 yield token
+        refused = generation.refused or generation.provider_refused
+        if not refused and not generation.parts:
+            raise LLMEmptyAnswerError
         if generation.provider_refused and state.shown:
             yield await self._withdraw(state, trace)
             return
-        if generation.refused or generation.provider_refused:
+        if refused:
             generation.ttft = self._clock()  # the fixed text is the first one shown
             yield AnswerToken(REFUSAL_TEXT)
         yield await self._finish(state, self._answered(trace, generation))
@@ -329,6 +334,7 @@ class ChatService:
                         break
                     if visible:
                         yield self._shown(generation, visible)
+                generation.stop_reason = stream.stop_reason
                 generation.provider_refused = stream.stop_reason is StopReason.REFUSAL
                 held = detector.refused or generation.provider_refused
                 rest = "" if held else detector.finish()
@@ -384,6 +390,7 @@ class ChatService:
                 uncited=not checked.tags,
                 invalid_citations=checked.invalid,
                 rewrite_fallback=trace.rewrite_fallback,
+                truncated=generation.stop_reason is not StopReason.END_TURN,
             ),
         )
 
@@ -499,6 +506,7 @@ def _log_answer(turn: Turn, answer: AnswerRecord) -> None:
             "uncited": flags.uncited,
             "late_refusal_marker": flags.late_refusal_marker,
             "rewrite_fallback": flags.rewrite_fallback,
+            "truncated": flags.truncated,
             "index_build_id": answer.index_build_id,
             "model": answer.model,
             "input_tokens": answer.input_tokens,
