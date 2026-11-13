@@ -1,8 +1,9 @@
 """The API's query models, loaded in the background at startup (ADR 0008).
 
 Loading verifies each model's pinned files, builds one instance per model on the
-inference pool (an ONNX session takes a moment to build) and warms each with one call,
-so the first request does not pay for it. Until then the models are `loading`; a
+inference pool (an ONNX session takes a moment to build) and warms each with one call
+at full length and, for a reranker, with a full batch, so the first request does not
+pay for it. Until then the models are `loading`; a
 failure leaves them `failed` with its exception type, never its message, which holds
 digests and paths. The API reads only the baked store (no downloads), and a second
 reranker is loaded only when one is asked for by name (the benchmark's ablation).
@@ -10,6 +11,7 @@ reranker is loaded only when one is asked for by name (the benchmark's ablation)
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Executor
 from dataclasses import dataclass
@@ -28,7 +30,15 @@ from app.infra.model_files import PinnedModelSource, load_pins
 
 logger = logging.getLogger(__name__)
 
-_WARM_UP = "warm up"
+# Full-length warm-up (Phase 2, commit 10c). onnxruntime sizes its buffers for the
+# shapes it has seen, so a two-word warm-up left the first real rerank (20 pairs cut
+# at 512 tokens) to pay for it: 10.1 s against about 2 s steady. Every word is at least
+# one token, so 600 words reach the 512-token input of the dense model and both
+# rerankers (counted with the real tokenizers in tests/embeddings).
+WARM_UP_WORDS = 600
+WARM_UP_QUERY_WORDS = 32  # a long question; the pair still fills 512 tokens
+WARM_UP_DOCUMENT = " ".join(["warm"] * WARM_UP_WORDS)
+WARM_UP_QUERY = " ".join(["warm"] * WARM_UP_QUERY_WORDS)
 
 EmbedderFactory = Callable[[Settings, VerifiedModel, VerifiedModel, Executor], QueryEmbedder]
 RerankerFactory = Callable[[Settings, VerifiedModel, Executor | None], Reranker]
@@ -63,7 +73,7 @@ class _NoDownloads:
 
 
 class QueryModels:
-    def __init__(
+    def __init__(  # noqa: PLR0913 - source, names and pool, two builders, warm-up batch
         self,
         source: ModelSource,
         names: ModelNames,
@@ -71,6 +81,7 @@ class QueryModels:
         *,
         build_embedder: Callable[[VerifiedModel, VerifiedModel], QueryEmbedder],
         build_reranker: Callable[[VerifiedModel], Reranker],
+        warm_up_candidates: int,
     ) -> None:
         self.names = names
         self.state = ModelsState.LOADING
@@ -81,6 +92,7 @@ class QueryModels:
         self._verified: tuple[ModelFiles, ModelFiles] | None = None
         self._rerankers: dict[str, Reranker] = {}
         self._reranker_lock = asyncio.Lock()
+        self._warm_up_batch = [WARM_UP_DOCUMENT] * warm_up_candidates
 
     @classmethod
     def from_settings(
@@ -108,7 +120,14 @@ class QueryModels:
             settings.embedding_sparse_model,
             settings.reranker_model,
         )
-        return cls(store, names, executor, build_embedder=embedder, build_reranker=reranker)
+        return cls(
+            store,
+            names,
+            executor,
+            build_embedder=embedder,
+            build_reranker=reranker,
+            warm_up_candidates=settings.retrieval_rerank_candidates,
+        )
 
     async def load(self) -> None:
         """Load every model; runs as a background task, so it records and never raises."""
@@ -118,9 +137,11 @@ class QueryModels:
             embedder = await run_inference(
                 self._executor, lambda: self._build_embedder(dense, sparse)
             )
-            await embedder.embed_query_dense(_WARM_UP)
-            await embedder.embed_query_sparse(_WARM_UP)
+            start = time.perf_counter()
+            await embedder.embed_query_dense(WARM_UP_DOCUMENT)
+            await embedder.embed_query_sparse(WARM_UP_DOCUMENT)
             await self._load_reranker(self.names.reranker)
+            warm_up_seconds = round(time.perf_counter() - start, 3)
         except Exception as exc:
             self.state, self.error_type = ModelsState.FAILED, type(exc).__name__
             logger.error(  # noqa: TRY400 - the traceback would carry the message
@@ -129,12 +150,15 @@ class QueryModels:
             return
         self._embedder, self._verified = embedder, (dense.files, sparse.files)
         self.state = ModelsState.READY
-        logger.info("query models ready", extra=self.describe())
+        # Model building is in the time too: it is not separable from the first call.
+        logger.info(
+            "query models ready", extra={**self.describe(), "warm_up_seconds": warm_up_seconds}
+        )
 
     async def _load_reranker(self, name: str) -> Reranker:
         verified = await self._source.fetch(name)
         reranker = await run_inference(self._executor, lambda: self._build_reranker(verified))
-        await reranker.rerank(_WARM_UP, [_WARM_UP])
+        await reranker.rerank(WARM_UP_QUERY, self._warm_up_batch)
         self._rerankers[name] = reranker
         return reranker
 

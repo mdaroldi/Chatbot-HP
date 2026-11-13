@@ -7,6 +7,7 @@ from app.domain.retrieval import SearchMode
 from app.evaluation.metrics import MetricSummary
 from app.evaluation.runner import (
     MAX_ANCHOR_MATCHES,
+    WARM_UP_RETRIEVALS,
     AnchorProblem,
     ConfigSummary,
     HeldoutRefusedError,
@@ -113,7 +114,29 @@ async def test_each_question_is_retrieved_in_order_with_the_named_config() -> No
 
     await run_config(target, [question("a"), oos("b")], retriever)
 
-    assert retriever.calls == [("question a?", target.config), ("question b?", target.config)]
+    # One uncounted warm-up retrieval first, then each question once, in order.
+    assert retriever.calls == [
+        ("question a?", target.config),
+        ("question a?", target.config),
+        ("question b?", target.config),
+    ]
+
+
+async def test_the_warm_up_retrieval_is_not_counted() -> None:
+    retriever = ScriptedRetriever()
+
+    runs = await run_config(named(), [question("a"), oos("b")], retriever)
+
+    assert WARM_UP_RETRIEVALS == 1
+    assert [run.question.id for run in runs] == ["a", "b"]
+    assert len(retriever.calls) == len(runs) + WARM_UP_RETRIEVALS
+
+
+async def test_no_questions_means_no_warm_up() -> None:
+    retriever = ScriptedRetriever()
+
+    assert await run_config(named(), [], retriever) == ()
+    assert retriever.calls == []
 
 
 async def test_an_in_scope_question_is_scored_over_the_whole_candidate_list() -> None:

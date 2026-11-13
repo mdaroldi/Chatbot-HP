@@ -63,6 +63,8 @@ HEADER = RunHeader(
     hardware={"cpus": 8.0, "cpu_source": "cpu_count", "inference_workers": 2},
     seed=20261113,
     resamples=50,
+    warm_up_retrievals=1,
+    reranker_warm_up_pairs=20,
 )
 
 GOLDEN = golden(question("q-in", text=QUESTION_TEXT), oos("q-out"))
@@ -152,6 +154,8 @@ async def test_the_summary_records_golden_index_git_and_every_resolved_config() 
     assert record["git_sha"] == HEADER.git_sha
     assert record["created_at"] == "2026-11-13T15:30:05+00:00"
     assert record["bootstrap"] == {"seed": 20261113, "resamples": 50}
+    assert record["warm_up_retrievals"] == 1
+    assert record["reranker_warm_up_pairs"] == 20
     assert record["hardware"] == HEADER.hardware
     assert record["models"] == HEADER.models
     assert record["scored_over"] == "the candidate list (top_k = rerank_candidates)"
@@ -190,6 +194,8 @@ async def test_the_markdown_summary_shows_the_header_and_each_config() -> None:
         "Selected: `hybrid-rerank`",
         "rev-rerank",
         "BM25 avg_len 107.25 (auto)",
+        "Warm-up: each reranker on load with 20 pairs at its 512-token limit, then 1 "
+        "uncounted retrieval per configuration before timing",
     ):
         assert expected in text, expected
     assert "CANARY" not in text

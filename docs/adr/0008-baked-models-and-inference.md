@@ -56,6 +56,16 @@ falls back to the OS temp directory when no cache directory is given.
    loaded only when asked for by name (the benchmark's ablation). Ingestion keeps
    leaving the thread count to onnxruntime.
 
+7. **Full-length warm-up (Phase 2, commit 10c).** The warm-up now uses the production
+   shape: the dense model embeds a 600-word text, and each reranker scores
+   `RETRIEVAL_RERANK_CANDIDATES` pairs of a 32-word query with that text. Every word is
+   at least one token, and the model tests count 512 tokens (the limit) with each pinned
+   tokenizer. A reranker loaded on demand (the benchmark's second candidate) gets the
+   same warm-up before it is used. `/ready` stays `models: loading` until it ends, and
+   `query models ready` logs `warm_up_seconds`. Workers, threads and batch size are
+   unchanged. The benchmark also makes one uncounted retrieval per configuration
+   before timing, and the run header says so.
+
 ## Model licenses
 
 Checked on each repository's Hugging Face model card on 2026-11-13, at the pinned
@@ -162,3 +172,34 @@ at 1,000 for now; **Phase 3 takes this as an input for the chat message length l
   Revisit if the job time becomes a problem.
 - Changing a pin rebuilds the store; `--if-needed` still compares only the dense and
   BM25 pins (ADR 0006), so a reranker change never rebuilds the index.
+
+## Corrections after implementation
+
+### First-call latency (Phase 2, commit 10c)
+
+The full-length warm-up was added after a first full-length rerank took 10.1 s (one
+benchmark run, after the two-word warm-up), against about 2 s steady. Measured then
+with one script for both images: a fresh backend container loads the models as the
+lifespan does, then times two reranks of the 20 longest stored chunks for a fixed
+question. Docker Desktop, 8 CPUs, workers 2 × threads 2, MiniLM-L6, 30 fresh starts
+per image.
+
+| Run | Image | First rerank p50 / p95 | Second rerank p50 / p95 | Load and warm-up p50 |
+|---|---|---|---|---|
+| Interleaved (A, B, A, B...) | 10b (two-word warm-up) | 2.36 / 3.81 s | 2.51 / 3.20 s | 0.52 s |
+| | 10c (full-length warm-up) | 2.34 / 3.58 s | 2.40 / 3.50 s | 3.42 s |
+| One batch after the other | 10b | 1.97 / 3.02 s | 2.10 / 2.49 s | 0.58 s |
+| | 10c | 2.76 / 4.62 s | 3.20 / 5.95 s | 4.66 s |
+
+- **No measurable gain.** In the interleaved run, the first call is within noise of
+  the second on both images. The 10.1 s did not recur in any of the 60 fresh starts
+  of the 10b image, so the earlier slow call was not caused by the short warm-up. Its
+  cause is not known; the one other slow case seen was the first start after an image
+  build (first rerank 4.5 s), which points at a cold file cache. **The open item stays
+  open for Phase 6.**
+- The sequential batches differ in the second call too, which no warm-up can change:
+  the two batches ran under different machine load, so only the interleaved rows
+  compare the images.
+- **Cost:** readiness about 2.9 s later per API start (p50). The warm-up is kept: it
+  makes `/ready` mean that the largest request shape has run once on every loaded
+  model, whatever made the earlier call slow.

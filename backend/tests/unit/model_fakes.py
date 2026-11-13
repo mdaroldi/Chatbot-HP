@@ -49,6 +49,8 @@ class StandInReranker:
     verified: VerifiedModel
     built_on: str = field(default_factory=lambda: threading.current_thread().name)
     calls: list[tuple[str, list[str]]] = field(default_factory=list)
+    gate: asyncio.Event | None = None  # when set, each call waits for it (a slow warm-up)
+    started: asyncio.Event = field(default_factory=asyncio.Event)  # set by the first call
 
     @property
     def model(self) -> str:
@@ -56,6 +58,9 @@ class StandInReranker:
 
     async def rerank(self, query: str, texts: Sequence[str]) -> list[float]:
         self.calls.append((query, list(texts)))
+        self.started.set()
+        if self.gate is not None:
+            await self.gate.wait()
         return [0.0 for _ in texts]
 
 
@@ -64,6 +69,8 @@ class Builds:
     embedders: list[StandInEmbedder] = field(default_factory=list)
     rerankers: list[StandInReranker] = field(default_factory=list)
     error: Exception | None = None
+    gate: asyncio.Event | None = None  # handed to every reranker built
+    started: asyncio.Event = field(default_factory=asyncio.Event)  # any reranker's first call
 
     def embedder(self, dense: VerifiedModel, sparse: VerifiedModel) -> StandInEmbedder:
         if self.error is not None:
@@ -73,7 +80,7 @@ class Builds:
         return built
 
     def reranker(self, verified: VerifiedModel) -> StandInReranker:
-        built = StandInReranker(verified)
+        built = StandInReranker(verified, gate=self.gate, started=self.started)
         self.rerankers.append(built)
         return built
 

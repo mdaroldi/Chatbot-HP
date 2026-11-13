@@ -21,7 +21,7 @@ from app.infra.db import create_session_factory
 from app.infra.manifest_repository import SqlManifestStore
 from app.infra.orm import Base
 from app.infra.qdrant_index import QdrantIndex
-from app.infra.query_models import ModelNames, QueryModels
+from app.infra.query_models import WARM_UP_DOCUMENT, WARM_UP_QUERY, ModelNames, QueryModels
 from app.services.retrieval import RetrievalService
 from tests.index_data import DENSE_SIZE, make_batch
 from tests.manifest_data import make_build
@@ -82,6 +82,7 @@ def models_factory(
             executor,
             build_embedder=made.embedder,
             build_reranker=made.reranker,
+            warm_up_candidates=settings.retrieval_rerank_candidates,
         )
 
     return factory
@@ -128,6 +129,31 @@ async def test_the_alias_resolves_to_its_build_with_chunks_and_models(
         assert isinstance(retriever, RetrievalService)
         assert retriever.reranker_model == "demo/rerank-b"
         assert runtime.revisions == {name: files.revision for name, files in PINS.items()}
+
+
+async def test_a_second_reranker_is_warmed_at_full_length_when_its_retriever_is_built(
+    settings: Settings, qdrant: AsyncQdrantClient, engine: AsyncEngine
+) -> None:
+    """The lifespan warms only the configured reranker; the benchmark's other is warmed
+    on load, with the same full-length batch, before any retrieval can use it."""
+    await QdrantIndex(qdrant).point_alias(ALIAS, COLLECTION)
+    await record(engine)
+    builds = Builds()
+    context = open_runtime(
+        settings,
+        None,
+        qdrant_factory=lambda _: qdrant,
+        engine_factory=lambda _: engine,
+        models_factory=models_factory(builds=builds),
+        pins=lambda: PINS,
+    )
+
+    async with context as runtime:
+        await runtime.retriever("demo/rerank-b")
+
+    [second] = [r for r in builds.rerankers if r.model == "demo/rerank-b"]
+    candidates = settings.retrieval_rerank_candidates
+    assert second.calls == [(WARM_UP_QUERY, [WARM_UP_DOCUMENT] * candidates)]
 
 
 async def test_an_explicit_collection_is_read_without_the_alias(

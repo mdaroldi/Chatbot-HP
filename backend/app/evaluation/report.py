@@ -47,6 +47,8 @@ class RunHeader:
     hardware: Mapping[str, object]
     seed: int
     resamples: int
+    warm_up_retrievals: int  # uncounted retrievals per configuration before timing
+    reranker_warm_up_pairs: int  # full-length pairs each reranker is warmed with on load
 
 
 @dataclass(frozen=True)
@@ -148,6 +150,8 @@ def summary_record(header: RunHeader, outcome: RunOutcome) -> Record:
         "models": dict(header.models),
         "hardware": dict(header.hardware),
         "bootstrap": {"seed": header.seed, "resamples": header.resamples},
+        "warm_up_retrievals": header.warm_up_retrievals,
+        "reranker_warm_up_pairs": header.reranker_warm_up_pairs,
         "scored_over": SCORED_OVER,
         "configs": [
             _config(named, summary)
@@ -198,6 +202,9 @@ def _header_lines(header: RunHeader) -> list[str]:
         f"- Models: {models}",
         f"- Hardware: {hardware}",
         f"- Bootstrap: seed {header.seed}, {header.resamples} resamples (95% interval)",
+        f"- Warm-up: each reranker on load with {header.reranker_warm_up_pairs} pairs at "
+        f"its 512-token limit, then {header.warm_up_retrievals} uncounted retrieval per "
+        "configuration before timing",
         f"- Scored over {SCORED_OVER}",
     ]
 

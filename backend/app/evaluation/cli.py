@@ -43,6 +43,7 @@ from app.evaluation.golden import load_golden
 from app.evaluation.matrix import MatrixError, NamedConfig, load_matrix
 from app.evaluation.report import RunHeader, RunOutcome, write_run
 from app.evaluation.runner import (
+    WARM_UP_RETRIEVALS,
     AnchorProblem,
     HeldoutRefusedError,
     IndexInfo,
@@ -332,6 +333,9 @@ async def _run(
             hardware=_hardware(settings, ctx.cpu()),
             seed=seed,
             resamples=resamples,
+            warm_up_retrievals=WARM_UP_RETRIEVALS,
+            # QueryModels.from_settings warms every reranker it loads with this batch.
+            reranker_warm_up_pairs=settings.retrieval_rerank_candidates,
         )
     summaries = tuple(
         summarize_config(c, runs[c.name], seed=seed, resamples=resamples) for c in configs

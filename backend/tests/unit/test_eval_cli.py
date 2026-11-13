@@ -14,6 +14,7 @@ import pytest
 
 from app.core.settings import Settings
 from app.domain.evaluation import IndexedChunk
+from app.domain.retrieval import RetrievalConfig, RetrievalResult
 from app.evaluation import cli
 from app.evaluation.cli import EvaluationError, Failure, Runtime, main
 from app.evaluation.runner import IndexInfo, Retriever
@@ -84,6 +85,19 @@ def eval_dir(tmp_path: pathlib.Path) -> pathlib.Path:
 
 
 @dataclass
+class Recorded:
+    """A retriever that records each retrieval with its reranker's name."""
+
+    inner: Retriever
+    name: str
+    events: list[tuple[str, str]]
+
+    async def retrieve(self, query: str, config: RetrievalConfig) -> RetrievalResult:
+        self.events.append(("retrieve", self.name))
+        return await self.inner.retrieve(query, config)
+
+
+@dataclass
 class FakeRuntime:
     """Runtime factory over fakes; records each opening and its collection."""
 
@@ -93,6 +107,7 @@ class FakeRuntime:
     error: Exception | None = None
     opened: list[str | None] = field(default_factory=list)
     rerankers: list[str] = field(default_factory=list)
+    events: list[tuple[str, str]] = field(default_factory=list)  # ("load" | "retrieve", model)
 
     def __call__(
         self, settings: Settings, collection: str | None
@@ -112,8 +127,13 @@ class FakeRuntime:
 
         async def retriever(name: str) -> Retriever:
             self.rerankers.append(name)
-            return RetrievalService(
-                FakeQueryEmbedder(), FakeSearchStore(hits), FakeReranker(model=name)
+            self.events.append(("load", name))  # the real runtime warms the reranker here
+            return Recorded(
+                RetrievalService(
+                    FakeQueryEmbedder(), FakeSearchStore(hits), FakeReranker(model=name)
+                ),
+                name,
+                self.events,
             )
 
         yield Runtime(
@@ -241,6 +261,27 @@ def test_the_preflight_reads_the_collection_it_is_given(eval_dir: pathlib.Path) 
 # ------------------------------------------------------------------ run and report
 
 
+def test_every_reranker_is_loaded_and_warmed_before_the_first_counted_retrieval(
+    eval_dir: pathlib.Path,
+) -> None:
+    """The second reranker is warmed on load, so its first configuration is not slower."""
+    second = 'name = "hybrid-rerank-b"\nreranker = "Xenova/second-reranker"\n'
+    (eval_dir / "retrieval-matrix.toml").write_text(
+        MATRIX + "\n[[configs]]\n" + second, encoding="utf-8"
+    )
+    runtime = FakeRuntime()
+
+    assert invoke(["run"], eval_dir, runtime) == 0
+
+    loads = [n for n, (kind, _) in enumerate(runtime.events) if kind == "load"]
+    retrievals = [n for n, (kind, _) in enumerate(runtime.events) if kind == "retrieve"]
+    loaded = [name for kind, name in runtime.events if kind == "load"]
+    assert "Xenova/second-reranker" in loaded
+    assert len(loaded) == len(set(loaded)) == 2  # each loaded once
+    assert max(loads) < min(retrievals)
+    assert summary_of(eval_dir)["reranker_warm_up_pairs"] == 20
+
+
 def test_a_run_reports_golden_index_git_hardware_and_every_config(
     eval_dir: pathlib.Path,
 ) -> None:
@@ -262,6 +303,7 @@ def test_a_run_reports_golden_index_git_hardware_and_every_config(
     assert summary["index"]["collection"] == INDEX.collection
     assert summary["git_sha"] == SHA
     assert summary["bootstrap"] == {"seed": 5, "resamples": 20}
+    assert summary["warm_up_retrievals"] == 1
     assert summary["hardware"]["cpus"] == 8.0
     assert summary["hardware"]["cpu_source"] == "cgroup"
     assert summary["hardware"]["inference_workers"] == 2

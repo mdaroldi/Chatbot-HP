@@ -85,6 +85,7 @@ class Factories:
             executor,
             build_embedder=builds.embedder,
             build_reranker=builds.reranker,
+            warm_up_candidates=20,
         )
         return self.models
 

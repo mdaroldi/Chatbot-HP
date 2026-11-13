@@ -203,9 +203,17 @@ def _indexed(chunk: RetrievedChunk) -> IndexedChunk:
     return IndexedChunk(hit.chunk_id, hit.doc_id, hit.section_path, hit.text)
 
 
+# A configuration's first call can pay one-off costs (a reranker loaded on demand, buffers
+# sized for a new shape), which would inflate its p95 latency, a tie-break (ADR 0009).
+WARM_UP_RETRIEVALS = 1
+
+
 async def run_config(
     named: NamedConfig, questions: Sequence[GoldenQuestion], retriever: Retriever
 ) -> tuple[QuestionRun, ...]:
+    """Every question once, in order, after one uncounted warm-up retrieval."""
+    for question in questions[:WARM_UP_RETRIEVALS]:
+        await retriever.retrieve(question.question, named.config)
     runs = []
     for question in questions:
         result = await retriever.retrieve(question.question, named.config)
