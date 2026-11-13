@@ -38,6 +38,8 @@ from app.infra.orm import ConversationRow, FlagsJson, MessageRow, SourceJson
 
 # Error code stored on a pending answer whose request died without finishing it.
 ABANDONED = "abandoned"
+PENDING_ANSWER_INDEX = "ix_messages_one_pending"
+_SQLITE_PENDING_VIOLATION = "UNIQUE constraint failed: messages.conversation_id"
 
 Values = dict[str, object]
 
@@ -181,6 +183,21 @@ def _owned_conversation(client_id: str, conversation_id: str) -> ColumnElement[b
     return and_(ConversationRow.id == conversation_id, ConversationRow.client_id == client_id)
 
 
+def is_pending_answer_conflict(error: IntegrityError) -> bool:
+    """Whether the database refused a second pending answer, i.e. the conversation is busy.
+
+    Matched on the violated constraint, so any other integrity error (foreign key,
+    check, duplicate seq) is a bug and propagates as an internal error. Postgres
+    reports the index name. SQLite (unit tests only) reports the indexed columns
+    instead, and the pending index is the only unique index on conversation_id alone.
+    """
+    driver = getattr(error.orig, "driver_exception", None)
+    name = getattr(driver, "constraint_name", None)
+    if isinstance(name, str):
+        return name == PENDING_ANSWER_INDEX
+    return str(error.orig) == _SQLITE_PENDING_VIOLATION
+
+
 class SqlChatStore:
     """ChatStore over SQLAlchemy (see the module docstring for the ownership rule).
 
@@ -288,9 +305,10 @@ class SqlChatStore:
                     .where(_owned_conversation(client_id, conversation_id))
                     .values(updated_at=now, title=title if stored_title is None else stored_title)
                 )
-        except IntegrityError:
-            # The one-pending index (or a racing seq) refused the rows: a turn is running.
-            raise ConversationBusyError from None
+        except IntegrityError as error:
+            if is_pending_answer_conflict(error):
+                raise ConversationBusyError from None
+            raise
         return turn
 
     @staticmethod

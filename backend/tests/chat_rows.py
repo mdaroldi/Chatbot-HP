@@ -183,3 +183,15 @@ async def insert_conversation(connection: AsyncConnection, row: Row) -> None:
 
 async def insert_message(connection: AsyncConnection, row: Row) -> None:
     await connection.execute(insert(MessageRow), [row])
+
+
+# Integrity errors a turn can meet, and whether each one means "an answer is pending".
+# Setup for every case: conversation_row() plus PENDING_ANSWER. Only the second pending
+# answer is a busy conversation; every other violation is a bug and must surface.
+PENDING_ANSWER = message_row(1, "assistant", outcome="pending")
+CONFLICT_CASES = [
+    pytest.param(message_row(2, "assistant", outcome="pending"), True, id="second-pending"),
+    pytest.param(message_row(3) | {"seq": 1}, False, id="duplicate-seq"),
+    pytest.param(message_row(4, client_id=OTHER_CLIENT), False, id="foreign-key"),
+    pytest.param(message_row(5) | {"seq": 0}, False, id="check-constraint"),
+]

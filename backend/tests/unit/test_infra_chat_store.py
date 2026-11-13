@@ -7,9 +7,12 @@ Postgres, and `alembic check` proves the two agree.
 import pathlib
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
+from fastapi import FastAPI
 from sqlalchemy import event, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
@@ -20,6 +23,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from app.core.middleware import RequestIdMiddleware
 from app.domain.chat import (
     AnswerFlags,
     AnswerRecord,
@@ -36,14 +40,16 @@ from app.domain.chat_store import (
 )
 from app.domain.ingestion import PageRange
 from app.domain.retrieval import Relevance, StageTimings
-from app.infra.chat_store import SqlChatStore
+from app.infra.chat_store import SqlChatStore, is_pending_answer_conflict
 from app.infra.db import create_session_factory
 from app.infra.orm import Base, MessageRow
 from tests.chat_rows import (
     CLIENT,
+    CONFLICT_CASES,
     CONVERSATION_VIOLATIONS,
     MESSAGE_VIOLATIONS,
     OTHER_CLIENT,
+    PENDING_ANSWER,
     T0,
     VALID_MESSAGES,
     Row,
@@ -51,6 +57,7 @@ from tests.chat_rows import (
     insert_conversation,
     insert_message,
 )
+from tests.unit.conftest import LogReader
 
 ABANDON_AFTER = timedelta(minutes=3)
 MISSING_ID = "00000000-0000-4000-8000-00000000dead"
@@ -653,3 +660,84 @@ async def test_the_schema_rejects_a_conversation_that_breaks_a_rule(
     with pytest.raises(IntegrityError, match=constraint):
         async with engine.begin() as connection:
             await insert_conversation(connection, row)
+
+
+# Which integrity errors mean "busy"
+
+
+async def test_a_check_violation_during_a_turn_surfaces_instead_of_reading_as_busy(
+    store: SqlChatStore, sessions: async_sessionmaker[AsyncSession]
+) -> None:
+    created = await store.create_conversation(CLIENT)
+
+    with pytest.raises(IntegrityError, match="ck_conversations_title_not_empty"):
+        await store.start_turn(CLIENT, created.id, "Question?", title="")
+
+    async with sessions() as session:
+        assert (await session.execute(select(MessageRow))).all() == []
+
+
+async def violation(engine: AsyncEngine, row: Row) -> IntegrityError:
+    async with engine.begin() as connection:
+        await insert_conversation(connection, conversation_row())
+        await insert_message(connection, PENDING_ANSWER)
+    with pytest.raises(IntegrityError) as raised:
+        async with engine.begin() as connection:
+            await insert_message(connection, row)
+    return raised.value
+
+
+@pytest.mark.parametrize(("row", "pending"), CONFLICT_CASES)
+async def test_only_a_second_pending_answer_is_a_pending_conflict_on_sqlite(
+    engine: AsyncEngine, row: Row, pending: bool
+) -> None:
+    """SQLite names the indexed columns, not the index (Postgres: see integration)."""
+    assert is_pending_answer_conflict(await violation(engine, row)) is pending
+
+
+@pytest.mark.parametrize(
+    ("constraint", "pending"),
+    [
+        ("ix_messages_one_pending", True),
+        ("fk_messages_conversation_id_conversations", False),
+        ("ck_messages_seq_positive", False),
+        ("uq_messages_conversation_id_seq", False),
+    ],
+)
+def test_a_named_driver_constraint_is_matched_by_name(constraint: str, pending: bool) -> None:
+    """asyncpg reports the violated constraint as driver_exception.constraint_name."""
+    driver = SimpleNamespace(constraint_name=constraint)
+    orig = SimpleNamespace(driver_exception=driver)
+    error = IntegrityError("INSERT INTO messages ...", None, orig)  # type: ignore[arg-type]
+
+    assert is_pending_answer_conflict(error) is pending
+
+
+async def test_an_unexpected_integrity_error_becomes_a_safe_500(
+    store: SqlChatStore, json_logs: LogReader
+) -> None:
+    """The driver text holds SQL parameters (user content); none of it may leave."""
+    canary = "canary-7f3a9c"
+    created = await store.create_conversation(CLIENT)
+    app = FastAPI()
+    app.add_middleware(RequestIdMiddleware)
+
+    @app.post("/turn")
+    async def turn() -> None:
+        await store.start_turn(CLIENT, created.id, canary, title="")
+
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+        response = await http.post("/turn")
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "internal_error"
+    logs = json_logs()
+    assert [line["exception_type"] for line in logs if line["level"] == "ERROR"] == [
+        "sqlalchemy.exc.IntegrityError"
+    ]
+    for text_out in (response.text, *map(str, logs)):
+        assert canary not in text_out
+        assert "ck_conversations" not in text_out
+        assert "INSERT" not in text_out
+        assert "UPDATE" not in text_out

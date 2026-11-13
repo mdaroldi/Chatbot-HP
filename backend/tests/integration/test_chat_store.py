@@ -6,13 +6,23 @@ from collections.abc import AsyncIterator
 from datetime import timedelta
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.domain.chat import AnswerRecord, Outcome
 from app.domain.chat_store import ConversationBusyError, ConversationNotFoundError, Turn
-from app.infra.chat_store import SqlChatStore
+from app.infra.chat_store import SqlChatStore, is_pending_answer_conflict
 from app.infra.db import create_engine, create_session_factory
-from tests.chat_rows import CLIENT, OTHER_CLIENT
+from tests.chat_rows import (
+    CLIENT,
+    CONFLICT_CASES,
+    OTHER_CLIENT,
+    PENDING_ANSWER,
+    Row,
+    conversation_row,
+    insert_conversation,
+    insert_message,
+)
 from tests.integration.conftest import SettingsFactory, run_alembic
 
 pytestmark = pytest.mark.integration
@@ -99,3 +109,25 @@ async def test_deleting_a_conversation_removes_its_messages(store: SqlChatStore)
     assert await store.delete_conversation(CLIENT, created.id) is True
 
     assert await store.get_thread(CLIENT, created.id) is None
+
+
+async def test_a_check_violation_during_a_turn_is_not_reported_as_busy(store: SqlChatStore) -> None:
+    created = await store.create_conversation(CLIENT)
+
+    with pytest.raises(IntegrityError, match="ck_conversations_title_not_empty"):
+        await store.start_turn(CLIENT, created.id, "Question?", title="")
+
+
+@pytest.mark.parametrize(("row", "pending"), CONFLICT_CASES)
+async def test_only_the_pending_answer_index_reads_as_a_pending_conflict(
+    engine: AsyncEngine, row: Row, pending: bool
+) -> None:
+    """Real Postgres errors: matched on the constraint name the server reports."""
+    async with engine.begin() as connection:
+        await insert_conversation(connection, conversation_row())
+        await insert_message(connection, PENDING_ANSWER)
+    with pytest.raises(IntegrityError) as raised:
+        async with engine.begin() as connection:
+            await insert_message(connection, row)
+
+    assert is_pending_answer_conflict(raised.value) is pending
