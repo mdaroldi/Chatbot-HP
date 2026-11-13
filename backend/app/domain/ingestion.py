@@ -138,6 +138,14 @@ class ModelIntegrityError(ModelError):
         self.model, self.file, self.expected, self.actual = model, file, expected, actual
 
 
+class ModelStoreError(ModelError):
+    """The baked model store holds something other than exactly the pinned files."""
+
+    def __init__(self, problems: Sequence[str]) -> None:
+        super().__init__(f"model store does not match its pins: {len(problems)} problem(s)")
+        self.problems = tuple(problems)
+
+
 class IndexPublishError(Exception):
     """A new collection failed its check; the live alias was left untouched."""
 

@@ -89,9 +89,12 @@ def test_committed_pins_cover_the_default_models() -> None:
 
     pins = load_pins()
 
+    # Both reranker candidates stay pinned until the ablation picks one (ADR 0008).
     assert set(pins) == {
         defaults["embedding_dense_model"].default,
         defaults["embedding_sparse_model"].default,
+        defaults["reranker_model"].default,
+        "jinaai/jina-reranker-v1-turbo-en",
     }
     assert MODEL_PINS.read_text(encoding="utf-8") == render_pins(list(pins.values()))
 

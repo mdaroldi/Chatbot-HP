@@ -115,13 +115,23 @@ async def fetch_or_fail[T](fetch: Callable[[], Awaitable[T]]) -> T:
         fail(exc)
 
 
-def _default_fetchers() -> list[Fetch]:
+CORPUS = "corpus"
+
+
+def planned_downloads(*, corpus: bool) -> list[str]:
+    """The corpus (unless left out) and every model in models.toml, rerankers included."""
+    return [*([CORPUS] if corpus else []), *load_pins()]
+
+
+def _fetcher(settings: Settings, name: str) -> Fetch:
+    if name == CORPUS:
+        return lambda: fetch_corpus(settings)
+    return lambda: fetch_model(settings, name)
+
+
+def _default_fetchers(*, corpus: bool) -> list[Fetch]:
     settings = download_settings()
-    return [
-        lambda: fetch_corpus(settings),
-        lambda: fetch_model(settings, settings.embedding_dense_model),
-        lambda: fetch_model(settings, settings.embedding_sparse_model),
-    ]
+    return [_fetcher(settings, name) for name in planned_downloads(corpus=corpus)]
 
 
 async def _run(fetchers: Sequence[Fetch], attempts: int, backoff: float, sleep: Sleep) -> None:
@@ -138,8 +148,9 @@ def main(
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--attempts", type=int, default=3)
     parser.add_argument("--backoff-seconds", type=float, default=10.0)
+    parser.add_argument("--models-only", action="store_true", help="skip the HP manuals")
     args = parser.parse_args(argv)
-    chosen = _default_fetchers() if fetchers is None else fetchers
+    chosen = _default_fetchers(corpus=not args.models_only) if fetchers is None else fetchers
     try:
         asyncio.run(_run(chosen, args.attempts, args.backoff_seconds, sleep))
     except (CorpusError, ModelError) as exc:

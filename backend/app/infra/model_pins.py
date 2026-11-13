@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Protocol, TextIO
 
 from fastembed import SparseTextEmbedding, TextEmbedding
+from fastembed.rerank.cross_encoder import TextCrossEncoder
 
 from app.domain.ingestion import ModelDownloadError, ModelFiles, ModelPinsError
 from app.infra.model_files import (
@@ -52,7 +53,7 @@ class PinsHub(HubClient, Protocol):
 
 
 def fastembed_files(name: str) -> FastembedFiles:
-    for model_class in (TextEmbedding, SparseTextEmbedding):
+    for model_class in (TextEmbedding, SparseTextEmbedding, TextCrossEncoder):
         # dict[str, Any]: fastembed's public model descriptions are untyped dicts.
         for description in model_class.list_supported_models():
             if description["model"] == name:
@@ -97,11 +98,17 @@ def main(
     describe: Callable[[str], FastembedFiles] = fastembed_files,
     stdout: TextIO = sys.stdout,
 ) -> int:
-    """Pin the models named in argv, or by default the models already pinned."""
-    names = list(argv) or list(load_pins(pins_path))
+    """Pin the models named in argv, or by default every model already pinned.
+
+    Named models are pinned into the existing file: the other pins stay exactly as
+    they are, so adding a model never moves the revision of another one.
+    """
+    existing = load_pins(pins_path) if pins_path.exists() else {}
+    names = list(argv) or list(existing)
     with tempfile.TemporaryDirectory(prefix="model-pins-") as workdir:
         models = regenerate(names, hub or HuggingFaceHub(), describe, Path(workdir))
-    new = render_pins(models)
+    merged = {**existing, **{model.name: model for model in models}}
+    new = render_pins(list(merged.values()))
     old = pins_path.read_text(encoding="utf-8") if pins_path.exists() else ""
     if new == old:
         stdout.write(f"{pins_path.name} is unchanged\n")

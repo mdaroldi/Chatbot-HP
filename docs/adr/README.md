@@ -12,3 +12,4 @@ considered, consequences.
 | [0005](0005-chunking-v1.md) | Structure-aware chunking v1 (450 tokens, prefix included) |
 | [0006](0006-embedding-model-files.md) | Pinned and verified embedding model files, recorded per build |
 | [0007](0007-startup-order.md) | Startup order: one-shot migrate and ingest services before the API |
+| [0008](0008-baked-models-and-inference.md) | Models baked into the backend image, read offline; inference threading |

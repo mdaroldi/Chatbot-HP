@@ -244,7 +244,12 @@ async def test_the_runtime_wires_the_real_adapters_from_settings(tmp_path: pathl
             "envy-6000-user-guide",
             "omen-17-service-guide",
         ]
-        assert set(runtime.pins) == {"BAAI/bge-small-en-v1.5", "Qdrant/bm25"}
+        assert set(runtime.pins) == {
+            "BAAI/bge-small-en-v1.5",
+            "Qdrant/bm25",
+            "Xenova/ms-marco-MiniLM-L-6-v2",
+            "jinaai/jina-reranker-v1-turbo-en",
+        }
         assert isinstance(ports.corpus, HttpCorpusSource)
         assert ports.corpus.corpus_dir == tmp_path / "corpus"
         assert isinstance(ports.models, PinnedModelSource)

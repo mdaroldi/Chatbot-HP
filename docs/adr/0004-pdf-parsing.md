@@ -145,3 +145,9 @@ counts. PDF page numbers.
   rule cannot judge (a one-word German label, a German label without function words,
   a Turkish line), and one Latin-script line in a language without a list (Serbian),
   which is dropped only because it happens to score as Portuguese.
+
+### Image size figures (Phase 2, ADR 0008)
+
+- The "unpacked" sizes above are Docker Desktop's image size column, which with the
+  containerd image store adds compressed and unpacked bytes. ADR 0008 gives the
+  unpacked root filesystem measured with `du` (Phase 1 image: about 467 MB).

@@ -29,7 +29,8 @@ BACKEND_IMAGE = "hpdocs-backend:local"
 FRONTEND_IMAGE = "hpdocs-frontend:local"
 APP_USER = "10001:10001"
 CORPUS_CACHE = "/var/cache/hpdocs/corpus"
-MODEL_CACHE = "/var/cache/hpdocs/models"
+# Models are baked into the image (ADR 0008), read-only, at the same path in every service.
+MODEL_STORE = "/opt/hpdocs/models"
 
 # Any: parsed YAML is untyped by nature; each test asserts the shape it relies on.
 Service = dict[str, Any]
@@ -300,7 +301,7 @@ INGEST_FIXED = {
     "POSTGRES_PORT": "5432",
     "QDRANT_URL": "http://qdrant:6333",
     "CORPUS_DIR": CORPUS_CACHE,
-    "EMBEDDING_CACHE_DIR": MODEL_CACHE,
+    "EMBEDDING_CACHE_DIR": MODEL_STORE,
 }
 # Not a setting: huggingface-hub and hf-xet keep their own cache and logs under
 # HF_HOME (default ~/.cache), which the read-only root and the home-less user block.
@@ -308,10 +309,13 @@ INGEST_FIXED = {
 # Linux build carries Microsoft 1DS telemetry, started when its environment is created
 # unless ORT_DISABLE_TELEMETRY is set; huggingface-hub adds environment details to its
 # user agent and draws progress bars on stderr unless told not to.
+# HF_HUB_OFFLINE keeps the hub library from ever reaching the network: the models are in
+# the image, so no container downloads one (ADR 0008).
 TELEMETRY_ENV = {
     "ORT_DISABLE_TELEMETRY": "1",
     "HF_HUB_DISABLE_TELEMETRY": "1",
     "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+    "HF_HUB_OFFLINE": "1",
 }
 INGEST_LIBRARY_ENV = {
     "HF_HOME": "/tmp/huggingface",  # noqa: S108 - a tmpfs path in compose
@@ -348,15 +352,15 @@ def test_migrate_gets_the_database_and_logging_settings(services: dict[str, Serv
     assert {k: environment[k] for k in expected} == {k: ingest[k] for k in expected}
 
 
-def test_ingest_caches_the_corpus_and_models_in_named_volumes(
+def test_ingest_caches_only_the_corpus_in_a_named_volume(
     compose: dict[str, Any], services: dict[str, Service]
 ) -> None:
-    assert services["ingest"]["volumes"] == [
-        f"corpus-cache:{CORPUS_CACHE}",
-        f"model-cache:{MODEL_CACHE}",
-    ]
-    assert {"corpus-cache", "model-cache"} <= set(compose["volumes"])
+    """The models come with the image; no volume can shadow or alter them."""
+    assert services["ingest"]["volumes"] == [f"corpus-cache:{CORPUS_CACHE}"]
+    assert "corpus-cache" in compose["volumes"]
+    assert "model-cache" not in compose["volumes"]
     assert "volumes" not in services["migrate"]
+    assert "volumes" not in services["backend"]
 
 
 def test_data_lives_in_named_volumes(compose: dict[str, Any], services: dict[str, Service]) -> None:
@@ -420,12 +424,28 @@ def test_backend_image_ships_the_corpus_and_model_pins_next_to_the_app() -> None
     assert {"!corpus.toml", "!models.toml"} <= set(allowed)
 
 
-def test_backend_image_owns_the_ingest_cache_mount_points() -> None:
+def test_backend_image_owns_the_corpus_cache_mount_point() -> None:
     """A named volume copies its mount point's owner on first use; root would block 10001."""
     text = backend_file("Dockerfile")
 
-    assert f"mkdir -p {CORPUS_CACHE} {MODEL_CACHE}" in text
-    assert f"chown {APP_USER} {CORPUS_CACHE} {MODEL_CACHE}" in text
+    assert f"mkdir -p {CORPUS_CACHE}" in text
+    assert f"chown {APP_USER} {CORPUS_CACHE}" in text
+    assert "/var/cache/hpdocs/models" not in text
+
+
+def test_backend_image_bakes_the_verified_models_read_only() -> None:
+    """A models stage fills and verifies the store; the runtime copies it as root-owned
+    files and reads it offline (ADR 0008).
+    """
+    text = backend_file("Dockerfile")
+
+    assert re.search(r"^FROM \$\{PYTHON_IMAGE\} AS models$", text, flags=re.MULTILINE)
+    assert "from app.infra.model_store import main" in text
+    assert f"--target {MODEL_STORE}" in text
+    assert re.search(rf"^COPY --from=models {MODEL_STORE} {MODEL_STORE}$", text, re.MULTILINE)
+    assert f"EMBEDDING_CACHE_DIR={MODEL_STORE}" in text
+    for name, value in TELEMETRY_ENV.items():
+        assert f"{name}={value}" in text
 
 
 def test_backend_entrypoint_only_starts_the_api() -> None:

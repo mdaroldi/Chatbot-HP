@@ -40,10 +40,13 @@ x-logging-env: &logging-env
 # Microsoft 1DS telemetry, started when its environment is created unless this is
 # set (the embedder also calls onnxruntime's disable API). huggingface-hub otherwise
 # adds environment details to its user agent and draws progress bars on stderr.
+# HF_HUB_OFFLINE: the models are baked into the image (ADR 0008), so the hub library
+# never reaches the network. The image sets all four too; either holds alone.
 x-telemetry-env: &telemetry-env
   ORT_DISABLE_TELEMETRY: "1"
   HF_HUB_DISABLE_TELEMETRY: "1"
   HF_HUB_DISABLE_PROGRESS_BARS: "1"
+  HF_HUB_OFFLINE: "1"
 
 x-postgres-env: &postgres-env
   POSTGRES_HOST: postgres
@@ -81,7 +84,8 @@ services:
       CORPUS_DOWNLOAD_TIMEOUT_SECONDS: ${CORPUS_DOWNLOAD_TIMEOUT_SECONDS:-120}
       EMBEDDING_DENSE_MODEL: ${EMBEDDING_DENSE_MODEL:-BAAI/bge-small-en-v1.5}
       EMBEDDING_SPARSE_MODEL: ${EMBEDDING_SPARSE_MODEL:-Qdrant/bm25}
-      EMBEDDING_CACHE_DIR: /var/cache/hpdocs/models
+      # The read-only model store baked into the image (ADR 0008).
+      EMBEDDING_CACHE_DIR: /opt/hpdocs/models
       EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
       CHUNK_MAX_TOKENS: ${CHUNK_MAX_TOKENS:-450}
       CHUNK_MIN_TOKENS: ${CHUNK_MIN_TOKENS:-65}
@@ -89,11 +93,10 @@ services:
       # (default ~/.cache); the root is read-only and the user has no home. The
       # verified model files still land in EMBEDDING_CACHE_DIR.
       HF_HOME: /tmp/huggingface
-    # Verified PDFs and model files survive `down`, so later runs need no network.
+    # Verified PDFs survive `down`, so later runs need no network.
     volumes:
       - corpus-cache:/var/cache/hpdocs/corpus
-      - model-cache:/var/cache/hpdocs/models
-    # edge: downloads the PDFs and the models; data: Postgres and Qdrant.
+    # edge: downloads the PDFs; data: Postgres and Qdrant.
     networks: [edge, data]
     depends_on:
       migrate: {condition: service_completed_successfully}
@@ -188,4 +191,3 @@ volumes:
   qdrant-data:
   qdrant-snapshots:
   corpus-cache:
-  model-cache:

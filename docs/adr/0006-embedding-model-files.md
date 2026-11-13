@@ -173,3 +173,11 @@ checked on 2026-11-12. The revisions are the ones pinned first.
 - `--if-needed` compares the pins in `models.toml` (source, revision and every file
   digest) with the live build's `models`; a model with no pin counts as changed, so
   the build goes on and fails on `ModelNotAllowedError`.
+
+### Baked into the image (Phase 2, ADR 0008)
+
+- The pins file also lists the rerankers, and the files are no longer downloaded at
+  runtime: the image build fetches and verifies every pin into a read-only store, and
+  the containers read it offline (`HF_HUB_OFFLINE=1`). `PinnedModelSource` still
+  hashes every file before loading. `make model-pins MODELS="..."` now pins named
+  models into the existing file and leaves the other pins as they are.

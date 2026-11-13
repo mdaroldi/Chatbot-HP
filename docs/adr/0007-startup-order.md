@@ -79,3 +79,11 @@ test derives the list from `Settings` and checks that the two match.
   `up`, not once per replica.
 - Two named volumes hold downloaded data; `docker compose down -v` removes them and
   the next `up` downloads again.
+
+## Corrections after implementation
+
+### Models in the image (Phase 2, ADR 0008)
+
+- `ingest` no longer downloads models, and the `model-cache` volume is gone: the models
+  are baked into the backend image and read offline. `ingest` keeps the edge network
+  for the PDFs only, and `corpus-cache` is its only volume.

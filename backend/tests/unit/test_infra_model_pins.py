@@ -105,6 +105,41 @@ def test_main_pins_the_models_named_on_the_command_line(tmp_path: Path) -> None:
     assert list(load_pins(pins)) == ["demo/dense"]
 
 
+def test_naming_models_keeps_the_other_pins_unchanged(tmp_path: Path) -> None:
+    """Adding a model must not move the revisions of the models already pinned."""
+    pins = tmp_path / "models.toml"
+    other = pin("demo/sparse", "demo/sparse-src")
+    pins.write_text(render_pins([other]), encoding="utf-8")
+
+    run(pins, "demo/dense")
+
+    loaded = load_pins(pins)
+    assert list(loaded) == ["demo/sparse", "demo/dense"]
+    assert loaded["demo/sparse"] == other
+    assert loaded["demo/dense"].revision == NEXT_REVISION
+
+
+def test_naming_a_pinned_model_repins_it_in_place(tmp_path: Path) -> None:
+    pins = tmp_path / "models.toml"
+    other = pin("demo/sparse", "demo/sparse-src")
+    pins.write_text(render_pins([pin(), other]), encoding="utf-8")
+
+    run(pins, "demo/dense")
+
+    loaded = load_pins(pins)
+    assert list(loaded) == ["demo/dense", "demo/sparse"]
+    assert loaded["demo/dense"].revision == NEXT_REVISION
+    assert loaded["demo/sparse"] == other
+
+
+def test_fastembed_lists_the_rerankers_files() -> None:
+    files = fastembed_files("Xenova/ms-marco-MiniLM-L-6-v2")
+
+    assert files.source == "Xenova/ms-marco-MiniLM-L-6-v2"
+    assert files.required == ("onnx/model.onnx",)
+    assert {"tokenizer.json", "config.json"} <= set(files.optional)
+
+
 def test_fastembed_lists_the_dense_models_files() -> None:
     files = fastembed_files("BAAI/bge-small-en-v1.5")
 

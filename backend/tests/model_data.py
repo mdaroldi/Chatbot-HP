@@ -40,12 +40,16 @@ class FakeHub:
     repos: dict[tuple[str, str], dict[str, bytes]] = field(default_factory=dict)
     heads: dict[str, str] = field(default_factory=dict)
     error: Exception | None = None
+    # Raised once each, in order, by the next downloads (a flaky network).
+    failures: list[Exception] = field(default_factory=list)
     downloads: list[tuple[str, str, tuple[str, ...], Path, bool]] = field(default_factory=list)
 
     def download(
         self, source: str, revision: str, files: Sequence[str], cache_dir: Path, *, force: bool
     ) -> Path:
         self.downloads.append((source, revision, tuple(files), cache_dir, force))
+        if self.failures:
+            raise self.failures.pop(0)
         if self.error is not None:
             raise self.error
         target = snapshot_dir(cache_dir, source, revision)

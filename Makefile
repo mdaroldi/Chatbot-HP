@@ -16,7 +16,7 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 	-v trivy-cache:/root/.cache $(TRIVY_IMAGE)
 
 .PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int \
-	fetch-test-assets \
+	fetch-test-assets models \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins eval load check
 
 help: ## List available targets
@@ -68,6 +68,10 @@ TEST_INT_MARKERS ?= integration or corpus or model
 # to EMBEDDING_CACHE_DIR. Failures read CORPUS/MODEL UNAVAILABLE or CHANGED UPSTREAM.
 fetch-test-assets: ## Download and verify the HP manuals and pinned models for test-int (3 attempts)
 	cd $(BACKEND) && uv run --frozen python -m tests.downloads --attempts 3 --backoff-seconds 10
+
+# The image bakes its own copy (ADR 0008); this fills backend/models for model tests.
+models: ## Download and verify every pinned model into backend/models (3 attempts)
+	cd $(BACKEND) && uv run --frozen python -m tests.downloads --models-only --attempts 3 --backoff-seconds 10
 
 test-int: ## Integration tests (real Postgres and Qdrant, needs Docker), corpus and model tests
 	$(TEST_COMPOSE) up -d --wait

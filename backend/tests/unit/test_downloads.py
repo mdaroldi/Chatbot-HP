@@ -11,6 +11,7 @@ from app.domain.ingestion import (
     ModelDownloadError,
     ModelIntegrityError,
 )
+from app.infra.model_files import load_pins
 from tests.downloads import (
     CORPUS_CHANGED,
     CORPUS_UNAVAILABLE,
@@ -18,6 +19,7 @@ from tests.downloads import (
     MODEL_UNAVAILABLE,
     failure_message,
     main,
+    planned_downloads,
     with_retries,
 )
 
@@ -196,3 +198,12 @@ def test_main_reports_the_label_and_stops_at_the_first_failure(
     assert status == 1
     assert model_calls == []
     assert capsys.readouterr().err == failure_message(CHANGED) + "\n"
+
+
+def test_the_plan_covers_the_corpus_and_every_pinned_model() -> None:
+    """Rerankers included: model tests and the image need every pinned model."""
+    assert planned_downloads(corpus=True) == ["corpus", *load_pins()]
+
+
+def test_models_only_leaves_the_corpus_out() -> None:
+    assert planned_downloads(corpus=False) == list(load_pins())

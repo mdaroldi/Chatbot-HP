@@ -92,6 +92,7 @@ make typecheck    # mypy --strict
 make test         # unit tests with coverage gate (branch coverage, fail under 90)
 make test-int     # integration, corpus and model tests (needs Docker)
 make fetch-test-assets  # download and verify the HP manuals and models for test-int (CI step)
+make models       # download and verify every pinned model into backend/models (model tests)
 make security     # bandit, pip-audit, gitleaks
 make up / down    # docker compose up / down
 make ingest       # force a new index build through compose (up builds only when needed)

@@ -78,18 +78,20 @@ Compose refuses to start without `POSTGRES_PASSWORD`. Only the API and the front
 are published, on `127.0.0.1` by default. On a remote VM set `BIND_ADDRESS=0.0.0.0`
 in `.env` to reach them from outside, and restrict access with the VM's firewall.
 
-**The first `up` needs network access and takes a minute or more:** `ingest`
-downloads the two manuals from HP and the embedding models from the Hugging Face hub,
-then builds the index. Measured on a fresh clone with empty volumes (Apple M2, Docker
-Desktop with 8 CPUs and 4 GB, November 2026): image build 38 s (`--no-cache`), first
-`docker compose up --wait` 70 s, of which ingestion (download, parse, embed, upsert)
-is about 47 s. Later runs need no network: the verified files stay in the
-`corpus-cache` and `model-cache` volumes, and a second `up` took 21 s (1.6 s of it in
-`ingest`, which found the index current and skipped the build). If a download or a
-checksum check fails, `ingest` exits non-zero and **the backend does not start**, by
-design: the API never runs on a missing or unverified index. `docker compose logs
-ingest` shows the one structured error line; fix the network and run `docker compose
-up` again.
+**The first `up` needs network access and takes a minute or more:** the image build
+downloads the pinned models from the Hugging Face hub (about 300 MB, verified file by
+file; ADR 0008), and `ingest` downloads the two manuals from HP, then builds the index.
+Measured on a fresh clone with empty volumes (Apple M2, Docker Desktop with 8 CPUs and
+4 GB, November 2026): image build 38 s (`--no-cache`), first `docker compose up --wait`
+70 s, of which ingestion (download, parse, embed, upsert) is about 47 s (Phase 1, before
+the models moved into the image; the model step adds about 17 s to a build with an
+empty model cache, and a forced rebuild of the index takes about 60 s). Later runs need
+no network: the models are in the image, the verified PDFs stay in the `corpus-cache`
+volume, and a second `up` took 21 s (1.6 s of it in `ingest`, which found the index
+current and skipped the build). If a download or a checksum check fails, the image
+build or `ingest` stops, and **the backend does not start**, by design: the API never
+runs on a missing or unverified index or model. `docker compose logs ingest` shows the
+one structured error line; fix the network and run `docker compose up` again.
 
 ## Ingestion
 
