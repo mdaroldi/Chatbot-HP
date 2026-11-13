@@ -73,6 +73,10 @@ def test_parses_documents_in_file_order() -> None:
         (entry(url="http://docs.test/a.pdf"), "url must use https"),
         (entry() + entry(url="https://docs.test/b.pdf"), "duplicate doc_id: demo-guide"),
         (entry() + entry("other-guide"), "duplicate url: https://docs.test/a.pdf"),
+        (entry(product_name="Two words"), "product_name must be a single word"),
+        (entry(product_name=""), "product_name must be a single word"),
+        (entry(model_number="1 0"), "model_number must be a single word"),
+        (entry() + "product_name = 7\n", "product_name must be a string"),
     ],
 )
 def test_invalid_manifests_are_rejected(text: str, message: str) -> None:
@@ -97,3 +101,20 @@ def test_repository_manifest_allows_exactly_the_two_hp_documents() -> None:
 
     assert {d.url: d.sha256 for d in documents} == ALLOWED
     assert [d.doc_id for d in documents] == ["envy-6000-user-guide", "omen-17-service-guide"]
+
+
+def test_product_name_and_model_number_are_optional() -> None:
+    (named,) = parse_corpus(entry(product_name="Demo", model_number="100"))
+    (plain,) = parse_corpus(entry())
+
+    assert (named.product_name, named.model_number) == ("Demo", "100")
+    assert (plain.product_name, plain.model_number) == (None, None)
+
+
+def test_repository_manifest_names_each_product_for_the_retrieval_filter() -> None:
+    names = {d.doc_id: (d.product_name, d.model_number) for d in load_corpus(CORPUS_MANIFEST)}
+
+    assert names == {
+        "envy-6000-user-guide": ("ENVY", "6000"),
+        "omen-17-service-guide": ("OMEN", "17"),
+    }

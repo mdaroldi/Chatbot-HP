@@ -6,6 +6,7 @@ rerank them. Every knob is a `RetrievalConfig` value, so the benchmark can compa
 configurations in one process and Phase 5 can rerun them from env vars alone.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -129,6 +130,49 @@ class RetrievedChunk:
     def score(self) -> float:
         """The score that ordered this chunk: the reranker's when it ran."""
         return self.rerank_score if self.rerank_score is not None else self.hit.score
+
+
+def _single_word(value: str) -> bool:
+    return bool(value) and value.split() == [value]
+
+
+@dataclass(frozen=True)
+class ProductName:
+    """How a question names one manual's product: `ENVY`, or `envy 6000`."""
+
+    doc_id: str
+    name: str
+    model_number: str | None
+
+    def __post_init__(self) -> None:
+        _require(_single_word(self.name), "a product name must be a single word")
+        _require(
+            self.model_number is None or _single_word(self.model_number),
+            "a model number must be a single word",
+        )
+
+
+def _mentions(question: str, product: ProductName) -> bool:
+    name = re.escape(product.name)
+    for match in re.finditer(rf"(?<![^\W_]){name}(?![^\W_])", question, re.IGNORECASE):
+        if not match.group().islower():
+            return True
+    if product.model_number is None:
+        return False
+    model = re.escape(product.model_number)
+    return re.search(rf"(?<![^\W_]){name}[\s-]*{model}(?!\d)", question, re.IGNORECASE) is not None
+
+
+def named_product(question: str, products: Sequence[ProductName]) -> str | None:
+    """The manual a question names explicitly, when it names exactly one.
+
+    A bare name counts only when it is not all lowercase ("ENVY", "Omen"), because
+    "envy" and "omen" are also English words; a name in any case followed by its
+    model number ("envy 6000", "omen 17") always counts. Category words such as
+    "printer" or "laptop" never count. Both products or none: no filter.
+    """
+    named = {product.doc_id for product in products if _mentions(question, product)}
+    return named.pop() if len(named) == 1 else None
 
 
 class FilterSource(StrEnum):

@@ -238,6 +238,8 @@ class CorpusDocument:
     product: str
     url: str
     sha256: str
+    product_name: str | None = None
+    model_number: str | None = None
 
     def __post_init__(self) -> None:
         _require(bool(_DOC_ID.fullmatch(self.doc_id)), "doc_id must be a lowercase slug")
@@ -245,6 +247,15 @@ class CorpusDocument:
         _require(_non_blank(self.product), "product must not be blank")
         _require(self.url.startswith("https://"), "url must use https")
         _require(bool(_SHA256.fullmatch(self.sha256)), "sha256 must be 64 lowercase hex digits")
+        # How questions name the product; the retrieval product filter reads them.
+        for label, value in (
+            ("product_name", self.product_name),
+            ("model_number", self.model_number),
+        ):
+            _require(
+                value is None or (bool(value) and value.split() == [value]),
+                f"{label} must be a single word",
+            )
 
 
 @dataclass(frozen=True)

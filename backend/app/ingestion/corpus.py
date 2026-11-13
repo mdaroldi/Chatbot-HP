@@ -8,6 +8,7 @@ from app.domain.ingestion import CorpusDocument, CorpusManifestError
 CORPUS_MANIFEST = Path(__file__).resolve().parents[2] / "corpus.toml"
 
 _KEYS = ("doc_id", "title", "product", "url", "sha256")
+_OPTIONAL_KEYS = ("product_name", "model_number")
 
 
 def _document(raw: object, position: int) -> CorpusDocument:
@@ -19,11 +20,14 @@ def _document(raw: object, position: int) -> CorpusDocument:
             raise CorpusManifestError(f"{where} missing key: {key}")
         if not isinstance(raw[key], str):
             raise CorpusManifestError(f"{where} {key} must be a string")
-    unknown = sorted(set(raw) - set(_KEYS))
+    unknown = sorted(set(raw) - {*_KEYS, *_OPTIONAL_KEYS})
     if unknown:
         raise CorpusManifestError(f"{where} unknown key: {', '.join(unknown)}")
+    for key in _OPTIONAL_KEYS:
+        if key in raw and not isinstance(raw[key], str):
+            raise CorpusManifestError(f"{where} {key} must be a string")
     try:
-        return CorpusDocument(**{key: raw[key] for key in _KEYS})
+        return CorpusDocument(**{key: raw[key] for key in (*_KEYS, *_OPTIONAL_KEYS) if key in raw})
     except ValueError as exc:
         raise CorpusManifestError(f"{where} {exc}") from exc
 

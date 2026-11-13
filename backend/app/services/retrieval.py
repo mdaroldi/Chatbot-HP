@@ -10,11 +10,12 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 
 from app.core.settings import Settings
-from app.domain.ingestion import SparseVector
+from app.domain.ingestion import CorpusDocument, SparseVector
 from app.domain.retrieval import (
     AppliedFilter,
     FilterSource,
     ModelsNotReadyError,
+    ProductName,
     QueryEmbedder,
     Relevance,
     Reranker,
@@ -26,6 +27,7 @@ from app.domain.retrieval import (
     SearchRequest,
     SearchStore,
     StageTimings,
+    named_product,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,8 +80,16 @@ class RetrievalService:
     the benchmark compares them in one process without reloading models.
     """
 
-    def __init__(self, embedder: QueryEmbedder, store: SearchStore, reranker: Reranker) -> None:
+    def __init__(
+        self,
+        embedder: QueryEmbedder,
+        store: SearchStore,
+        reranker: Reranker,
+        *,
+        products: Sequence[ProductName] = (),
+    ) -> None:
         self._embedder, self._store, self._reranker = embedder, store, reranker
+        self._products = tuple(products)
 
     @property
     def reranker_model(self) -> str:
@@ -91,7 +101,7 @@ class RetrievalService:
         start = time.perf_counter()
         dense, dense_ms = await self._dense(query, config)
         sparse, sparse_ms = await self._sparse(query, config)
-        applied = AppliedFilter(doc_id, FilterSource.REQUEST) if doc_id is not None else None
+        applied = self._filter(query, config, doc_id)
         request = SearchRequest(
             mode=config.mode,
             dense=dense,
@@ -115,6 +125,15 @@ class RetrievalService:
         )
         _log_done(query, result)
         return result
+
+    def _filter(
+        self, query: str, config: RetrievalConfig, doc_id: str | None
+    ) -> AppliedFilter | None:
+        """An explicit document wins; else the product rule, when it is enabled."""
+        if doc_id is not None:
+            return AppliedFilter(doc_id, FilterSource.REQUEST)
+        named = named_product(query, self._products) if config.product_filter else None
+        return AppliedFilter(named, FilterSource.PRODUCT_RULE) if named is not None else None
 
     async def _dense(
         self, query: str, config: RetrievalConfig
@@ -176,4 +195,13 @@ def config_from_settings(settings: Settings) -> RetrievalConfig:
         product_filter=settings.retrieval_product_filter_enabled,
         relevance_threshold=settings.retrieval_relevance_threshold,
         dense_query_prefix=settings.retrieval_dense_query_prefix,
+    )
+
+
+def product_names(documents: Sequence[CorpusDocument]) -> tuple[ProductName, ...]:
+    """The product filter's names, from the corpus manifest (one place per document)."""
+    return tuple(
+        ProductName(document.doc_id, document.product_name, document.model_number)
+        for document in documents
+        if document.product_name is not None
     )

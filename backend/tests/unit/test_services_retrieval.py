@@ -6,14 +6,16 @@ from typing import Any
 
 import pytest
 
+from app.domain.ingestion import CorpusDocument
 from app.domain.retrieval import (
     FilterSource,
     ModelsNotReadyError,
+    ProductName,
     RetrievalConfig,
     RetrievalUnavailableError,
     SearchMode,
 )
-from app.services.retrieval import RetrievalService, config_from_settings
+from app.services.retrieval import RetrievalService, config_from_settings, product_names
 from tests.unit.conftest import LogReader, SettingsFactory
 from tests.unit.retrieval_fakes import (
     DENSE_VECTOR,
@@ -25,6 +27,10 @@ from tests.unit.retrieval_fakes import (
 )
 
 CANARY = "CANARY-7f3e-QUERY"
+PRODUCTS = (
+    ProductName("envy-6000-user-guide", "ENVY", "6000"),
+    ProductName("omen-17-service-guide", "OMEN", "17"),
+)
 
 BASE = RetrievalConfig(
     mode=SearchMode.HYBRID,
@@ -55,7 +61,8 @@ def service(
     embedder = embedder or FakeQueryEmbedder()
     store = store or FakeSearchStore([make_hit(f"c{n}", 1.0 - n / 10) for n in range(hits)])
     reranker = reranker or FakeReranker()
-    return RetrievalService(embedder, store, reranker), embedder, store, reranker
+    retrieval = RetrievalService(embedder, store, reranker, products=PRODUCTS)
+    return retrieval, embedder, store, reranker
 
 
 # ------------------------------------------------------------------ modes
@@ -192,6 +199,57 @@ async def test_no_filter_without_a_document() -> None:
     retrieval, _, _, _ = service()
 
     assert (await retrieval.retrieve("q", config())).filter is None
+
+
+async def test_the_product_rule_filters_when_enabled_and_a_product_is_named() -> None:
+    retrieval, _, store, _ = service()
+
+    result = await retrieval.retrieve("OMEN fan noise", config(product_filter=True))
+
+    assert store.requests[0].doc_id == "omen-17-service-guide"
+    assert result.filter is not None
+    assert result.filter.source is FilterSource.PRODUCT_RULE
+
+
+async def test_the_product_rule_is_off_by_flag() -> None:
+    retrieval, _, store, _ = service()
+
+    result = await retrieval.retrieve("OMEN fan noise", config(product_filter=False))
+
+    assert store.requests[0].doc_id is None
+    assert result.filter is None
+
+
+async def test_the_product_rule_leaves_unnamed_questions_unfiltered() -> None:
+    retrieval, _, store, _ = service()
+
+    result = await retrieval.retrieve("fan noise", config(product_filter=True))
+
+    assert (store.requests[0].doc_id, result.filter) == (None, None)
+
+
+async def test_an_explicit_document_wins_over_the_product_rule() -> None:
+    retrieval, _, store, _ = service()
+
+    result = await retrieval.retrieve(
+        "OMEN fan noise", config(product_filter=True), doc_id="envy-6000-user-guide"
+    )
+
+    assert store.requests[0].doc_id == "envy-6000-user-guide"
+    assert result.filter is not None
+    assert result.filter.source is FilterSource.REQUEST
+
+
+def test_product_names_come_from_the_corpus_documents_that_have_one() -> None:
+    sha = "a" * 64
+    documents = (
+        CorpusDocument(
+            "demo-guide", "Demo", "Demo 100", "https://d.test/a.pdf", sha, "Demo", "100"
+        ),
+        CorpusDocument("plain-guide", "Plain", "Plain", "https://d.test/b.pdf", sha),
+    )
+
+    assert product_names(documents) == (ProductName("demo-guide", "Demo", "100"),)
 
 
 # ------------------------------------------------------------------ relevance
