@@ -14,6 +14,7 @@ from html import escape
 from itertools import pairwise
 
 from app.domain.chat import REFUSAL_MARKER, Message, Role
+from app.domain.citations import strip_citations
 from app.domain.ingestion import PageRange
 from app.domain.llm import PromptMessage
 from app.domain.retrieval import RetrievedChunk
@@ -102,16 +103,28 @@ def answer_turn(
     return PromptMessage(Role.USER, f"<excerpts>\n{body}</excerpts>\n\n{_question(question)}")
 
 
+def _past_answer(answer: Message) -> str:
+    """An earlier answer as the model should remember it: a refusal is the marker it
+    is told to reply (the fixed user-facing message would teach it another way to
+    refuse), and tags are stripped because they point at excerpts it no longer sees.
+    """
+    return REFUSAL_MARKER if answer.refusal else strip_citations(answer.content).strip()
+
+
 def _finished_turns(messages: Sequence[Message]) -> Iterator[tuple[PromptMessage, PromptMessage]]:
     """Each question with the answer right after it, oldest first; a question whose
-    answer failed, was cancelled or is missing is left out with it.
+    answer failed, was cancelled, is missing or is empty once rendered is left out
+    with it.
     """
     ordered = sorted(messages, key=lambda message: message.seq)
     for question, answer in pairwise(ordered):
-        if question.role is Role.USER and answer.role is Role.ASSISTANT and answer.counts_as_turn:
+        if question.role is not Role.USER or answer.role is not Role.ASSISTANT:
+            continue
+        rendered = _past_answer(answer) if answer.counts_as_turn else ""
+        if rendered:
             yield (
                 PromptMessage(Role.USER, _question(question.content)),
-                PromptMessage(Role.ASSISTANT, answer.content),
+                PromptMessage(Role.ASSISTANT, rendered),
             )
 
 

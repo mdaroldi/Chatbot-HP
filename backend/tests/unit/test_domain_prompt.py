@@ -171,9 +171,9 @@ def test_without_excerpts_the_turn_still_has_an_empty_excerpts_element() -> None
     assert turn.text == "<excerpts>\n</excerpts>\n\n<question>How?</question>"
 
 
-def test_an_excerpt_from_an_unknown_document_is_rejected() -> None:
-    with pytest.raises(ValueError, match="no title for document stray-doc"):
-        answer_turn("How?", [chunk(1, doc_id="stray-doc")], TITLES)
+def test_an_excerpt_from_an_unknown_document_is_rejected_naming_only_the_document() -> None:
+    with pytest.raises(ValueError, match=r"^no title for document stray-doc$"):
+        answer_turn("How?", [chunk(1, "Secret chunk text.", doc_id="stray-doc")], TITLES)
 
 
 # --- Injection: untrusted text stays inside its delimiters ----------------------------
@@ -289,12 +289,48 @@ def test_finished_turns_become_alternating_history_before_the_current_turn() -> 
 
     assert messages == (
         PromptMessage(Role.USER, "<question>first?</question>"),
-        PromptMessage(Role.ASSISTANT, "First answer [S1]."),
+        PromptMessage(Role.ASSISTANT, "First answer."),
         PromptMessage(Role.USER, "<question>second?</question>"),
-        PromptMessage(Role.ASSISTANT, "Fixed refusal."),
+        PromptMessage(Role.ASSISTANT, REFUSAL_MARKER),
         answer_turn("third?", [chunk(1)], TITLES),
     )
     request(messages)
+
+
+def test_history_answers_lose_their_citation_tags_while_the_stored_text_keeps_them() -> None:
+    answer = assistant(2, "Lift it [S1]. Pull it [S2][S3]. Turn it [S1, S4].")
+
+    [_, rendered] = select_history([user(1), answer], WIDE)
+
+    assert rendered.text == "Lift it. Pull it. Turn it."
+    assert answer.content == "Lift it [S1]. Pull it [S2][S3]. Turn it [S1, S4]."
+
+
+@pytest.mark.parametrize("content", ["[S1]", " [S1][S2] ", ""])
+def test_an_answer_with_nothing_left_once_tags_are_stripped_is_left_out(content: str) -> None:
+    history = [user(1, "empty?"), assistant(2, content), user(3, "q?"), assistant(4, "a.")]
+
+    assert [m.text for m in select_history(history, WIDE)] == ["<question>q?</question>", "a."]
+
+
+@pytest.mark.parametrize("reason", list(RefusalReason))
+def test_a_refused_turn_is_rendered_as_the_marker_the_model_is_told_to_reply(
+    reason: RefusalReason,
+) -> None:
+    refusal = assistant(2, "The manuals do not cover this.", Outcome.REFUSED, reason)
+
+    [question, rendered] = select_history([user(1, "Off topic?"), refusal], WIDE)
+
+    assert question.text == "<question>Off topic?</question>"
+    assert rendered == PromptMessage(Role.ASSISTANT, REFUSAL_MARKER)
+
+
+def test_the_budget_counts_answers_as_rendered_without_tags() -> None:
+    # 30 characters once its 21 tag characters are gone: 10 tokens, 20 with its question.
+    tagged = "0" * 30 + " [S1][S2][S3][S4][S5]"
+    history = [user(1, "question0"), assistant(2, tagged)]
+
+    assert len(select_history(history, HistoryBudget(max_turns=10, max_tokens=20))) == 2
 
 
 @pytest.mark.parametrize("outcome", [Outcome.FAILED, Outcome.CANCELLED, Outcome.PENDING])
