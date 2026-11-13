@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.errors import error_body
 from app.core.request_context import get_request_id
+from app.domain.chat_store import ConversationBusyError, ConversationNotFoundError
 from app.domain.retrieval import ModelsNotReadyError, RetrievalUnavailableError
 
 _MAPPED: dict[type[Exception], tuple[int, str, str]] = {
@@ -23,6 +24,17 @@ _MAPPED: dict[type[Exception], tuple[int, str, str]] = {
         HTTPStatus.SERVICE_UNAVAILABLE,
         "models_not_ready",
         "The query models are not ready.",
+    ),
+    # Another client's conversation is "not found" too: 404, never 403.
+    ConversationNotFoundError: (
+        HTTPStatus.NOT_FOUND,
+        ConversationNotFoundError.code,
+        ConversationNotFoundError.message,
+    ),
+    ConversationBusyError: (
+        HTTPStatus.CONFLICT,
+        ConversationBusyError.code,
+        ConversationBusyError.message,
     ),
 }
 

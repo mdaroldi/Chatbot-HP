@@ -11,6 +11,7 @@ from qdrant_client import AsyncQdrantClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.settings import Settings
+from app.infra.chat_store import SqlChatStore
 from app.infra.inference import CpuAllowance, CpuSource
 from app.infra.lifecycle import open_infrastructure
 from app.infra.probes import PostgresProbe, QdrantProbe
@@ -242,3 +243,13 @@ async def test_app_lifespan_registers_real_probes_and_closes_them_on_shutdown(
         assert not is_closed(infra.http_client)
 
     assert is_closed(infra.http_client)
+
+
+async def test_app_lifespan_provides_the_sql_chat_store(make_settings: SettingsFactory) -> None:
+    """Built over the infrastructure's session factory; creating it opens no connection."""
+    application = create_app(make_settings(), query_models_factory=Factories().models_factory)
+
+    async with application.router.lifespan_context(application):
+        store = application.state.chat_store
+        assert isinstance(store, SqlChatStore)
+        assert store.sessions is application.state.infrastructure.session_factory

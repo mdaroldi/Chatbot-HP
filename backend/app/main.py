@@ -3,10 +3,12 @@
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.conversations import router as conversations_router
 from app.api.errors import register_domain_error_handlers
 from app.api.health import router as health_router
 from app.api.search import build_search_router
@@ -15,6 +17,7 @@ from app.core.logging import configure_logging
 from app.core.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.core.settings import Settings, get_settings
 from app.domain.retrieval import ProductName
+from app.infra.chat_store import SqlChatStore
 from app.infra.lifecycle import Infrastructure, open_infrastructure
 from app.infra.qdrant_search import QdrantSearchStore
 from app.infra.query_models import QueryModels
@@ -25,6 +28,9 @@ ModelsFactory = Callable[[Settings, Executor], QueryModels]
 
 _CORS_METHODS = ["GET", "POST", "DELETE"]
 _CORS_HEADERS = ["Content-Type", "X-Request-ID", "X-Client-ID"]
+# A pending answer older than this is left over from a crash. It must outlast any live
+# request: the LLM total timeout (120 s) plus rewrite, retrieval and a margin.
+PENDING_ANSWER_ABANDON_AFTER = timedelta(minutes=5)
 
 
 @asynccontextmanager
@@ -37,6 +43,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.readiness_probes = infrastructure.probes
         app.state.retrieval_service_factory = _retrieval_service_factory(
             infrastructure, app.state.settings, app.state.products
+        )
+        app.state.chat_store = SqlChatStore(
+            infrastructure.session_factory, abandon_after=PENDING_ANSWER_ABANDON_AFTER
         )
         yield
 
@@ -96,6 +105,7 @@ def create_app(
     register_exception_handlers(app)
     register_domain_error_handlers(app)
     app.include_router(health_router)
+    app.include_router(conversations_router)
     if settings.search_endpoint_enabled:
         app.include_router(build_search_router(settings, [doc.doc_id for doc in corpus]))
 

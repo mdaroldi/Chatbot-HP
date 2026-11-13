@@ -1,11 +1,14 @@
 """FastAPI dependencies: how routes obtain settings and infrastructure adapters."""
 
 from collections.abc import Awaitable, Callable, Sequence
+from http import HTTPStatus
 
 from fastapi import Request
 
+from app.core.errors import AppError
 from app.core.middleware import trusted_identifier
 from app.core.settings import Settings
+from app.domain.chat_store import ChatStore
 from app.domain.health import DependencyProbe
 from app.services.retrieval import RetrievalService
 
@@ -40,3 +43,29 @@ async def get_retrieval_service(request: Request) -> RetrievalService:
     """
     factory: RetrievalServiceFactory = request.app.state.retrieval_service_factory
     return await factory()
+
+
+class ClientIdRequiredError(AppError):
+    status_code = HTTPStatus.BAD_REQUEST
+    code = "client_id_required"
+
+    def __init__(self) -> None:
+        super().__init__("A valid X-Client-ID header is required.")
+
+
+def require_client_id(request: Request) -> str:
+    """The client ID the chat endpoints scope every read and write by.
+
+    Unlike get_client_id, absence is an error here: without it there is no owner. The
+    rejected value is never echoed or logged.
+    """
+    client_id = get_client_id(request)
+    if client_id is None:
+        raise ClientIdRequiredError
+    return client_id
+
+
+def get_chat_store(request: Request) -> ChatStore:
+    """The conversation store the lifespan built; tests override this with a fake."""
+    store: ChatStore = request.app.state.chat_store
+    return store

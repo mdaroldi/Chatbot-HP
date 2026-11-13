@@ -216,6 +216,10 @@ class SqlChatStore:
         self._abandon_after = abandon_after
         self._clock = clock
 
+    @property
+    def sessions(self) -> async_sessionmaker[AsyncSession]:
+        return self._sessions
+
     async def create_conversation(self, client_id: str) -> Conversation:
         now = self._clock()
         conversation = Conversation(_new_id(), None, now, now)
