@@ -5,6 +5,12 @@ Request building is pure (`build_query`), so the shape of every query is unit-te
 - dense or sparse: one query on that named vector;
 - hybrid: a dense and a sparse prefetch, fused with reciprocal rank fusion and its `k`.
 
+Every query asks for the union of both prefetch limits, which in hybrid mode is every
+fused point, and the store cuts to the request's limit itself: by score descending, then
+chunk id ascending. Qdrant breaks score ties at its own limit differently between runs
+(RRF ties are common), so a server-side cut made identical runs give different candidate
+lists (ADR 0009).
+
 A document filter goes into every prefetch and at the top level. A filter applied
 only after fusion would leave the fused list short, or empty, when the nearest chunks
 belong to the other manual; the integration tests check both placements on the server
@@ -95,16 +101,22 @@ def build_query(request: SearchRequest) -> QueryPlan:
         else None
     )
     payload = list(PAYLOAD_FIELDS)
+    fetch = request.prefetch_dense + request.prefetch_sparse
     if request.mode is SearchMode.DENSE and dense is not None:
-        return QueryPlan(dense, DENSE, None, found, request.limit, payload)
+        return QueryPlan(dense, DENSE, None, found, fetch, payload)
     if request.mode is SearchMode.SPARSE and sparse is not None:
-        return QueryPlan(sparse, SPARSE, None, found, request.limit, payload)
+        return QueryPlan(sparse, SPARSE, None, found, fetch, payload)
     prefetch = [
         models.Prefetch(query=dense, using=DENSE, limit=request.prefetch_dense, filter=found),
         models.Prefetch(query=sparse, using=SPARSE, limit=request.prefetch_sparse, filter=found),
     ]
     fusion = models.RrfQuery(rrf=models.Rrf(k=request.rrf_k))
-    return QueryPlan(fusion, None, prefetch, found, request.limit, payload)
+    return QueryPlan(fusion, None, prefetch, found, fetch, payload)
+
+
+def cut(hits: list[SearchHit], limit: int) -> list[SearchHit]:
+    """The same hits for the same scores, whatever order the server returned ties in."""
+    return sorted(hits, key=lambda hit: (-hit.score, hit.chunk_id))[:limit]
 
 
 def to_hit(point: models.ScoredPoint) -> SearchHit:
@@ -151,7 +163,7 @@ class QdrantSearchStore:
                     with_payload=plan.with_payload,
                     with_vectors=plan.with_vectors,
                 )
-            return [to_hit(point) for point in response.points]
+            return cut([to_hit(point) for point in response.points], request.limit)
         except Exception as exc:
             raise RetrievalUnavailableError("search", type(exc).__name__) from exc
 
