@@ -22,11 +22,11 @@ from app.domain.llm import (
     StopReason,
     Usage,
 )
+from app.domain.rewrite import REWRITE_MAX_CHARS
 
 Sleep = Callable[[float], Awaitable[None]]
 
 SERVED_MODEL = "stub"
-REWRITE_MAX_CHARS = 300
 _CHARS_PER_TOKEN = 4
 
 _PIECE = re.compile(r"\S+\s*")
