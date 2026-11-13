@@ -6,13 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.ingestion import (
+    Bm25Params,
     BuildStatus,
     BuildWarning,
     BuildWarningKind,
     IndexBuild,
     ModelFiles,
 )
-from app.infra.orm import IndexBuildRow, ModelFilesJson
+from app.infra.orm import Bm25ParamsJson, IndexBuildRow, ModelFilesJson
 
 
 def _model_json(files: ModelFiles) -> ModelFilesJson:
@@ -26,6 +27,23 @@ def _model_json(files: ModelFiles) -> ModelFilesJson:
 
 def _model_files(data: ModelFilesJson) -> ModelFiles:
     return ModelFiles(data["name"], data["source"], data["revision"], data["files"])
+
+
+def _bm25_json(params: Bm25Params | None) -> Bm25ParamsJson | None:
+    if params is None:
+        return None
+    return {
+        "k": params.k,
+        "b": params.b,
+        "avg_len": params.avg_len,
+        "avg_len_auto": params.avg_len_auto,
+    }
+
+
+def _bm25(data: Bm25ParamsJson | None) -> Bm25Params | None:
+    if data is None:
+        return None
+    return Bm25Params(data["avg_len"], data["avg_len_auto"], data["k"], data["b"])
 
 
 def _to_row(build: IndexBuild) -> IndexBuildRow:
@@ -47,6 +65,7 @@ def _to_row(build: IndexBuild) -> IndexBuildRow:
             for w in build.warnings
         ],
         error_type=build.error_type,
+        sparse_params=_bm25_json(build.sparse_params),
     )
 
 
@@ -69,6 +88,7 @@ def _to_build(row: IndexBuildRow) -> IndexBuild:
             for w in row.warnings
         ),
         error_type=row.error_type,
+        sparse_params=_bm25(row.sparse_params),
     )
 
 

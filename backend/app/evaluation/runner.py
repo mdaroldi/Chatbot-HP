@@ -91,7 +91,8 @@ class Preflight:
 @dataclass(frozen=True)
 class IndexInfo:
     """The index a run read: the alias it went through (None for an explicit
-    collection) and the manifest build behind the collection.
+    collection) and the manifest build behind the collection, with the BM25 avg_len its
+    sparse vectors were made with (the avg_len ablation reads another build).
     """
 
     alias: str | None
@@ -99,6 +100,8 @@ class IndexInfo:
     build_id: str
     chunk_count: int
     chunking_version: str
+    bm25_avg_len: float
+    bm25_avg_len_auto: bool
 
 
 class Retriever(Protocol):

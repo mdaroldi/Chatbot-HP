@@ -33,6 +33,8 @@ INDEX = IndexInfo(
     build_id="20261113t100000z",
     chunk_count=1,
     chunking_version="v1",
+    bm25_avg_len=256.0,
+    bm25_avg_len_auto=False,
 )
 
 REVISIONS = {

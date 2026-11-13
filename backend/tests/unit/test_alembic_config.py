@@ -77,6 +77,7 @@ EXPECTED_MIGRATIONS = (
     ("0001", "baseline", None),
     ("0002", "index_builds", "0001"),
     ("0003", "index_builds_error_type", "0002"),
+    ("0004", "index_builds_sparse_params", "0003"),
 )
 
 

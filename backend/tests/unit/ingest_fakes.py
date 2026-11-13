@@ -109,6 +109,21 @@ class FakeEmbedder:
         return [SparseVector(indices=(n,), values=(1.0,)) for n in range(len(texts))]
 
 
+class FakeLengths:
+    """Lengths 1, 4, 9, ... by position, so a mean differs from a median, first or last."""
+
+    def __init__(self, calls: Calls, error: Exception | None = None) -> None:
+        self.calls, self.error = calls, error
+        self.texts: list[str] = []
+
+    def lengths(self, texts: Sequence[str]) -> list[int]:
+        self.calls.log.append(("measure", "bm25"))
+        if self.error is not None:
+            raise self.error
+        self.texts = list(texts)
+        return [(n + 1) ** 2 for n in range(len(texts))]
+
+
 class InMemoryManifest:
     def __init__(self, calls: Calls) -> None:
         self.calls = calls

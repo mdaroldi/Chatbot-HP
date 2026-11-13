@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.core.logging import configure_logging
 from app.core.settings import Settings, get_settings
 from app.domain.evaluation import GoldenQuestion, GoldenSet, GoldenSetError, IndexedChunk, Split
-from app.domain.ingestion import IndexBuild, ManifestStore, ModelFiles
+from app.domain.ingestion import FASTEMBED_BM25, IndexBuild, ManifestStore, ModelFiles
 from app.evaluation.golden import load_golden
 from app.evaluation.matrix import MatrixError, NamedConfig, load_matrix
 from app.evaluation.report import RunHeader, RunOutcome, write_run
@@ -116,12 +116,15 @@ async def _resolve(
     build = await manifest.succeeded_build(target)
     if build is None:
         raise EvaluationError(Failure.NO_SUCCEEDED_BUILD)
+    bm25 = FASTEMBED_BM25 if build.sparse_params is None else build.sparse_params  # before 0004
     info = IndexInfo(
         alias=alias if collection is None else None,
         collection=target,
         build_id=build.build_id,
         chunk_count=build.chunk_count,
         chunking_version=build.chunking_version,
+        bm25_avg_len=bm25.avg_len,
+        bm25_avg_len_auto=bm25.avg_len_auto,
     )
     return info, build
 

@@ -312,6 +312,26 @@ def test_embedding_defaults_are_the_approved_local_models() -> None:
     assert settings.embedding_sparse_model == "Qdrant/bm25"
     assert settings.embedding_cache_dir == pathlib.Path("models")
     assert settings.embedding_batch_size == 32
+    assert settings.embedding_bm25_avg_len == 256.0  # fastembed's own: the index stays as built
+
+
+@pytest.mark.parametrize(("value", "expected"), [("auto", "auto"), ("107.5", 107.5), ("64", 64.0)])
+def test_the_bm25_avg_len_is_a_number_or_auto(
+    monkeypatch: pytest.MonkeyPatch, value: str, expected: float | str
+) -> None:
+    monkeypatch.setenv("EMBEDDING_BM25_AVG_LEN", value)
+
+    assert Settings().embedding_bm25_avg_len == expected
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "nan", "inf", "10001", "AUTO", "mean", ""])
+def test_the_bm25_avg_len_rejects_anything_else(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("EMBEDDING_BM25_AVG_LEN", value)
+
+    with pytest.raises(ValidationError, match="embedding_bm25_avg_len"):
+        Settings()
 
 
 def test_embedding_settings_are_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:

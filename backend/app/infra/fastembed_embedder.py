@@ -11,7 +11,7 @@ from fastembed.common.types import NumpyArray
 from fastembed.sparse.sparse_embedding_base import SparseEmbedding
 
 from app.core.settings import Settings
-from app.domain.ingestion import SparseVector, VerifiedModel
+from app.domain.ingestion import FASTEMBED_BM25, Bm25Params, SparseVector, VerifiedModel
 from app.infra.inference import run_inference
 
 
@@ -50,6 +50,9 @@ class SparseModelClass(Protocol):
         specific_model_path: str,
         local_files_only: bool,
         threads: int | None,
+        k: float,
+        b: float,
+        avg_len: float,
     ) -> SparseModel: ...
 
 
@@ -62,10 +65,11 @@ class FastembedEmbedder:
     `for_queries`, on the inference pool with explicit ONNX threads (ADR 0008).
     Inference is CPU-bound and never runs on the event loop. onnxruntime's telemetry is
     switched off before the first session; ORT_DISABLE_TELEMETRY in compose also keeps
-    it from starting.
+    it from starting. The BM25 parameters are always passed, never left to fastembed's
+    defaults; the query side keeps those defaults, which cannot change a unit-weight query.
     """
 
-    def __init__(  # noqa: PLR0913 - two models, two settings, injectable classes and switch
+    def __init__(  # noqa: PLR0913 - two models, two settings, BM25, injectable classes, switch
         self,
         dense: VerifiedModel,
         sparse: VerifiedModel,
@@ -74,6 +78,7 @@ class FastembedEmbedder:
         *,
         threads: int | None = None,
         executor: Executor | None = None,
+        bm25: Bm25Params = FASTEMBED_BM25,
         dense_class: DenseModelClass = TextEmbedding,
         sparse_class: SparseModelClass = SparseTextEmbedding,
         disable_telemetry: Callable[[], None] = onnxruntime.disable_telemetry_events,
@@ -96,24 +101,30 @@ class FastembedEmbedder:
             specific_model_path=str(sparse.path),
             local_files_only=True,
             threads=threads,
+            k=bm25.k,
+            b=bm25.b,
+            avg_len=bm25.avg_len,
         )
         self._executor = executor
 
     @classmethod
-    def from_settings(
+    def from_settings(  # noqa: PLR0913 - settings, two models, BM25, two injectable classes
         cls,
         settings: Settings,
         dense: VerifiedModel,
         sparse: VerifiedModel,
         *,
+        bm25: Bm25Params,
         dense_class: DenseModelClass = TextEmbedding,
         sparse_class: SparseModelClass = SparseTextEmbedding,
     ) -> Self:
+        """Ingestion's embedder: `bm25` is the build's own, fixed or measured (ADR 0009)."""
         return cls(
             dense,
             sparse,
             settings.embedding_cache_dir,
             settings.embedding_batch_size,
+            bm25=bm25,
             dense_class=dense_class,
             sparse_class=sparse_class,
         )

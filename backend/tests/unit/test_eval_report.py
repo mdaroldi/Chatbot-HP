@@ -56,6 +56,8 @@ HEADER = RunHeader(
         build_id="20261113t100000z",
         chunk_count=287,
         chunking_version="v1",
+        bm25_avg_len=107.25,
+        bm25_avg_len_auto=True,
     ),
     models={"demo/dense": "rev-dense", RERANKER: "rev-rerank"},
     hardware={"cpus": 8.0, "cpu_source": "cpu_count", "inference_workers": 2},
@@ -144,6 +146,8 @@ async def test_the_summary_records_golden_index_git_and_every_resolved_config() 
         "build_id": "20261113t100000z",
         "chunk_count": 287,
         "chunking_version": "v1",
+        "bm25_avg_len": 107.25,
+        "bm25_avg_len_auto": True,
     }
     assert record["git_sha"] == HEADER.git_sha
     assert record["created_at"] == "2026-11-13T15:30:05+00:00"
@@ -185,6 +189,7 @@ async def test_the_markdown_summary_shows_the_header_and_each_config() -> None:
         "| factual |",
         "Selected: `hybrid-rerank`",
         "rev-rerank",
+        "BM25 avg_len 107.25 (auto)",
     ):
         assert expected in text, expected
     assert "CANARY" not in text

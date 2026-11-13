@@ -14,7 +14,7 @@ from fastembed.sparse.sparse_embedding_base import SparseEmbedding
 from pydantic import SecretStr
 
 from app.core.settings import Settings
-from app.domain.ingestion import SparseVector, VerifiedModel
+from app.domain.ingestion import Bm25Params, SparseVector, VerifiedModel
 from app.infra.fastembed_embedder import FastembedEmbedder
 from app.infra.fastembed_tokens import FastembedTokenCounter
 from app.infra.inference import create_inference_executor
@@ -75,6 +75,29 @@ class FakeDense(FakeModel):
 class FakeSparse(FakeModel):
     built: ClassVar[list[FakeModel]] = []
 
+    def __init__(
+        self,
+        model_name: str,
+        *,
+        cache_dir: str,
+        lazy_load: bool,
+        specific_model_path: str,
+        local_files_only: bool,
+        threads: int | str | None = "not passed",
+        k: float | None = None,
+        b: float | None = None,
+        avg_len: float | None = None,
+    ) -> None:
+        super().__init__(
+            model_name,
+            cache_dir=cache_dir,
+            lazy_load=lazy_load,
+            specific_model_path=specific_model_path,
+            local_files_only=local_files_only,
+            threads=threads,
+        )
+        self.bm25 = (k, b, avg_len)  # None for a keyword fastembed did not receive
+
     def embed(self, documents: Iterable[str], batch_size: int) -> Iterator[SparseEmbedding]:
         self._record(batch_size)
         for text in documents:
@@ -102,8 +125,10 @@ def embedder(
     *,
     threads: int | None = None,
     executor: Executor | None = None,
+    bm25: Bm25Params | None = None,
 ) -> FastembedEmbedder:
     FakeDense.built, FakeSparse.built = [], []
+    extra = {} if bm25 is None else {"bm25": bm25}
     return FastembedEmbedder(
         DENSE,
         SPARSE,
@@ -111,6 +136,7 @@ def embedder(
         batch_size,
         threads=threads,
         executor=executor,
+        **extra,  # type: ignore[arg-type]  # only bm25
         dense_class=FakeDense,
         sparse_class=FakeSparse,
     )
@@ -182,7 +208,12 @@ async def test_embedding_runs_off_the_event_loop_thread() -> None:
 async def test_embedder_from_settings_uses_the_embedding_settings() -> None:
     FakeDense.built, FakeSparse.built = [], []
     subject = FastembedEmbedder.from_settings(
-        settings(), DENSE, SPARSE, dense_class=FakeDense, sparse_class=FakeSparse
+        settings(),
+        DENSE,
+        SPARSE,
+        bm25=Bm25Params(avg_len=99.5, k=1.1, b=0.6),
+        dense_class=FakeDense,
+        sparse_class=FakeSparse,
     )
     await subject.embed_dense(["a"])
 
@@ -190,6 +221,22 @@ async def test_embedder_from_settings_uses_the_embedding_settings() -> None:
     assert (dense.path, dense.cache_dir) == ("/cache/dense-snapshot", "/var/cache/models")
     assert (sparse.path, sparse.cache_dir) == ("/cache/sparse-snapshot", "/var/cache/models")
     assert dense.batch_sizes == [16]
+    assert sparse.bm25 == (1.1, 0.6, 99.5)  # type: ignore[attr-defined]  # FakeSparse
+
+
+def test_the_build_bm25_params_reach_the_sparse_model_only() -> None:
+    embedder(bm25=Bm25Params(avg_len=107.25, avg_len_auto=True, k=1.3, b=0.7))
+
+    [sparse] = FakeSparse.built
+    assert sparse.bm25 == (1.3, 0.7, 107.25)  # type: ignore[attr-defined]  # FakeSparse
+    assert not hasattr(FakeDense.built[0], "bm25")
+
+
+def test_without_build_params_the_sparse_model_gets_fastembeds_defaults_explicitly() -> None:
+    """The query side: BM25 queries carry unit weights, so avg_len cannot change them."""
+    embedder()
+
+    assert FakeSparse.built[0].bm25 == (1.2, 0.75, 256.0)  # type: ignore[attr-defined]
 
 
 # ------------------------------------------------------------------ query side (Phase 2)
@@ -266,6 +313,7 @@ def test_the_query_embedder_from_settings_uses_the_inference_threads() -> None:
         executor.shutdown()
 
     [dense], [sparse] = FakeDense.built, FakeSparse.built
+    assert sparse.bm25 == (1.2, 0.75, 256.0)  # type: ignore[attr-defined]  # FakeSparse
     assert (dense.onnx_threads, sparse.onnx_threads) == (3, 3)
     assert {dense.cache_dir, sparse.cache_dir} == {"/opt/models"}
     assert (dense.local_only, sparse.local_only) == (True, True)

@@ -87,6 +87,7 @@ services:
       # The read-only model store baked into the image (ADR 0008).
       EMBEDDING_CACHE_DIR: /opt/hpdocs/models
       EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
+      EMBEDDING_BM25_AVG_LEN: ${EMBEDDING_BM25_AVG_LEN:-256}
       CHUNK_MAX_TOKENS: ${CHUNK_MAX_TOKENS:-450}
       CHUNK_MIN_TOKENS: ${CHUNK_MIN_TOKENS:-65}
       # huggingface-hub and hf-xet write their own cache and logs under HF_HOME

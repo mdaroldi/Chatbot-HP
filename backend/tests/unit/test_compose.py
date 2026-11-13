@@ -508,8 +508,9 @@ def test_backend_gets_the_model_settings_from_env_and_reads_the_baked_store(
     assert {k: environment[k] for k in TELEMETRY_ENV} == TELEMETRY_ENV
 
 
-# Settings the API never reads: ingestion's corpus, chunking and index-retention knobs.
-BACKEND_UNUSED_PREFIXES = ("corpus_", "chunk_", "index_")
+# Settings the API never reads: ingestion's corpus, chunking and index-retention knobs,
+# and the BM25 document parameters (BM25 queries carry unit weights; ADR 0009).
+BACKEND_UNUSED_PREFIXES = ("corpus_", "chunk_", "index_", "embedding_bm25_")
 BACKEND_FIXED = {
     "POSTGRES_HOST": "postgres",
     "POSTGRES_PORT": "5432",
@@ -532,11 +533,12 @@ def test_backend_gets_every_setting_it_reads(services: dict[str, Service]) -> No
     assert {"RETRIEVAL_MODE", "SEARCH_ENDPOINT_ENABLED", "QUERY_MAX_CHARS"} <= from_env
 
 
-def test_backend_compose_defaults_equal_the_settings_defaults(
-    services: dict[str, Service],
+@pytest.mark.parametrize("service", ["backend", "ingest"])
+def test_compose_defaults_equal_the_settings_defaults(
+    services: dict[str, Service], service: str
 ) -> None:
     """A default that differs from the code would change behavior only under compose."""
-    environment: dict[str, str] = services["backend"]["environment"]
+    environment: dict[str, str] = services[service]["environment"]
     defaults = {}
     for key, value in environment.items():
         match = re.fullmatch(r"\$\{(\w+):-(.*)\}", str(value))
@@ -549,5 +551,5 @@ def test_backend_compose_defaults_equal_the_settings_defaults(
         name for name in defaults if getattr(from_compose, name) != getattr(reference, name)
     ]
 
-    assert "retrieval_mode" in defaults
+    assert ("retrieval_mode" if service == "backend" else "embedding_bm25_avg_len") in defaults
     assert differing == []

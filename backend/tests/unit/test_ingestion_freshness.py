@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import pytest
 
-from app.domain.ingestion import IndexBuild, ModelFiles
+from app.domain.ingestion import Bm25Params, IndexBuild, ModelFiles
 from app.ingestion.freshness import Expected, StaleReason, stale_reason
 from tests.manifest_data import make_build
 
@@ -22,6 +22,7 @@ def expected_for(build: IndexBuild, **overrides: object) -> Expected:
         "sparse_model": build.sparse_model,
         "dense_pin": build.dense,
         "sparse_pin": build.sparse,
+        "bm25_avg_len": 256.0,
     }
     return Expected(**(values | overrides))  # type: ignore[arg-type]  # test data
 
@@ -86,5 +87,61 @@ def test_the_reasons_are_the_documented_ones() -> None:
         "sparse_model",
         "dense_pin",
         "sparse_pin",
+        "sparse_params",
         "point_count",
     }
+
+
+# ------------------------------------------------------------------ BM25 parameters
+
+FIXED_256 = Bm25Params(avg_len=256.0)
+AUTO_107 = Bm25Params(avg_len=107.3, avg_len_auto=True)
+
+
+@pytest.mark.parametrize(
+    ("recorded", "setting"),
+    [
+        (None, 256.0),  # a row from before migration 0004 used fastembed's defaults
+        (FIXED_256, 256.0),
+        (Bm25Params(avg_len=120.5), 120.5),
+        (AUTO_107, "auto"),  # measured on chunks the other checks prove unchanged
+        (AUTO_107, 107.3),  # a fixed value equal to the measured one gives the same vectors
+    ],
+)
+def test_bm25_params_that_give_the_same_vectors_keep_the_build_current(
+    recorded: Bm25Params | None, setting: float | str
+) -> None:
+    live = replace(LIVE, sparse_params=recorded)
+
+    assert stale_reason(live, expected_for(live, bm25_avg_len=setting), LIVE.chunk_count) is None
+
+
+@pytest.mark.parametrize(
+    ("recorded", "setting"),
+    [
+        (None, 107.0),
+        (None, "auto"),
+        (FIXED_256, 255.9),
+        (FIXED_256, "auto"),
+        (Bm25Params(avg_len=107.3), "auto"),  # fixed by hand: not known to be the mean
+        (AUTO_107, 256.0),
+        (Bm25Params(avg_len=256.0, k=1.5), 256.0),
+        (Bm25Params(avg_len=256.0, b=0.5), 256.0),
+        (Bm25Params(avg_len=107.3, avg_len_auto=True, k=0.9), "auto"),
+    ],
+)
+def test_other_bm25_params_make_the_build_stale(
+    recorded: Bm25Params | None, setting: float | str
+) -> None:
+    live = replace(LIVE, sparse_params=recorded)
+
+    found = stale_reason(live, expected_for(live, bm25_avg_len=setting), LIVE.chunk_count)
+
+    assert found is StaleReason.SPARSE_PARAMS
+
+
+def test_the_pins_are_checked_before_the_bm25_params() -> None:
+    live = replace(LIVE, sparse_params=FIXED_256)
+    expected = expected_for(live, bm25_avg_len=100.0, sparse_pin=None)
+
+    assert stale_reason(live, expected, LIVE.chunk_count) is StaleReason.SPARSE_PIN

@@ -87,3 +87,10 @@ test derives the list from `Settings` and checks that the two match.
 - `ingest` no longer downloads models, and the `model-cache` volume is gone: the models
   are baked into the backend image and read offline. `ingest` keeps the edge network
   for the PDFs only, and `corpus-cache` is its only volume.
+
+### BM25 parameters (Phase 2, commit 10b; ADR 0009)
+
+- The `--if-needed` rule also compares the BM25 parameters recorded with the live
+  build (`sparse_params`) with `EMBEDDING_BM25_AVG_LEN`, after the pins and before the
+  point count. A change rebuilds with the reason `sparse_params`. A row without them
+  (before migration 0004) counts as fastembed's defaults, so upgrading does not rebuild.

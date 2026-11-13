@@ -4,6 +4,7 @@ import pytest
 from pydantic import SecretStr
 
 from app.core.settings import Settings
+from app.domain.ingestion import FASTEMBED_BM25
 from app.infra.fastembed_embedder import FastembedEmbedder
 from app.infra.fastembed_tokens import FastembedTokenCounter
 from tests.model_data import fetch_verified
@@ -27,4 +28,5 @@ def embedder(model_settings: Settings) -> FastembedEmbedder:
         model_settings,
         fetch_verified(model_settings, model_settings.embedding_dense_model),
         fetch_verified(model_settings, model_settings.embedding_sparse_model),
+        bm25=FASTEMBED_BM25,  # the default setting's params (256, fastembed's own)
     )

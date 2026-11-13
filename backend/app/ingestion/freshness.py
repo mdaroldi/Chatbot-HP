@@ -11,7 +11,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
-from app.domain.ingestion import IndexBuild, ModelFiles
+from app.domain.ingestion import (
+    BM25_B,
+    BM25_K,
+    FASTEMBED_BM25,
+    AvgLenSetting,
+    Bm25Params,
+    IndexBuild,
+    ModelFiles,
+)
 
 
 class StaleReason(StrEnum):
@@ -25,6 +33,7 @@ class StaleReason(StrEnum):
     SPARSE_MODEL = "sparse_model"
     DENSE_PIN = "dense_pin"
     SPARSE_PIN = "sparse_pin"
+    SPARSE_PARAMS = "sparse_params"
     POINT_COUNT = "point_count"
 
 
@@ -38,6 +47,7 @@ class Expected:
     sparse_model: str
     dense_pin: ModelFiles | None
     sparse_pin: ModelFiles | None
+    bm25_avg_len: AvgLenSetting
 
 
 def _same_files(recorded: ModelFiles, pin: ModelFiles | None) -> bool:
@@ -50,6 +60,21 @@ def _same_files(recorded: ModelFiles, pin: ModelFiles | None) -> bool:
     )
 
 
+def _same_bm25(recorded: Bm25Params | None, setting: AvgLenSetting) -> bool:
+    """Whether a build made now would store the same sparse vectors.
+
+    A fixed setting compares the value. `auto` cannot be measured here, because the skip
+    path loads no model and reads no PDF. It accepts a build that was measured too:
+    its mean comes from the same chunks and BM25 files, which the other checks compare.
+    """
+    params = FASTEMBED_BM25 if recorded is None else recorded  # a row from before 0004
+    if (params.k, params.b) != (BM25_K, BM25_B):
+        return False
+    if isinstance(setting, str):  # "auto"
+        return params.avg_len_auto
+    return params.avg_len == setting
+
+
 def stale_reason(live: IndexBuild, expected: Expected, point_count: int) -> StaleReason | None:
     """The first input that differs from the live build, or None when it is current."""
     checks = (
@@ -59,6 +84,7 @@ def stale_reason(live: IndexBuild, expected: Expected, point_count: int) -> Stal
         (live.sparse_model == expected.sparse_model, StaleReason.SPARSE_MODEL),
         (_same_files(live.dense, expected.dense_pin), StaleReason.DENSE_PIN),
         (_same_files(live.sparse, expected.sparse_pin), StaleReason.SPARSE_PIN),
+        (_same_bm25(live.sparse_params, expected.bm25_avg_len), StaleReason.SPARSE_PARAMS),
         (point_count == live.chunk_count, StaleReason.POINT_COUNT),
     )
     return next((reason for holds, reason in checks if not holds), None)

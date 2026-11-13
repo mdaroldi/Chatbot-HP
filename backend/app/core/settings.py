@@ -3,12 +3,13 @@
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import quote, urlsplit
 
 from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from app.domain.ingestion import BM25_DEFAULT_AVG_LEN
 from app.domain.retrieval import DEFAULT_RRF_K, SearchMode
 
 _ALLOWED_ORIGIN_SCHEMES = frozenset({"http", "https"})
@@ -148,6 +149,13 @@ class Settings(BaseSettings):
     )
     embedding_batch_size: int = Field(
         default=32, ge=1, le=1024, description="Texts per embedding batch (bounds memory)."
+    )
+    embedding_bm25_avg_len: (
+        Annotated[float, Field(gt=0, le=10_000, allow_inf_nan=False)] | Literal["auto"]
+    ) = Field(
+        default=BM25_DEFAULT_AVG_LEN,
+        description="BM25 average document length for the stored sparse vectors, or "
+        "`auto` for the mean of the chunks being built; recorded per build (ADR 0009).",
     )
 
     chunk_max_tokens: int = Field(

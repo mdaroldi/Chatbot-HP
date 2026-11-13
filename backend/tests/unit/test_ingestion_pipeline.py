@@ -14,6 +14,7 @@ import pytest
 from qdrant_client import AsyncQdrantClient
 
 from app.domain.ingestion import (
+    Bm25Params,
     BuildStatus,
     BuildWarning,
     BuildWarningKind,
@@ -21,6 +22,7 @@ from app.domain.ingestion import (
     IndexPublishError,
     ModelDownloadError,
     ModelIntegrityError,
+    VerifiedModel,
 )
 from app.infra.qdrant_index import QdrantIndex
 from app.ingestion.freshness import StaleReason
@@ -35,6 +37,7 @@ from tests.unit.ingest_fakes import (
     Calls,
     FakeCorpus,
     FakeEmbedder,
+    FakeLengths,
     FakeModels,
     FakeProcessor,
     InMemoryManifest,
@@ -52,6 +55,7 @@ CONFIG = IngestConfig(
     dense_model=DENSE.name,
     sparse_model=SPARSE.name,
     chunking_version="v1",
+    bm25_avg_len=256.0,
 )
 COUNTS = {"demo-guide": 3, "demo-manual": 2}
 
@@ -74,6 +78,8 @@ class World:
         self.corpus = FakeCorpus(self.calls, folder)
         self.models = FakeModels(self.calls, folder)
         self.embedder = FakeEmbedder(self.calls)
+        self.lengths = FakeLengths(self.calls)
+        self.bm25: list[Bm25Params] = []  # what each embedder was built with
         self.counts: Mapping[str, int] = COUNTS
         self.version = CONFIG.chunking_version  # what the fake chunker stamps on chunks
         self.now = CLOCK
@@ -83,11 +89,17 @@ class World:
         assert dense is not None
         return FakeProcessor(self.calls, self.counts, self.version)
 
-    def _embedder(self, dense: object, sparse: object) -> FakeEmbedder:
+    def _embedder(self, dense: object, sparse: object, bm25: Bm25Params) -> FakeEmbedder:
         self.calls.log.append(("build", "embedder"))
         assert dense is not None
         assert sparse is not None
+        self.bm25.append(bm25)
         return self.embedder
+
+    def _lengths(self, sparse: VerifiedModel) -> FakeLengths:
+        self.calls.log.append(("build", "lengths"))
+        assert sparse.files == SPARSE
+        return self.lengths
 
     def ports(self) -> IngestPorts:
         return IngestPorts(
@@ -97,6 +109,7 @@ class World:
             manifest=self.manifest,
             processor=self._processor,
             embedder=self._embedder,
+            sparse_lengths=self._lengths,
             clock=lambda: self.now,
         )
 
@@ -386,6 +399,7 @@ async def test_logs_name_documents_sizes_and_outcomes_never_content(
         "index build started",
         "document chunked",
         "document chunked",
+        "bm25 params resolved",
         "stage done",
         "stage done",
         "stage done",
@@ -418,3 +432,98 @@ async def test_each_stage_logs_its_elapsed_time_and_item_count(
     timed = [r for r in records if r["msg"] in ("stage done", "document chunked")]
     assert len(timed) == 5
     assert all(isinstance(r["seconds"], float) and r["seconds"] >= 0 for r in timed)
+
+
+# ------------------------------------------------------------------ BM25 parameters
+
+AUTO_MEAN = Bm25Params(avg_len=11.0, avg_len_auto=True)  # mean of the fake's 1, 4, 9, 16, 25
+
+
+async def test_a_fixed_avg_len_is_recorded_and_used_without_measuring(world: World) -> None:
+    await world.run(bm25_avg_len=180.5)
+
+    assert world.bm25 == [Bm25Params(avg_len=180.5)]
+    assert world.manifest.builds[-1].sparse_params == Bm25Params(avg_len=180.5)
+    assert "measure" not in {kind for kind, _ in world.calls.log}
+    assert "lengths" not in world.calls.of("build")
+
+
+async def test_the_default_records_fastembeds_parameters(world: World) -> None:
+    await world.run()
+
+    assert world.manifest.builds[-1].sparse_params == Bm25Params(256.0, False, 1.2, 0.75)
+
+
+async def test_auto_measures_every_chunk_once_and_records_the_mean(world: World) -> None:
+    await world.run(bm25_avg_len="auto")
+
+    assert len(world.lengths.texts) == 5
+    assert world.lengths.texts == world.embedder.texts  # every chunk, in index order
+    assert world.calls.of("measure") == ["bm25"]
+    assert world.bm25 == [AUTO_MEAN]
+    assert world.manifest.builds[-1].sparse_params == AUTO_MEAN
+
+
+async def test_auto_measures_after_chunking_and_before_embedding(world: World) -> None:
+    await world.run(bm25_avg_len="auto")
+
+    log = world.calls.log
+    assert log.index(("process", "demo-manual")) < log.index(("build", "lengths"))
+    assert log.index(("measure", "bm25")) < log.index(("build", "embedder"))
+
+
+async def test_the_resolved_params_are_logged_without_content(
+    world: World, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="app.ingestion")
+
+    await world.run(bm25_avg_len="auto")
+
+    records = [r.__dict__ for r in caplog.records]
+    [resolved] = [r for r in records if r["msg"] == "bm25 params resolved"]
+    assert (resolved["avg_len"], resolved["avg_len_auto"]) == (AUTO_MEAN.avg_len, True)
+    assert (resolved["k"], resolved["b"]) == (1.2, 0.75)
+    measured = [(r["stage"], r["items"]) for r in records if r["msg"] == "stage done"]
+    assert measured[0] == ("measure_bm25", 5)
+
+
+async def test_a_changed_avg_len_triggers_a_rebuild(world: World) -> None:
+    await world.run()
+    world.later()
+
+    result = await world.run(bm25_avg_len=100.0)
+
+    assert result.reason is StaleReason.SPARSE_PARAMS
+    assert world.manifest.builds[-1].sparse_params == Bm25Params(avg_len=100.0)
+
+
+async def test_an_auto_build_is_reused_by_auto_without_measuring(world: World) -> None:
+    first = await world.run(bm25_avg_len="auto")
+    assert world.calls.of("measure") == ["bm25"]  # the first run did measure
+    world.later()
+
+    second = await world.run(bm25_avg_len="auto")
+
+    assert (second.skipped, second.build_id) == (True, first.build_id)
+    assert {kind for kind, _ in world.calls.log} == {"manifest"}
+
+
+async def test_a_failed_measurement_is_recorded_as_a_failed_build(world: World) -> None:
+    world.lengths.error = ValueError("BM25 lengths need at least one token")
+
+    with pytest.raises(ValueError, match="BM25"):
+        await world.run(bm25_avg_len="auto")
+
+    failed = world.manifest.builds[-1]
+    assert (failed.status, failed.error_type) == (BuildStatus.FAILED, "ValueError")
+    assert failed.sparse_params is None  # never resolved
+    assert await world.index.alias_target(ALIAS) is None
+
+
+async def test_a_fixed_build_that_fails_still_records_its_params(world: World) -> None:
+    world.corpus.failing = {"demo-guide": CorpusDownloadError("demo-guide: HTTP 503")}
+
+    with pytest.raises(CorpusDownloadError):
+        await world.run(bm25_avg_len=99.0)
+
+    assert world.manifest.builds[-1].sparse_params == Bm25Params(avg_len=99.0)

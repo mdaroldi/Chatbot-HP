@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.domain.ingestion import Bm25Params
 from app.infra.db import create_session_factory
 from app.infra.manifest_repository import SqlManifestStore
 from app.infra.orm import Base, IndexBuildRow
@@ -141,3 +142,38 @@ async def test_database_rejects_an_error_type_that_contradicts_the_status(
     with pytest.raises(IntegrityError, match="ck_index_builds_error_type_status"):
         async with sessions() as session, session.begin():
             session.add(raw_row("b3", status, error_type))
+
+
+@pytest.mark.parametrize(
+    "params",
+    [Bm25Params(avg_len=256.0), Bm25Params(avg_len=107.25, avg_len_auto=True, k=1.1, b=0.6)],
+)
+async def test_bm25_params_round_trip(store: SqlManifestStore, params: Bm25Params) -> None:
+    build = make_build(sparse_params=params)
+    await store.record(build)
+
+    assert await store.succeeded_build(build.collection) == build
+
+
+async def test_bm25_params_are_stored_as_one_json_object(
+    store: SqlManifestStore, sessions: async_sessionmaker[AsyncSession]
+) -> None:
+    await store.record(make_build(sparse_params=Bm25Params(107.25, avg_len_auto=True)))
+
+    async with sessions() as session:
+        row = (await session.execute(select(IndexBuildRow))).scalar_one()
+    assert row.sparse_params == {"k": 1.2, "b": 0.75, "avg_len": 107.25, "avg_len_auto": True}
+
+
+async def test_a_build_without_bm25_params_stores_sql_null(
+    store: SqlManifestStore, sessions: async_sessionmaker[AsyncSession]
+) -> None:
+    """NULL, not JSON null: an old row and a new one without params read the same."""
+    await store.record(make_build())
+
+    async with sessions() as session:
+        nulls = await session.execute(
+            select(IndexBuildRow.build_id).where(IndexBuildRow.sparse_params.is_(None))
+        )
+    assert nulls.scalars().all() == [make_build().build_id]
+    assert (await store.succeeded_build(make_build().collection)).sparse_params is None  # type: ignore[union-attr]

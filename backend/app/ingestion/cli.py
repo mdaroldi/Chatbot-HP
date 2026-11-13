@@ -21,9 +21,16 @@ from qdrant_client import AsyncQdrantClient
 
 from app.core.logging import configure_logging
 from app.core.settings import Settings, get_settings
-from app.domain.ingestion import CorpusDocument, ModelError, ModelFiles, VerifiedModel
+from app.domain.ingestion import (
+    Bm25Params,
+    CorpusDocument,
+    ModelError,
+    ModelFiles,
+    VerifiedModel,
+)
 from app.infra.corpus_http import HttpCorpusSource, create_corpus_http_client
 from app.infra.db import create_engine, create_session_factory
+from app.infra.fastembed_bm25 import FastembedBm25Lengths
 from app.infra.fastembed_embedder import (
     DenseModelClass,
     FastembedEmbedder,
@@ -77,10 +84,15 @@ async def open_runtime(
         )
         return StructureProcessor(PdfplumberParser(), chunker)
 
-    def embedder(dense: VerifiedModel, sparse: VerifiedModel) -> FastembedEmbedder:
+    def embedder(
+        dense: VerifiedModel, sparse: VerifiedModel, bm25: Bm25Params
+    ) -> FastembedEmbedder:
         return FastembedEmbedder.from_settings(
-            settings, dense, sparse, dense_class=dense_class, sparse_class=sparse_class
+            settings, dense, sparse, bm25=bm25, dense_class=dense_class, sparse_class=sparse_class
         )
+
+    def sparse_lengths(sparse: VerifiedModel) -> FastembedBm25Lengths:
+        return FastembedBm25Lengths(sparse, settings.embedding_cache_dir)
 
     # The server image and the client are pinned together and an integration test checks
     # them; the client's own check is a background request that runs even when the
@@ -101,6 +113,7 @@ async def open_runtime(
                     manifest=SqlManifestStore(create_session_factory(engine)),
                     processor=processor,
                     embedder=embedder,
+                    sparse_lengths=sparse_lengths,
                     clock=lambda: datetime.now(UTC),
                 ),
             )
@@ -145,6 +158,7 @@ async def _run(args: argparse.Namespace, settings: Settings, runtime: RuntimeFac
             dense_model=settings.embedding_dense_model,
             sparse_model=settings.embedding_sparse_model,
             chunking_version=VERSION,
+            bm25_avg_len=settings.embedding_bm25_avg_len,
         )
         await ingest(rt.documents, rt.pins, config, rt.ports, force=args.force)
 

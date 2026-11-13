@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.domain.ingestion import Bm25Params
 from app.infra.db import create_engine, create_session_factory
 from app.infra.manifest_repository import SqlManifestStore
 from app.infra.orm import IndexBuildRow
@@ -43,6 +44,19 @@ async def test_recorded_build_reads_back_unchanged(store: SqlManifestStore) -> N
     assert loaded is not None
     assert loaded.created_at.utcoffset() is not None
     assert loaded.created_at.tzinfo is UTC
+
+
+@pytest.mark.parametrize(
+    "params", [None, Bm25Params(avg_len=256.0), Bm25Params(107.25, avg_len_auto=True)]
+)
+async def test_bm25_params_read_back_unchanged(
+    store: SqlManifestStore, params: Bm25Params | None
+) -> None:
+    build = make_build(sparse_params=params)
+
+    await store.record(build)
+
+    assert await store.succeeded_build(build.collection) == build
 
 
 async def test_failed_build_is_never_returned_as_successful(store: SqlManifestStore) -> None:

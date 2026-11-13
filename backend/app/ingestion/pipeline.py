@@ -6,8 +6,9 @@ Order matters and is tested:
    A match ends the run before any download, hash or model load.
 2. Both embedding models are verified. A model failure ends the run before a build
    ID exists, so it leaves no collection and no manifest row (ADR 0006).
-3. The build starts: every document is fetched, parsed and chunked, the chunks are
-   embedded and published. A failure from here on is recorded as a failed build,
+3. The build starts: every document is fetched, parsed and chunked; the BM25 avg_len
+   is fixed or, for `auto`, measured on the chunks; the chunks are embedded and
+   published. A failure from here on is recorded as a failed build,
    with its exception type only, and raised again.
 4. A published build is recorded as succeeded, with any pruning warnings.
 
@@ -15,6 +16,7 @@ Logs name documents, sizes, counts and outcomes, never document or chunk text.
 """
 
 import asyncio
+import dataclasses
 import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -24,6 +26,8 @@ from pathlib import Path
 from typing import Protocol
 
 from app.domain.ingestion import (
+    AvgLenSetting,
+    Bm25Params,
     BuildStatus,
     BuildWarning,
     Chunk,
@@ -37,8 +41,10 @@ from app.domain.ingestion import (
     ManifestStore,
     ModelFiles,
     ModelSource,
+    SparseLengths,
     VectorIndex,
     VerifiedModel,
+    mean_length,
 )
 from app.ingestion.cleaning import CleaningStats, clean
 from app.ingestion.freshness import Expected, StaleReason, stale_reason
@@ -95,6 +101,7 @@ class IngestConfig:
     dense_model: str
     sparse_model: str
     chunking_version: str
+    bm25_avg_len: AvgLenSetting
 
 
 @dataclass(frozen=True)
@@ -108,7 +115,8 @@ class IngestPorts:
     index: VectorIndex
     manifest: ManifestStore
     processor: Callable[[VerifiedModel], DocumentProcessor]
-    embedder: Callable[[VerifiedModel, VerifiedModel], Embedder]
+    embedder: Callable[[VerifiedModel, VerifiedModel, Bm25Params], Embedder]
+    sparse_lengths: Callable[[VerifiedModel], SparseLengths]
     clock: Callable[[], datetime]
 
 
@@ -127,6 +135,7 @@ class _Progress:
 
     chunk_counts: dict[str, int]
     drop_stats: dict[str, dict[str, int]]
+    sparse_params: Bm25Params | None = None
 
 
 async def _live_build(
@@ -149,6 +158,7 @@ async def _live_build(
         sparse_model=config.sparse_model,
         dense_pin=pins.get(config.dense_model),
         sparse_pin=pins.get(config.sparse_model),
+        bm25_avg_len=config.bm25_avg_len,
     )
     reason = stale_reason(live, expected, await ports.index.count(target))
     return (live, None) if reason is None else (None, reason)
@@ -219,6 +229,18 @@ async def _embed(chunks: Sequence[Chunk], embedder: Embedder) -> EmbeddedChunks:
     return EmbeddedChunks(chunks=chunks, dense=dense, sparse=sparse)
 
 
+async def _measured_bm25(
+    chunks: Sequence[Chunk], sparse: VerifiedModel, ports: IngestPorts
+) -> Bm25Params:
+    """`auto`: avg_len is the mean BM25 length of the chunks just built."""
+    start = time.perf_counter()
+    measure = ports.sparse_lengths(sparse)
+    lengths = await asyncio.to_thread(measure.lengths, [chunk.text for chunk in chunks])
+    params = Bm25Params(avg_len=mean_length(lengths), avg_len_auto=True)
+    _stage_done("measure_bm25", len(lengths), start)
+    return params
+
+
 async def _build(
     documents: Sequence[CorpusDocument],
     config: IngestConfig,
@@ -231,7 +253,9 @@ async def _build(
     created_at = ports.clock().astimezone(UTC)
     build_id = created_at.strftime(_BUILD_ID_FORMAT)
     collection = collection_name(config.chunking_version, build_id)
-    progress = _Progress(chunk_counts={}, drop_stats={})
+    # A fixed avg_len is known now, so even a build that fails early records it.
+    fixed = None if isinstance(config.bm25_avg_len, str) else Bm25Params(config.bm25_avg_len)
+    progress = _Progress(chunk_counts={}, drop_stats={}, sparse_params=fixed)
 
     def manifest_row(
         status: BuildStatus,
@@ -251,13 +275,17 @@ async def _build(
             drop_stats=dict(progress.drop_stats),
             warnings=warnings,
             error_type=error_type,
+            sparse_params=progress.sparse_params,
         )
 
     logger.info("index build started", extra={"build_id": build_id})
     try:
         processor = ports.processor(dense)
         chunks = await _chunk_all(documents, ports, processor, progress)
-        embedded = await _embed(chunks, ports.embedder(dense, sparse))
+        bm25 = fixed or await _measured_bm25(chunks, sparse, ports)
+        progress.sparse_params = bm25
+        logger.info("bm25 params resolved", extra=dataclasses.asdict(bm25))
+        embedded = await _embed(chunks, ports.embedder(dense, sparse, bm25))
         start = time.perf_counter()
         published = await publish(
             ports.index, config.alias, build_id, embedded, keep_previous=config.keep_previous

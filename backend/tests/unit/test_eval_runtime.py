@@ -8,13 +8,14 @@ import pathlib
 from collections.abc import AsyncIterator, Callable
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager
+from dataclasses import replace
 
 import pytest
 from qdrant_client import AsyncQdrantClient
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from app.core.settings import Settings
-from app.domain.ingestion import IndexBuild, ModelFiles
+from app.domain.ingestion import Bm25Params, IndexBuild, ModelFiles
 from app.evaluation.cli import EvaluationError, Failure, Runtime, open_runtime
 from app.infra.db import create_session_factory
 from app.infra.manifest_repository import SqlManifestStore
@@ -117,6 +118,8 @@ async def test_the_alias_resolves_to_its_build_with_chunks_and_models(
         assert runtime.index.build_id == BUILD_ID
         assert runtime.index.chunk_count == BUILD.chunk_count
         assert runtime.index.chunking_version == "v1"
+        # A build recorded before its BM25 params: fastembed's defaults.
+        assert (runtime.index.bm25_avg_len, runtime.index.bm25_avg_len_auto) == (256.0, False)
         chunks = await runtime.chunks()
         assert sorted(c.chunk_id for c in chunks) == sorted(
             c.chunk_id for c in make_batch(3).chunks
@@ -135,6 +138,16 @@ async def test_an_explicit_collection_is_read_without_the_alias(
     async with opened(settings, qdrant, engine, collection=COLLECTION) as runtime:
         assert runtime.index.alias is None
         assert runtime.index.collection == COLLECTION
+
+
+async def test_the_index_info_names_the_builds_bm25_avg_len(
+    settings: Settings, qdrant: AsyncQdrantClient, engine: AsyncEngine
+) -> None:
+    """The avg_len ablation is a run on another collection; its header must say so."""
+    await record(engine, replace(BUILD, sparse_params=Bm25Params(107.25, avg_len_auto=True)))
+
+    async with opened(settings, qdrant, engine, collection=COLLECTION) as runtime:
+        assert (runtime.index.bm25_avg_len, runtime.index.bm25_avg_len_auto) == (107.25, True)
 
 
 async def failure(context: AbstractAsyncContextManager[Runtime]) -> Failure:

@@ -53,8 +53,20 @@ set frozen before any tuning.
   the dense vector of the query model's size (cosine) and the IDF-weighted sparse
   vector, a succeeded build in the manifest, and the build's model files equal to the
   files the API verified. The BM25 `avg_len` affects only document vectors, so any
-  recorded value is accepted (null before Phase 2 commit 10b means fastembed's
-  defaults).
+  recorded value is accepted.
+- **BM25 avg_len (commit 10b):** `EMBEDDING_BM25_AVG_LEN` is a number or `auto`, the
+  mean BM25 length of the chunks being built: stemmed tokens without stopwords or
+  punctuation, the `|d|` of fastembed's formula, measured with fastembed's own steps.
+  The default stays at fastembed's 256, so the index is unchanged; `auto` measures
+  107.26 (30,783 tokens over 287 chunks, chunking v2). Every build passes k, b and
+  avg_len to fastembed and records them in `index_builds.sparse_params` (migration
+  0004, with an `avg_len_auto` flag); NULL on older rows means fastembed's defaults.
+  `--if-needed` compares a fixed value with the recorded one. `auto` cannot be measured
+  on the skip path, which loads no model, so it reuses only a build that was measured
+  too: its mean follows from the documents, chunking version and pins already compared.
+  The API ignores the setting (queries carry unit weights). Verified live: a forced
+  rebuild with the default kept the chunk-ID digests and all 287 stored sparse vectors
+  of the previous build.
 - **Failures:** every Qdrant failure (down, timeout, missing alias, unexpected payload)
   is `RetrievalUnavailableError`, logged with the stage and the exception type only.
 

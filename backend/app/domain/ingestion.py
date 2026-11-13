@@ -6,13 +6,15 @@ data. Page numbers are kept twice: PDF page indices (1-based) and the printed pa
 numbers from the footers, which are absent for unnumbered front matter.
 """
 
+import math
 import re
+import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import Protocol
+from typing import Final, Literal, Protocol
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _DOC_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -460,6 +462,43 @@ class BuildWarning:
         )
 
 
+# fastembed's BM25 defaults (0.9.x). A build recorded before migration 0004 used them.
+BM25_K: Final = 1.2
+BM25_B: Final = 0.75
+BM25_DEFAULT_AVG_LEN: Final = 256.0
+AUTO: Final = "auto"
+type AvgLenSetting = float | Literal["auto"]
+
+
+@dataclass(frozen=True)
+class Bm25Params:
+    """The BM25 parameters a build's document vectors were made with (ADR 0009).
+
+    They shape only the stored vectors: BM25 queries carry unit weights. `avg_len_auto`
+    records that the value is the mean length of the build's own chunks, so
+    `--if-needed` can reuse an `auto` build without measuring again.
+    """
+
+    avg_len: float
+    avg_len_auto: bool = False
+    k: float = BM25_K
+    b: float = BM25_B
+
+    def __post_init__(self) -> None:
+        _require(math.isfinite(self.avg_len) and self.avg_len > 0, "BM25 avg_len must be > 0")
+        _require(math.isfinite(self.k) and self.k >= 0, "BM25 k must be >= 0")
+        _require(0 <= self.b <= 1, "BM25 b must be between 0 and 1")
+
+
+FASTEMBED_BM25: Final = Bm25Params(avg_len=BM25_DEFAULT_AVG_LEN)
+
+
+def mean_length(lengths: Sequence[int]) -> float:
+    """The `auto` avg_len: the exact mean, so the same chunks always give the same value."""
+    _require(sum(lengths) > 0, "BM25 lengths need at least one chunk with a token")
+    return statistics.fmean(lengths)
+
+
 @dataclass(frozen=True)
 class IndexBuild:
     """Manifest entry: what produced a collection, so builds are traceable.
@@ -482,6 +521,9 @@ class IndexBuild:
     drop_stats: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
     warnings: tuple[BuildWarning, ...] = ()
     error_type: str | None = None
+    # None: recorded before migration 0004 (fastembed's defaults), or a failed `auto`
+    # build that stopped before measuring.
+    sparse_params: Bm25Params | None = None
 
     def __post_init__(self) -> None:
         _require(
@@ -667,6 +709,12 @@ class Embedder(Protocol):
     async def embed_dense(self, texts: Sequence[str]) -> list[list[float]]: ...
 
     async def embed_sparse(self, texts: Sequence[str]) -> list[SparseVector]: ...
+
+
+class SparseLengths(Protocol):
+    def lengths(self, texts: Sequence[str]) -> list[int]:
+        """Each text's BM25 document length: the `|d|` of the sparse model's formula."""
+        ...
 
 
 class VectorIndex(Protocol):

@@ -192,7 +192,8 @@ def _header_lines(header: RunHeader) -> list[str]:
         f"- Golden set: v{header.golden_version}, SHA-256 `{header.golden_sha256}`, "
         f"split `{header.split.value}`, {header.questions} questions",
         f"- Index: build `{index.build_id}`, collection `{index.collection}`, "
-        f"{index.chunk_count} chunks, chunking {index.chunking_version}",
+        f"{index.chunk_count} chunks, chunking {index.chunking_version}, "
+        f"BM25 avg_len {index.bm25_avg_len:g} ({'auto' if index.bm25_avg_len_auto else 'fixed'})",
         f"- Code: `{header.git_sha}`, run {header.created_at.isoformat()}",
         f"- Models: {models}",
         f"- Hardware: {hardware}",

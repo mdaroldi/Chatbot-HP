@@ -28,6 +28,13 @@ class ModelFilesJson(TypedDict):
     files: dict[str, str]
 
 
+class Bm25ParamsJson(TypedDict):
+    k: float
+    b: float
+    avg_len: float
+    avg_len_auto: bool
+
+
 class BuildWarningJson(TypedDict):
     kind: str
     collection: str
@@ -67,3 +74,5 @@ class IndexBuildRow(Base):
     drop_stats: Mapped[dict[str, dict[str, int]]] = mapped_column(JSON)
     warnings: Mapped[list[BuildWarningJson]] = mapped_column(JSON)
     error_type: Mapped[str | None] = mapped_column(String(255))  # type name only, never a message
+    # NULL (not JSON null) before migration 0004: fastembed's BM25 defaults (ADR 0009).
+    sparse_params: Mapped[Bm25ParamsJson | None] = mapped_column(JSON(none_as_null=True))

@@ -6,6 +6,7 @@ import pathlib
 import runpy
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from typing import Any, ClassVar
 
 import pytest
@@ -14,6 +15,7 @@ from qdrant_client import AsyncQdrantClient
 
 from app.core.settings import Settings, get_settings
 from app.domain.ingestion import (
+    Bm25Params,
     CorpusDownloadError,
     ModelDownloadError,
     ModelIntegrityError,
@@ -22,6 +24,7 @@ from app.domain.ingestion import (
     VerifiedModel,
 )
 from app.infra.corpus_http import HttpCorpusSource
+from app.infra.fastembed_bm25 import FastembedBm25Lengths
 from app.infra.fastembed_embedder import FastembedEmbedder
 from app.infra.manifest_repository import SqlManifestStore
 from app.infra.model_files import PinnedModelSource
@@ -104,6 +107,19 @@ def test_force_always_builds(world: World) -> None:
     assert main(["--force"], runtime=runtime_of(world)) == 0
 
     assert len(world.manifest.builds) == 2
+
+
+@pytest.mark.parametrize(
+    ("value", "recorded"), [("auto", Bm25Params(11.0, True)), ("90", Bm25Params(90.0))]
+)
+def test_the_bm25_avg_len_setting_reaches_the_pipeline(
+    world: World, monkeypatch: pytest.MonkeyPatch, value: str, recorded: Bm25Params
+) -> None:
+    monkeypatch.setenv("EMBEDDING_BM25_AVG_LEN", value)
+
+    assert main(["--force"], runtime=runtime_of(world)) == 0
+
+    assert world.manifest.builds[-1].sparse_params == recorded
 
 
 def test_the_index_settings_reach_the_pipeline(
@@ -259,7 +275,13 @@ async def test_the_runtime_wires_the_real_adapters_from_settings(tmp_path: pathl
         assert isinstance(processor, StructureProcessor)
         assert isinstance(processor.chunker, StructureChunker)
         assert (processor.chunker.max_tokens, processor.chunker.min_tokens) == (300, 40)
-        assert isinstance(ports.embedder(dense, sparse), FastembedEmbedder)
+        assert isinstance(ports.embedder(dense, sparse, Bm25Params(99.5)), FastembedEmbedder)
+        assert FakeSparse.built[-1].bm25 == (1.2, 0.75, 99.5)  # type: ignore[attr-defined]
+        bm25_dir = tmp_path / "bm25"  # no stopword file: every word counts
+        bm25 = VerifiedModel(files=replace(SPARSE, name="Qdrant/bm25"), path=bm25_dir)
+        lengths = ports.sparse_lengths(bm25)
+        assert isinstance(lengths, FastembedBm25Lengths)
+        assert lengths.lengths(["one two three"]) == [3]
         assert ports.clock().utcoffset() is not None
         [client] = FakeQdrantClient.built
         assert (client.url, client.check_compatibility) == ("http://qdrant:6333/", False)

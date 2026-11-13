@@ -13,7 +13,7 @@ from tests.integration.conftest import PG_PASSWORD, SettingsFactory, run_alembic
 
 pytestmark = pytest.mark.integration
 
-HEAD_REVISION = "0003"
+HEAD_REVISION = "0004"
 
 
 async def versions(settings: Settings) -> list[str]:
@@ -220,3 +220,44 @@ async def test_downgrade_to_0002_drops_error_type_and_its_check(
     assert set(await columns(settings, "index_builds")) == set(INDEX_BUILDS_COLUMNS)
     # Without the check, a failed row with no error type fits the 0002 schema again.
     await insert_row(settings, ROW_0002, status="failed")
+
+
+async def test_migration_0004_adds_nullable_sparse_params_and_keeps_old_rows_null(
+    scratch_db: str, make_settings: SettingsFactory, tmp_path: pathlib.Path
+) -> None:
+    """NULL on a row built before 0004 means fastembed's BM25 defaults (ADR 0009)."""
+    settings = make_settings(postgres_db=scratch_db)
+    run_alembic(scratch_db, "upgrade", "0003", cwd=tmp_path)
+    await insert_row(settings)
+
+    run_alembic(scratch_db, "upgrade", "0004", cwd=tmp_path)
+
+    found = await columns(settings, "index_builds")
+    assert found["sparse_params"] == ("json", "YES")
+    assert await sparse_params(settings) == [("b1", None)]
+
+
+async def test_downgrade_to_0003_drops_sparse_params(
+    scratch_db: str, make_settings: SettingsFactory, tmp_path: pathlib.Path
+) -> None:
+    settings = make_settings(postgres_db=scratch_db)
+    run_alembic(scratch_db, "upgrade", "head", cwd=tmp_path)
+    await insert_row(settings)
+
+    run_alembic(scratch_db, "downgrade", "0003", cwd=tmp_path)
+
+    assert await versions(settings) == ["0003"]
+    assert "sparse_params" not in await columns(settings, "index_builds")
+    assert set(await columns(settings, "index_builds")) == {*INDEX_BUILDS_COLUMNS, "error_type"}
+
+
+async def sparse_params(settings: Settings) -> list[tuple[str, object]]:
+    engine = create_engine(settings)
+    try:
+        async with engine.connect() as connection:
+            rows = await connection.execute(
+                text("SELECT build_id, sparse_params FROM index_builds")
+            )
+            return [(build_id, params) for build_id, params in rows]
+    finally:
+        await engine.dispose()
