@@ -1,0 +1,809 @@
+# Golden retrieval set v1.0.0 (DRAFT for review).
+# Written from the two HP manuals, not from the index. Questions are original wording.
+# Anchors: a chunk satisfies an anchor when doc_id matches and ALL facts occur in its text.
+# match = any: one satisfied anchor is enough; match = all: every anchor must be covered.
+# The optional `section` field is deliberately unused in v1.0.0 (section_path format
+# not confirmed). Do not edit questions or anchors after the freeze commit.
+
+version = "1.0.0"
+
+[[questions]]
+id = "envy-factual-001"
+category = "factual"
+split = "dev"
+question = "How many phones or computers can share the printer's Wi-Fi Direct connection at the same time?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["Up to five computers"]
+
+[[questions]]
+id = "envy-factual-002"
+category = "factual"
+split = "dev"
+question = "What is the regulatory model number of the printer? I need it for a compliance form."
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["SNPRC-1807-01"]
+
+[[questions]]
+id = "envy-factual-003"
+category = "factual"
+split = "dev"
+question = "After how much idle time does the printer power itself off completely?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["2 hours of inactivity"]
+
+[[questions]]
+id = "envy-factual-004"
+category = "factual"
+split = "heldout"
+question = "How many plain sheets can I load in the input tray?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["Plain paper sheets: Up to 80"]
+
+[[questions]]
+id = "envy-factual-005"
+category = "factual"
+split = "dev"
+question = "What temperature range is recommended for operating the printer?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["15°C to 30°C"]
+
+[[questions]]
+id = "envy-factual-006"
+category = "factual"
+split = "dev"
+question = "How close does the printer need to be to the wireless router to get a good signal?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["30 m (100 ft)"]
+
+[[questions]]
+id = "omen-factual-001"
+category = "factual"
+split = "dev"
+question = "How big is the battery in the OMEN 17, in watt-hours?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["6 cell, 83 Whr"]
+
+[[questions]]
+id = "omen-factual-002"
+category = "factual"
+split = "dev"
+question = "What kind of memory does the laptop take, and how many slots does it have?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["Two SODIMM slots", "DDR5-5600"]
+
+[[questions]]
+id = "omen-factual-003"
+category = "factual"
+split = "heldout"
+question = "Which screen refresh rates are offered on this laptop?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["144 Hz", "240 Hz"]
+
+[[questions]]
+id = "omen-factual-004"
+category = "factual"
+split = "dev"
+question = "How much does the laptop weigh?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["2953 g"]
+
+[[questions]]
+id = "omen-factual-005"
+category = "factual"
+split = "dev"
+question = "Which key do I press at startup to get into BIOS setup?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["quickly press f10"]
+
+[[questions]]
+id = "omen-factual-006"
+category = "factual"
+split = "dev"
+question = "How many digits long is the failure ID that the hardware diagnostics tool gives me?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["24-digit failure ID"]
+
+[[questions]]
+id = "envy-procedure-001"
+category = "procedure"
+split = "dev"
+question = "How can I wipe the printer's network settings and put it back into setup mode?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["Wi-Fi button", "at least three seconds"]
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["Wireless button", "at least three seconds"]
+
+[[questions]]
+id = "envy-procedure-002"
+category = "procedure"
+split = "dev"
+question = "How do I swap an empty ink cartridge for a new one?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["latch on the cartridge slot"]
+
+[[questions]]
+id = "envy-procedure-003"
+category = "procedure"
+split = "dev"
+question = "How do I clean the glass on the scanner?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["scanner glass", "lint-free cloth", "mild glass cleaner"]
+
+[[questions]]
+id = "envy-procedure-004"
+category = "procedure"
+split = "dev"
+question = "How do I print on both sides of the page from my Windows PC?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["Printing Shortcuts", "Print On Both Sides"]
+
+[[questions]]
+id = "envy-procedure-005"
+category = "procedure"
+split = "heldout"
+question = "How do I print on an envelope from Windows?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["appropriate envelope size"]
+
+[[questions]]
+id = "envy-procedure-006"
+category = "procedure"
+split = "dev"
+question = "How do I connect the printer to my router using the WPS button method?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["Push Button Configuration"]
+
+[[questions]]
+id = "omen-procedure-001"
+category = "procedure"
+split = "dev"
+question = "What do I do to force the laptop off when it has stopped responding?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["at least 10 seconds"]
+
+[[questions]]
+id = "omen-procedure-002"
+category = "procedure"
+split = "dev"
+question = "How do I boot the laptop from a recovery USB stick?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["press f9 for boot options"]
+
+[[questions]]
+id = "omen-procedure-003"
+category = "procedure"
+split = "heldout"
+question = "How do I launch the hardware diagnostics that run before Windows starts?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["Press f2", "quickly press esc"]
+
+[[questions]]
+id = "omen-procedure-004"
+category = "procedure"
+split = "dev"
+question = "How can I see the BIOS version from inside Windows?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["ctrl+alt+s"]
+
+[[questions]]
+id = "envy-table-001"
+category = "table"
+split = "dev"
+question = "The display shows E4. What does that code mean?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["E4", "Paper jam"]
+
+[[questions]]
+id = "envy-table-002"
+category = "table"
+split = "dev"
+question = "What is the meaning of error code E0?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["E0", "Unusable cartridge"]
+
+[[questions]]
+id = "envy-table-003"
+category = "table"
+split = "dev"
+question = "What does E3 on the number display indicate?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["E3", "Ink carriage stall"]
+
+[[questions]]
+id = "envy-table-004"
+category = "table"
+split = "heldout"
+question = "The counter on the printer shows E9. What went wrong?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["E9", "Update error"]
+
+[[questions]]
+id = "omen-table-001"
+category = "table"
+split = "dev"
+question = "What screen resolutions does the OMEN 17 display come in?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["(QHD)", "(FHD)"]
+
+[[questions]]
+id = "omen-table-002"
+category = "table"
+split = "dev"
+question = "How fast is the sequential read speed of the SSD?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["Sequential read", "2150 MBps"]
+
+[[questions]]
+id = "omen-table-003"
+category = "table"
+split = "dev"
+question = "Which agency approves power cords for Sweden?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["Sweden", "SEMKO"]
+
+[[questions]]
+id = "omen-table-004"
+category = "table"
+split = "heldout"
+question = "What is the highest altitude the laptop can be operated at?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["Maximum altitude", "3,048 m"]
+
+[[questions]]
+id = "omen-part-001"
+category = "part_number"
+split = "dev"
+question = "What is the spare part number for the bottom cover of the OMEN 17?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["N96208-001", "Bottom cover"]
+
+[[questions]]
+id = "omen-part-002"
+category = "part_number"
+split = "dev"
+question = "I need a new heat sink for the OMEN 17. Which part number do I order?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["N96206-001", "Heat sink"]
+
+[[questions]]
+id = "omen-part-003"
+category = "part_number"
+split = "dev"
+question = "What part number is the fan kit?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["N96207-001", "Fan kit"]
+
+[[questions]]
+id = "omen-part-004"
+category = "part_number"
+split = "heldout"
+question = "Which spare part do I order for a 16 GB DDR5 memory stick?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["N38627-001", "16 GB"]
+
+[[questions]]
+id = "omen-part-005"
+category = "part_number"
+split = "dev"
+question = "What is the spare part number of the 6-cell battery?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["P04861-001", "6 cell"]
+
+[[questions]]
+id = "omen-part-006"
+category = "part_number"
+split = "dev"
+question = "What is the part number of the QHD 240 Hz display panel?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["N96195-001", "QHD"]
+
+[[questions]]
+id = "omen-part-007"
+category = "part_number"
+split = "dev"
+question = "Which system board fits the Ryzen 7 8845HS with an RTX 4070?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["N96193", "RTX 4070"]
+
+[[questions]]
+id = "omen-part-008"
+category = "part_number"
+split = "heldout"
+question = "What is the spare part number for a UK power cord?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["M51852-001", "United Kingdom"]
+
+[[questions]]
+id = "omen-warning-001"
+category = "warning"
+split = "dev"
+question = "Is it OK to poke at the battery with tweezers or pliers while taking it out?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["sharp objects such as tweezers"]
+
+[[questions]]
+id = "envy-warning-001"
+category = "warning"
+split = "dev"
+question = "Can I push the print carriage aside by hand while the printer is still plugged in?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["unplug the power cord", "carriage by hand"]
+
+[[questions]]
+id = "envy-warning-002"
+category = "warning"
+split = "dev"
+question = "Is it fine to use rubbing alcohol on the scanner glass?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["isopropyl alcohol", "streaks"]
+
+[[questions]]
+id = "omen-warning-002"
+category = "warning"
+split = "dev"
+question = "Can I wipe my OMEN down with a bleach or peroxide cleaner?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["bleach", "peroxides"]
+
+[[questions]]
+id = "omen-warning-003"
+category = "warning"
+split = "dev"
+question = "How little static electricity can already damage electronic parts?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["As little as 700 V"]
+
+[[questions]]
+id = "omen-warning-004"
+category = "warning"
+split = "heldout"
+question = "Can I run a BIOS update while the laptop is on battery?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["running on battery power"]
+
+[[questions]]
+id = "omen-prereq-001"
+category = "prerequisite"
+split = "dev"
+question = "I want to replace the fans. What has to come off before I can reach them?"
+match = "all"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["three Phillips M2.0", "secure each fan"]
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["seven captive Phillips"]
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["four noncaptive Phillips"]
+
+[[questions]]
+id = "omen-prereq-002"
+category = "prerequisite"
+split = "dev"
+question = "How do I swap a RAM module, and what do I have to do first?"
+match = "all"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["retention clips"]
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["four noncaptive Phillips"]
+
+[[questions]]
+id = "omen-prereq-003"
+category = "prerequisite"
+split = "dev"
+question = "Walk me through replacing the system board, including the parts I must take out beforehand."
+match = "all"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["14 Phillips", "system board"]
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["seven captive Phillips"]
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["Disconnect both fan cables"]
+
+[[questions]]
+id = "omen-prereq-004"
+category = "prerequisite"
+split = "heldout"
+question = "To replace the touchpad, which other parts have to be removed beforehand?"
+match = "all"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["Lift the foil"]
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["Before removing the touchpad"]
+
+[[questions]]
+id = "envy-prereq-001"
+category = "prerequisite"
+split = "dev"
+question = "How do I switch on Webscan, and how do I reach the printer's web page in the first place?"
+match = "all"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["Administrator Settings", "Webscan from EWS"]
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["IP address or hostname"]
+
+[[questions]]
+id = "omen-prereq-005"
+category = "prerequisite"
+split = "dev"
+question = "How do I replace the display panel without taking the whole display assembly off?"
+match = "all"
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["Open the computer to 135"]
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["four noncaptive Phillips"]
+
+[[questions]]
+id = "both-ambiguous-001"
+category = "ambiguous"
+split = "dev"
+question = "What do I do when it freezes and won't respond?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["Turn the printer off, then on"]
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["at least 10 seconds"]
+
+[[questions]]
+id = "both-ambiguous-002"
+category = "ambiguous"
+split = "dev"
+question = "How should I clean the outside of it?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["soft, damp, lint-free cloth"]
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["microfiber cloth with water"]
+
+[[questions]]
+id = "both-ambiguous-003"
+category = "ambiguous"
+split = "heldout"
+question = "Where can I find the serial number?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["located inside the cartridge access door"]
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["you might be asked for the serial number"]
+
+[[questions]]
+id = "both-ambiguous-004"
+category = "ambiguous"
+split = "dev"
+question = "How do I reset it to the way it came from the factory?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["original factory defaults"]
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["Reset this PC"]
+
+[[questions]]
+id = "both-ambiguous-005"
+category = "ambiguous"
+split = "dev"
+question = "What does the power button do?"
+match = "any"
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["Press to turn the printer on or off"]
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["initiate Sleep"]
+
+[[questions]]
+id = "omen-followup-001"
+category = "follow_up"
+split = "dev"
+question = "How many screws hold the OMEN 17 battery in place, and what size are they?"
+match = "any"
+context = "User: How do I take the battery out of my OMEN 17?\nAssistant: Explained that the bottom cover comes off first and the battery cable is disconnected."
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["six Phillips M2.0", "secure the battery"]
+
+[[questions]]
+id = "envy-followup-001"
+category = "follow_up"
+split = "heldout"
+question = "After I start WPS Push Button mode on the ENVY 6000, how long does the printer wait for the router?"
+match = "any"
+context = "User: I am connecting my ENVY 6000 to my router with WPS.\nAssistant: Described starting Push Button mode from the back of the printer."
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["approximately two minutes"]
+
+[[questions]]
+id = "envy-followup-002"
+category = "follow_up"
+split = "dev"
+question = "Where can I find the Wi-Fi Direct name and password of the ENVY 6000?"
+match = "any"
+context = "User: How do I use Wi-Fi Direct with my ENVY 6000?\nAssistant: Explained turning Wi-Fi Direct on and connecting from a phone."
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["Wi-Fi Direct name and password"]
+
+[[questions]]
+id = "omen-followup-002"
+category = "follow_up"
+split = "dev"
+question = "Does the SSD in the OMEN 17 need a thermal pad when I install it?"
+match = "any"
+context = "User: I am swapping the SSD in my OMEN 17.\nAssistant: Explained removing the screw and sliding the drive out of its socket."
+
+[[questions.anchors]]
+doc_id = "omen-17-service-guide"
+facts = ["thermal pad is installed"]
+
+[[questions]]
+id = "envy-followup-003"
+category = "follow_up"
+split = "dev"
+question = "On the ENVY 6000, which area should I clear a paper jam from first?"
+match = "any"
+context = "User: My ENVY 6000 has a paper jam.\nAssistant: Said that paper can jam in several areas of the printer."
+
+[[questions.anchors]]
+doc_id = "envy-6000-user-guide"
+facts = ["Clear paper jam from the paper tray first"]
+
+[[questions]]
+id = "oos-unrelated-001"
+category = "out_of_scope"
+split = "dev"
+question = "What is the capital city of Australia?"
+match = "any"
+oos_kind = "unrelated"
+
+[[questions]]
+id = "oos-unrelated-002"
+category = "out_of_scope"
+split = "dev"
+question = "Can you give me a simple recipe for tomato soup?"
+match = "any"
+oos_kind = "unrelated"
+
+[[questions]]
+id = "oos-unrelated-003"
+category = "out_of_scope"
+split = "dev"
+question = "Write a Python function that reverses a string."
+match = "any"
+oos_kind = "unrelated"
+
+[[questions]]
+id = "oos-unrelated-004"
+category = "out_of_scope"
+split = "heldout"
+question = "Who won the football World Cup in 2018?"
+match = "any"
+oos_kind = "unrelated"
+
+[[questions]]
+id = "oos-unrelated-005"
+category = "out_of_scope"
+split = "dev"
+question = "How do I fix a flat tire on a bicycle?"
+match = "any"
+oos_kind = "unrelated"
+
+[[questions]]
+id = "oos-neardomain-001"
+category = "out_of_scope"
+split = "dev"
+question = "How many pages per minute does the ENVY 6000 print in black?"
+match = "any"
+oos_kind = "near_domain"
+
+[[questions]]
+id = "oos-neardomain-002"
+category = "out_of_scope"
+split = "dev"
+question = "How do I overclock the graphics card in the OMEN 17?"
+match = "any"
+oos_kind = "near_domain"
+
+[[questions]]
+id = "oos-neardomain-003"
+category = "out_of_scope"
+split = "dev"
+question = "How do I replace the ink cartridges in an HP DeskJet 2755e?"
+match = "any"
+oos_kind = "near_domain"
+
+[[questions]]
+id = "oos-neardomain-004"
+category = "out_of_scope"
+split = "heldout"
+question = "Does the OMEN 17 have a Thunderbolt 4 port?"
+match = "any"
+oos_kind = "near_domain"
+
+[[questions]]
+id = "oos-neardomain-005"
+category = "out_of_scope"
+split = "dev"
+question = "How do I install the ENVY 6000 driver on a Linux computer?"
+match = "any"
+oos_kind = "near_domain"
