@@ -53,6 +53,7 @@ cheap to build and easy to verify.
   effect today, since Streamlit calls the API server-side.
 - **Migrations at startup:** the backend entrypoint runs `alembic upgrade head`.
   Fine for one replica; with several (Phase 6) a single migration job is needed.
+  Resolved in Phase 1 by ADR 0007: a one-shot `migrate` service runs them.
 - **Pool sizing and `pool_timeout`:** the pool is per process (default 5 + 5
   overflow) and replicas × (size + overflow) must stay under Postgres
   `max_connections`. `pool_timeout` is not set (SQLAlchemy's 30 s default); add an

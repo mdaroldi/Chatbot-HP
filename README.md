@@ -34,7 +34,8 @@ flowchart LR
 - **backend** is the only service on both networks. `GET /health` is liveness and
   never touches dependencies; `GET /ready` probes Postgres (`SELECT 1`) and Qdrant
   (`/readyz`) concurrently and returns `503` with a per-dependency status document
-  when one is down. Migrations (Alembic) run at container start.
+  when one is down. It starts after the one-shot `migrate` (Alembic) and `ingest`
+  services complete ([ADR 0007](docs/adr/0007-startup-order.md)).
 - **postgres** and **qdrant** sit on an internal network with no route out and are
   never published.
 
@@ -114,7 +115,8 @@ A unit test fails if this table, `.env.example` and the `Settings` class disagre
 | `make up` / `make down` | Start (waiting for health) or stop the stack |
 | `make docs-config` | Print the configuration table above |
 | `make check` | lint + typecheck + test + security; run before every commit |
-| `make ingest` / `eval` / `load` | Later phases; print "not implemented yet" and fail |
+| `make ingest` | Build a new vector index now and move the alias (`up` builds only when needed) |
+| `make eval` / `load` | Later phases; print "not implemented yet" and fail |
 
 ## Repository layout
 
@@ -191,8 +193,6 @@ the Makefile, so CI and local runs execute the same commands.
 - Unhandled server errors (500) carry no CORS headers, because the request ID
   middleware sits outside CORS. The frontend calls the API from its server, so it
   is unaffected.
-- Migrations run when the backend container starts; with several replicas they
-  will need a single migration job (Phase 6).
 - The Postgres pool is sized per process and has no explicit `pool_timeout` yet
   (SQLAlchemy's 30 s default applies).
 - The frontend image is about 830 MB, mostly Streamlit's own dependencies.
@@ -206,7 +206,7 @@ The full list, with the reasoning, is in [ADR 0001](docs/adr/0001-architecture-o
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Foundation: repo, tooling, CI, compose, health endpoints | done |
-| 1 | Ingestion: download, parse, clean, chunk, embed, upsert, manifest | pending |
+| 1 | Ingestion: download, parse, clean, chunk, embed, upsert, manifest | in progress |
 | 2 | Retrieval: hybrid search, reranker, golden set, retrieval metrics | pending |
 | 3 | Chat API: LLM gateway, prompt, citations, streaming, history | pending |
 | 4 | Frontend: Streamlit chat UI with conversations and sources | pending |

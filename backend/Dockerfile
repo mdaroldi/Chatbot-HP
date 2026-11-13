@@ -30,18 +30,24 @@ ENV PATH=/opt/venv/bin:$PATH \
 #    or newer, and `make scan-images` passes without them.
 # 2. Drop pip and ensurepip's bundled wheels: no Python package managers at runtime.
 # 3. Add the numeric non-root user the container runs as.
+# 4. Create the ingest cache mount points owned by that user: a named volume copies
+#    its mount point's owner on first use, and a root-owned one is not writable.
 RUN apt-get update \
     && apt-get upgrade --yes --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && python -m pip uninstall --yes pip \
     && rm -rf /usr/local/lib/python3.12/ensurepip \
     && groupadd --system --gid 10001 app \
-    && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin app
+    && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin app \
+    && mkdir -p /var/cache/hpdocs/corpus /var/cache/hpdocs/models \
+    && chown 10001:10001 /var/cache/hpdocs/corpus /var/cache/hpdocs/models
 COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
 COPY alembic.ini ./
 COPY alembic ./alembic
 COPY app ./app
+# The corpus allowlist and the model pins, read from the directory above app/.
+COPY corpus.toml models.toml ./
 COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 USER 10001:10001
 EXPOSE 8000

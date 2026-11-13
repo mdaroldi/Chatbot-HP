@@ -1,6 +1,8 @@
 # Full stack: cp .env.example .env, then `docker compose up --build`.
 # Only the API and the frontend are published, bound to BIND_ADDRESS (default
 # 127.0.0.1). Postgres and Qdrant live on an internal network with no route out.
+# Startup order (ADR 0007): postgres and qdrant healthy -> migrate -> ingest
+# (builds the index only when it is not current) -> backend -> frontend.
 name: hpdocs
 
 x-hardening: &hardening
@@ -10,37 +12,95 @@ x-hardening: &hardening
   tmpfs: ["/tmp"]
   restart: unless-stopped
 
+# The backend image runs the API, the migrations and the ingestion.
+x-backend-image: &backend-image
+  build: ./backend
+  image: hpdocs-backend:local
+  # Same numeric non-root user as the image's USER, stated here so it holds
+  # even if the image changes.
+  user: "10001:10001"
+  init: true
+
+# One-shot jobs: run to completion once per `up`. The image healthcheck probes the
+# API, which these containers never start.
+x-one-shot: &one-shot
+  restart: "no"
+  healthcheck:
+    disable: true
+
+x-logging-env: &logging-env
+  APP_ENV: ${APP_ENV:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_INCLUDE_EXCEPTION_MESSAGES: ${LOG_INCLUDE_EXCEPTION_MESSAGES:-false}
+
+x-postgres-env: &postgres-env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${POSTGRES_DB:-hpdocs}
+  POSTGRES_USER: ${POSTGRES_USER:-hpdocs}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env}
+  POSTGRES_POOL_SIZE: ${POSTGRES_POOL_SIZE:-5}
+  POSTGRES_MAX_OVERFLOW: ${POSTGRES_MAX_OVERFLOW:-5}
+  POSTGRES_CONNECT_TIMEOUT_SECONDS: ${POSTGRES_CONNECT_TIMEOUT_SECONDS:-5}
+
 services:
-  backend:
-    <<: *hardening
-    build: ./backend
-    image: hpdocs-backend:local
-    # Same numeric non-root user as the image's USER, stated here so it holds
-    # even if the image changes.
-    user: "10001:10001"
-    init: true
+  migrate:
+    <<: [*one-shot, *hardening, *backend-image]
+    entrypoint: ["alembic", "-c", "/app/alembic.ini"]
+    command: ["upgrade", "head"]
     environment:
-      APP_ENV: ${APP_ENV:-development}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      LOG_INCLUDE_EXCEPTION_MESSAGES: ${LOG_INCLUDE_EXCEPTION_MESSAGES:-false}
+      <<: [*logging-env, *postgres-env]
+    networks: [data]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  ingest:
+    <<: [*one-shot, *hardening, *backend-image]
+    # `make ingest` runs this service with --force instead.
+    entrypoint: ["python", "-m", "app.ingestion"]
+    command: ["--if-needed"]
+    environment:
+      <<: [*logging-env, *postgres-env]
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION_ALIAS: ${QDRANT_COLLECTION_ALIAS:-hpdocs_chunks}
+      INDEX_KEEP_PREVIOUS: ${INDEX_KEEP_PREVIOUS:-true}
+      CORPUS_DIR: /var/cache/hpdocs/corpus
+      CORPUS_MAX_BYTES: ${CORPUS_MAX_BYTES:-33554432}
+      CORPUS_DOWNLOAD_TIMEOUT_SECONDS: ${CORPUS_DOWNLOAD_TIMEOUT_SECONDS:-120}
+      EMBEDDING_DENSE_MODEL: ${EMBEDDING_DENSE_MODEL:-BAAI/bge-small-en-v1.5}
+      EMBEDDING_SPARSE_MODEL: ${EMBEDDING_SPARSE_MODEL:-Qdrant/bm25}
+      EMBEDDING_CACHE_DIR: /var/cache/hpdocs/models
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
+      CHUNK_MAX_TOKENS: ${CHUNK_MAX_TOKENS:-450}
+      CHUNK_MIN_TOKENS: ${CHUNK_MIN_TOKENS:-65}
+      # huggingface-hub and hf-xet write their own cache and logs under HF_HOME
+      # (default ~/.cache); the root is read-only and the user has no home. The
+      # verified model files still land in EMBEDDING_CACHE_DIR.
+      HF_HOME: /tmp/huggingface
+    # Verified PDFs and model files survive `down`, so later runs need no network.
+    volumes:
+      - corpus-cache:/var/cache/hpdocs/corpus
+      - model-cache:/var/cache/hpdocs/models
+    # edge: downloads the PDFs and the models; data: Postgres and Qdrant.
+    networks: [edge, data]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      qdrant: {condition: service_healthy}
+
+  backend:
+    <<: [*hardening, *backend-image]
+    environment:
+      <<: [*logging-env, *postgres-env]
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8501}
       API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: ${POSTGRES_DB:-hpdocs}
-      POSTGRES_USER: ${POSTGRES_USER:-hpdocs}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env}
-      POSTGRES_POOL_SIZE: ${POSTGRES_POOL_SIZE:-5}
-      POSTGRES_MAX_OVERFLOW: ${POSTGRES_MAX_OVERFLOW:-5}
-      POSTGRES_CONNECT_TIMEOUT_SECONDS: ${POSTGRES_CONNECT_TIMEOUT_SECONDS:-5}
       QDRANT_URL: http://qdrant:6333
       READINESS_TIMEOUT_SECONDS: ${READINESS_TIMEOUT_SECONDS:-2.0}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
     networks: [edge, data]
     depends_on:
-      postgres: {condition: service_healthy}
-      qdrant: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+      ingest: {condition: service_completed_successfully}
 
   frontend:
     <<: *hardening
@@ -112,3 +172,5 @@ volumes:
   postgres-data:
   qdrant-data:
   qdrant-snapshots:
+  corpus-cache:
+  model-cache:

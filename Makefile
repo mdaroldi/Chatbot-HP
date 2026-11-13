@@ -109,8 +109,10 @@ inspect-chunks: ## Write every chunk to ingest-review/chunks.md for local review
 	cd $(BACKEND) && POSTGRES_PASSWORD=unused-by-inspect-chunks uv run --frozen \
 		python -m app.ingestion --inspect-chunks ../ingest-review/chunks.md
 
-ingest: ## Build the vector index
-	@echo "not implemented yet"; exit 1
+# `docker compose up` builds the index only when it is not current (--if-needed);
+# this target always builds a new one and moves the alias (ADR 0007).
+ingest: ## Rebuild the vector index now (forced) through compose
+	docker compose run --rm --build ingest --force
 
 eval: ## Run the quality benchmark
 	@echo "not implemented yet"; exit 1

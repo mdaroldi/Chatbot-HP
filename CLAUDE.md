@@ -74,6 +74,11 @@ Makefile
 .env.example
 ```
 
+Startup order (ADR 0007): `postgres` and `qdrant` healthy -> one-shot `migrate`
+(`alembic upgrade head`) -> one-shot `ingest` (`--if-needed`) -> `backend` -> `frontend`.
+Migrations do not run in the backend entrypoint. There are no compose profiles: every
+service runs on a plain `docker compose up`.
+
 Dependency rule: `api` -> `services` -> `domain` <- `infra`. `domain` imports nothing from the other layers. External systems are reached only through interfaces defined in `domain`, injected with FastAPI dependencies.
 
 ## Commands
@@ -88,7 +93,7 @@ make test         # unit tests with coverage gate (branch coverage, fail under 9
 make test-int     # integration tests (needs Docker)
 make security     # bandit, pip-audit, gitleaks
 make up / down    # docker compose up / down
-make ingest       # build the vector index
+make ingest       # force a new index build through compose (up builds only when needed)
 make model-pins   # regenerate backend/models.toml and print the diff (manual, review before committing)
 make eval         # run the quality benchmark
 make load         # run the load test
@@ -179,7 +184,7 @@ Rules:
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Foundation: repo, tooling, CI, compose skeleton, health endpoints | done |
-| 1 | Ingestion: download, parse, clean, chunk, embed, upsert, manifest | pending |
+| 1 | Ingestion: download, parse, clean, chunk, embed, upsert, manifest | in progress (commits 1-10b done; 11, 12 pending) |
 | 2 | Retrieval: hybrid search, reranker, golden set, retrieval metrics | pending |
 | 3 | Chat API: LLM gateway, prompt, citations, streaming, history | pending |
 | 4 | Frontend: Streamlit chat UI with conversations and sources | pending |

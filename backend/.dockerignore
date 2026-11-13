@@ -6,6 +6,8 @@
 !alembic.ini
 !alembic/
 !app/
+!corpus.toml
+!models.toml
 !docker-entrypoint.sh
 **/__pycache__
 **/*.py[cod]

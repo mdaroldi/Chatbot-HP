@@ -11,14 +11,22 @@ from typing import Any
 import pytest
 import yaml
 
+from app.core.settings import Settings
+
 REPO = pathlib.Path(__file__).resolve().parents[3]
 COMPOSE = REPO / "docker-compose.yml"
 TEST_COMPOSE = REPO / "docker-compose.test.yml"
 
-SERVICES = {"backend", "frontend", "postgres", "qdrant"}
+SERVICES = {"backend", "frontend", "postgres", "qdrant", "migrate", "ingest"}
 APP_SERVICES = {"backend", "frontend"}
 DATA_SERVICES = {"postgres", "qdrant"}
+ONE_SHOT_SERVICES = {"migrate", "ingest"}
+BACKEND_IMAGE_SERVICES = {"backend", *ONE_SHOT_SERVICES}
 BIND = "${BIND_ADDRESS:-127.0.0.1}"
+BACKEND_IMAGE = "hpdocs-backend:local"
+APP_USER = "10001:10001"
+CORPUS_CACHE = "/var/cache/hpdocs/corpus"
+MODEL_CACHE = "/var/cache/hpdocs/models"
 
 # Any: parsed YAML is untyped by nature; each test asserts the shape it relies on.
 Service = dict[str, Any]
@@ -41,7 +49,7 @@ def services(compose: dict[str, Any]) -> dict[str, Service]:
     return found
 
 
-def test_stack_has_exactly_the_four_services(services: dict[str, Service]) -> None:
+def test_stack_has_exactly_the_six_services(services: dict[str, Service]) -> None:
     assert set(services) == SERVICES
 
 
@@ -77,6 +85,8 @@ def test_every_service_runs_as_non_root(services: dict[str, Service], name: str)
     if name == "qdrant":
         assert services[name]["image"].startswith("qdrant/qdrant:")
         assert "-unprivileged@" in services[name]["image"]
+    if name in BACKEND_IMAGE_SERVICES:
+        assert user == APP_USER
 
 
 def test_only_api_and_frontend_publish_ports_on_the_bind_address(
@@ -87,18 +97,19 @@ def test_only_api_and_frontend_publish_ports_on_the_bind_address(
     assert published == APP_SERVICES
     assert services["backend"]["ports"] == [f"{BIND}:${{API_PORT:-8000}}:8000"]
     assert services["frontend"]["ports"] == [f"{BIND}:${{FRONTEND_PORT:-8501}}:8501"]
-    for name in DATA_SERVICES:
-        assert "expose" not in services[name]
+    assert {name for name, service in services.items() if "expose" in service} == set()
 
 
-def test_data_network_is_internal_and_only_backend_bridges_it(
+def test_data_network_is_internal_and_only_backend_and_ingest_bridge_it(
     compose: dict[str, Any], services: dict[str, Service]
 ) -> None:
+    """ingest also bridges it: it downloads the PDFs and models, then writes the index."""
     assert compose["networks"]["data"]["internal"] is True
     assert compose["networks"]["edge"].get("internal") is not True
     assert set(services["backend"]["networks"]) == {"edge", "data"}
+    assert set(services["ingest"]["networks"]) == {"edge", "data"}
     assert set(services["frontend"]["networks"]) == {"edge"}
-    for name in DATA_SERVICES:
+    for name in {*DATA_SERVICES, "migrate"}:
         assert set(services[name]["networks"]) == {"data"}
 
 
@@ -110,7 +121,7 @@ def test_third_party_images_are_pinned_by_digest(services: dict[str, Service], n
 def test_postgres_password_is_required_and_never_defaulted(
     services: dict[str, Service],
 ) -> None:
-    for name in ("backend", "postgres"):
+    for name in ("backend", "postgres", "migrate", "ingest"):
         required = "${POSTGRES_PASSWORD:?set it in .env}"
         assert services[name]["environment"]["POSTGRES_PASSWORD"] == required
     assert "POSTGRES_PASSWORD" not in services["frontend"]["environment"]
@@ -121,9 +132,42 @@ def test_qdrant_telemetry_is_disabled(services: dict[str, Service]) -> None:
     assert services["qdrant"]["environment"]["QDRANT__TELEMETRY_DISABLED"] == "true"
 
 
-def test_app_services_use_an_init_process(services: dict[str, Service]) -> None:
-    for name in APP_SERVICES:
+def test_app_and_one_shot_services_use_an_init_process(services: dict[str, Service]) -> None:
+    for name in APP_SERVICES | ONE_SHOT_SERVICES:
         assert services[name]["init"] is True
+
+
+@pytest.mark.parametrize("name", sorted(ONE_SHOT_SERVICES))
+def test_one_shot_services_run_once_without_the_api_healthcheck(
+    services: dict[str, Service], name: str
+) -> None:
+    """The shared hardening restarts services; a finished job must stay finished."""
+    service = services[name]
+
+    assert service["restart"] == "no"
+    assert service["healthcheck"] == {"disable": True}
+
+
+def test_long_running_services_restart(services: dict[str, Service]) -> None:
+    for name in APP_SERVICES | DATA_SERVICES:
+        assert services[name]["restart"] == "unless-stopped"
+
+
+@pytest.mark.parametrize("name", sorted(BACKEND_IMAGE_SERVICES))
+def test_backend_image_services_share_one_build(services: dict[str, Service], name: str) -> None:
+    assert services[name]["image"] == BACKEND_IMAGE
+    assert services[name]["build"] == "./backend"
+
+
+def test_migrate_applies_migrations_and_ingest_builds_only_when_needed(
+    services: dict[str, Service],
+) -> None:
+    assert services["migrate"]["entrypoint"] == ["alembic", "-c", "/app/alembic.ini"]
+    assert services["migrate"]["command"] == ["upgrade", "head"]
+    assert services["ingest"]["entrypoint"] == ["python", "-m", "app.ingestion"]
+    assert services["ingest"]["command"] == ["--if-needed"]
+    assert "entrypoint" not in services["backend"]
+    assert "command" not in services["backend"]
 
 
 @pytest.mark.parametrize("name", sorted(DATA_SERVICES))
@@ -131,17 +175,80 @@ def test_data_services_have_healthchecks(services: dict[str, Service], name: str
     assert services[name]["healthcheck"]["test"]
 
 
-def test_startup_order_waits_for_healthy_dependencies(services: dict[str, Service]) -> None:
-    backend_deps = services["backend"]["depends_on"]
-    frontend_deps = services["frontend"]["depends_on"]
+def conditions(service: Service) -> dict[str, str]:
+    return {name: dep["condition"] for name, dep in service["depends_on"].items()}
 
-    assert {name: dep["condition"] for name, dep in backend_deps.items()} == {
-        "postgres": "service_healthy",
+
+def test_startup_order_runs_migrate_then_ingest_before_the_backend(
+    services: dict[str, Service],
+) -> None:
+    """postgres, qdrant healthy -> migrate -> ingest -> backend -> frontend (ADR 0007)."""
+    assert conditions(services["migrate"]) == {"postgres": "service_healthy"}
+    assert conditions(services["ingest"]) == {
+        "migrate": "service_completed_successfully",
         "qdrant": "service_healthy",
     }
-    assert {name: dep["condition"] for name, dep in frontend_deps.items()} == {
-        "backend": "service_healthy",
+    assert conditions(services["backend"]) == {
+        "migrate": "service_completed_successfully",
+        "ingest": "service_completed_successfully",
     }
+    assert conditions(services["frontend"]) == {"backend": "service_healthy"}
+
+
+# Settings ingestion reads, passed through from .env; the rest of its settings are
+# fixed by the stack (hosts and cache paths) or unused by it (API-only settings).
+INGEST_FROM_ENV_PREFIXES = ("postgres_", "qdrant_collection_", "index_", "embedding_", "chunk_")
+INGEST_FROM_ENV_EXTRA = {"app_env", "log_level", "log_include_exception_messages"}
+INGEST_FIXED = {
+    "POSTGRES_HOST": "postgres",
+    "POSTGRES_PORT": "5432",
+    "QDRANT_URL": "http://qdrant:6333",
+    "CORPUS_DIR": CORPUS_CACHE,
+    "EMBEDDING_CACHE_DIR": MODEL_CACHE,
+}
+# Not a setting: huggingface-hub and hf-xet keep their own cache and logs under
+# HF_HOME (default ~/.cache), which the read-only root and the home-less user block.
+INGEST_LIBRARY_ENV = {"HF_HOME": "/tmp/huggingface"}  # noqa: S108 - a tmpfs path in compose
+
+
+def test_ingest_gets_every_setting_it_reads(services: dict[str, Service]) -> None:
+    environment: dict[str, str] = services["ingest"]["environment"]
+    fields = set(Settings.model_fields)
+    from_env = {
+        name.upper()
+        for name in fields
+        if name.startswith((*INGEST_FROM_ENV_PREFIXES, "corpus_")) or name in INGEST_FROM_ENV_EXTRA
+    } - set(INGEST_FIXED)
+
+    assert set(environment) == from_env | set(INGEST_FIXED) | set(INGEST_LIBRARY_ENV)
+    assert {k: v for k, v in environment.items() if k in INGEST_FIXED} == INGEST_FIXED
+    assert {k: environment[k] for k in INGEST_LIBRARY_ENV} == INGEST_LIBRARY_ENV
+    assert [k for k in from_env if not str(environment[k]).startswith(f"${{{k}:")] == []
+    assert {name.lower() for name in set(environment) - set(INGEST_LIBRARY_ENV)} <= fields
+
+
+def test_migrate_gets_the_database_and_logging_settings(services: dict[str, Service]) -> None:
+    environment: dict[str, str] = services["migrate"]["environment"]
+    ingest: dict[str, str] = services["ingest"]["environment"]
+    expected = {k for k in ingest if k.startswith("POSTGRES_")} | {
+        "APP_ENV",
+        "LOG_LEVEL",
+        "LOG_INCLUDE_EXCEPTION_MESSAGES",
+    }
+
+    assert set(environment) == expected
+    assert {k: environment[k] for k in expected} == {k: ingest[k] for k in expected}
+
+
+def test_ingest_caches_the_corpus_and_models_in_named_volumes(
+    compose: dict[str, Any], services: dict[str, Service]
+) -> None:
+    assert services["ingest"]["volumes"] == [
+        f"corpus-cache:{CORPUS_CACHE}",
+        f"model-cache:{MODEL_CACHE}",
+    ]
+    assert {"corpus-cache", "model-cache"} <= set(compose["volumes"])
+    assert "volumes" not in services["migrate"]
 
 
 def test_data_lives_in_named_volumes(compose: dict[str, Any], services: dict[str, Service]) -> None:
@@ -188,6 +295,37 @@ def test_app_services_are_built_from_digest_pinned_base_images(
         arg = re.fullmatch(r"\$\{(\w+)\}", stage)
         assert arg is not None, f"{name}: FROM {stage} must use a pinned *_IMAGE argument"
         assert arg.group(1) in image_args
+
+
+def backend_file(name: str) -> str:
+    return (REPO / "backend" / name).read_text()
+
+
+def test_backend_image_ships_the_corpus_and_model_pins_next_to_the_app() -> None:
+    """corpus.py and model_files.py resolve both files as parents[2] of the module."""
+    text = backend_file("Dockerfile")
+    allowed = backend_file(".dockerignore").splitlines()
+
+    assert re.search(r"^WORKDIR /app$", text, flags=re.MULTILINE)
+    assert re.search(r"^COPY app \./app$", text, flags=re.MULTILINE)
+    assert re.search(r"^COPY corpus\.toml models\.toml \./$", text, flags=re.MULTILINE)
+    assert {"!corpus.toml", "!models.toml"} <= set(allowed)
+
+
+def test_backend_image_owns_the_ingest_cache_mount_points() -> None:
+    """A named volume copies its mount point's owner on first use; root would block 10001."""
+    text = backend_file("Dockerfile")
+
+    assert f"mkdir -p {CORPUS_CACHE} {MODEL_CACHE}" in text
+    assert f"chown {APP_USER} {CORPUS_CACHE} {MODEL_CACHE}" in text
+
+
+def test_backend_entrypoint_only_starts_the_api() -> None:
+    """Migrations moved to the one-shot migrate service (ADR 0007)."""
+    script = backend_file("docker-entrypoint.sh")
+
+    assert "alembic" not in script
+    assert script.rstrip().splitlines()[-1].startswith("exec uvicorn app.main:create_app")
 
 
 @pytest.mark.parametrize("name", sorted(APP_SERVICES))
