@@ -167,6 +167,9 @@ checked on 2026-11-12. The revisions are the ones pinned first.
   line (`model`, `file`, `error_type`; never the message, which holds digests and URLs)
   and exit code 1, with no collection and no `index_builds` row. `ModelDownloadError`
   now carries the model name for that line.
+- `ModelNotAllowedError` carries the requested model name too, and `ModelPinsError` carries
+  it when the problem belongs to one model (a duplicate pin, a model fastembed does not
+  know, a repository missing a required file); a malformed pins file logs `model: null`.
 - `--if-needed` compares the pins in `models.toml` (source, revision and every file
   digest) with the live build's `models`; a model with no pin counts as changed, so
   the build goes on and fails on `ModelNotAllowedError`.

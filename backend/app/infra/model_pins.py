@@ -59,7 +59,7 @@ def fastembed_files(name: str) -> FastembedFiles:
                 required = (description["model_file"], *description["additional_files"])
                 optional = tuple(f for f in FASTEMBED_COMMON_FILES if f not in required)
                 return FastembedFiles(description["sources"]["hf"], required, optional)
-    raise ModelPinsError(f"fastembed has no model named {name}")
+    raise ModelPinsError(f"fastembed has no model named {name}", model=name)
 
 
 def _pin(name: str, hub: PinsHub, wanted: FastembedFiles, workdir: Path) -> ModelFiles:
@@ -67,7 +67,9 @@ def _pin(name: str, hub: PinsHub, wanted: FastembedFiles, workdir: Path) -> Mode
     listed = set(hub.list_files(wanted.source, revision))
     missing = [f for f in wanted.required if f not in listed]
     if missing:
-        raise ModelPinsError(f"{name}: {wanted.source}@{revision} lacks {', '.join(missing)}")
+        raise ModelPinsError(
+            f"{name}: {wanted.source}@{revision} lacks {', '.join(missing)}", model=name
+        )
     files = sorted(f for f in (*wanted.required, *wanted.optional) if f in listed)
     folder = hub.download(wanted.source, revision, files, workdir, force=True)
     digests = hash_files(folder, files)

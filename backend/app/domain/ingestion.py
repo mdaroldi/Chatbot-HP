@@ -102,11 +102,19 @@ class ModelError(Exception):
 
 
 class ModelPinsError(ModelError):
-    """models.toml is unreadable or malformed."""
+    """models.toml is unreadable or malformed, or a model cannot be pinned."""
+
+    def __init__(self, message: str, *, model: str | None = None) -> None:
+        super().__init__(message)
+        self.model = model  # when the problem belongs to one model (ADR 0006 log line)
 
 
 class ModelNotAllowedError(ModelError):
     """The configured model has no pin, so it may not be downloaded or loaded."""
+
+    def __init__(self, message: str, *, model: str) -> None:
+        super().__init__(message)
+        self.model = model  # for the CLI's one structured log line (ADR 0006)
 
 
 class ModelDownloadError(ModelError):

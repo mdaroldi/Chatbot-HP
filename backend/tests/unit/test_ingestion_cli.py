@@ -18,6 +18,7 @@ from app.domain.ingestion import (
     ModelDownloadError,
     ModelIntegrityError,
     ModelNotAllowedError,
+    ModelPinsError,
     VerifiedModel,
 )
 from app.infra.corpus_http import HttpCorpusSource
@@ -149,19 +150,27 @@ def test_a_model_failure_logs_one_line_and_exits_non_zero(
     assert world.manifest.builds == []
 
 
-def test_a_model_without_a_pin_is_a_model_failure(
-    world: World, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    ("error", "model"),
+    [
+        (ModelNotAllowedError("demo/dense has no pin", model="demo/dense"), "demo/dense"),
+        (ModelPinsError("duplicate name: demo/dense", model="demo/dense"), "demo/dense"),
+        (ModelPinsError("model pins need at least one model"), None),
+    ],
+)
+def test_a_model_without_a_valid_pin_is_a_model_failure_naming_the_model(
+    world: World, caplog: pytest.LogCaptureFixture, error: Exception, model: str | None
 ) -> None:
-    world.models.error = ModelNotAllowedError("demo/dense has no pin")
+    world.models.error = error
 
     assert main(["--force"], runtime=runtime_of(world)) == 1
 
     [record] = errors(caplog)
     assert (record.getMessage(), record.__dict__["error_type"]) == (
         "embedding model check failed",
-        "ModelNotAllowedError",
+        type(error).__name__,
     )
-    assert record.__dict__["model"] is None
+    assert (record.__dict__["model"], record.__dict__["file"]) == (model, None)
 
 
 def test_a_failed_build_logs_its_error_type_and_exits_non_zero(

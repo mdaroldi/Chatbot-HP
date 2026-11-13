@@ -66,6 +66,15 @@ def test_invalid_pins_are_rejected(text: str, message: str) -> None:
         parse_pins(text)
 
 
+def test_a_pins_error_names_the_model_only_when_it_is_known() -> None:
+    with pytest.raises(ModelPinsError) as duplicate:
+        parse_pins(PINS + PINS)
+    with pytest.raises(ModelPinsError) as malformed:
+        parse_pins("models = [1]")
+
+    assert (duplicate.value.model, malformed.value.model) == ("demo/dense", None)
+
+
 def test_rendered_pins_parse_back_to_the_same_models() -> None:
     models = [pin(), pin(name="demo/sparse", source="demo/sparse")]
 
@@ -149,9 +158,10 @@ async def test_verified_cache_is_used_without_any_hub_call(tmp_path: Path) -> No
 async def test_model_without_a_pin_is_never_downloaded(tmp_path: Path) -> None:
     hub = hub_with()
 
-    with pytest.raises(ModelNotAllowedError, match="other/model"):
+    with pytest.raises(ModelNotAllowedError, match="other/model") as refused:
         await source(hub, tmp_path).fetch("other/model")
 
+    assert refused.value.model == "other/model"
     assert hub.downloads == []
 
 

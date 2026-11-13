@@ -46,8 +46,10 @@ def test_regenerate_pins_fastembeds_files_at_the_current_revision(tmp_path: Path
 
 
 def test_repository_without_a_required_file_cannot_be_pinned(tmp_path: Path) -> None:
-    with pytest.raises(ModelPinsError, match=r"demo/dense: .* lacks model.onnx"):
+    with pytest.raises(ModelPinsError, match=r"demo/dense: .* lacks model.onnx") as missing:
         regenerate(["demo/dense"], hub({"tokenizer.json": b"{}"}), describe, tmp_path)
+
+    assert missing.value.model == "demo/dense"
 
 
 def test_listed_file_the_hub_does_not_serve_is_a_download_error(tmp_path: Path) -> None:
@@ -119,5 +121,7 @@ def test_fastembed_lists_the_sparse_models_files() -> None:
 
 
 def test_model_fastembed_does_not_know_cannot_be_pinned() -> None:
-    with pytest.raises(ModelPinsError, match="fastembed has no model named demo/unknown"):
+    with pytest.raises(ModelPinsError, match="no model named demo/unknown") as unknown:
         fastembed_files("demo/unknown")
+
+    assert unknown.value.model == "demo/unknown"

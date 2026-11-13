@@ -81,7 +81,7 @@ def parse_pins(text: str) -> dict[str, ModelFiles]:
     for position, raw in enumerate(raw_models):
         model = _model(raw, position)
         if model.name in pins:
-            raise ModelPinsError(f"duplicate name: {model.name}")
+            raise ModelPinsError(f"duplicate name: {model.name}", model=model.name)
         pins[model.name] = model
     return pins
 
@@ -236,7 +236,7 @@ class PinnedModelSource:
     async def fetch(self, name: str) -> VerifiedModel:
         pin = self._pins.get(name)
         if pin is None:
-            raise ModelNotAllowedError(f"{name} has no pin in {MODEL_PINS.name}")
+            raise ModelNotAllowedError(f"{name} has no pin in {MODEL_PINS.name}", model=name)
         files = sorted(pin.files)
         folder = snapshot_dir(self._cache_dir, pin.source, pin.revision)
         digests = await asyncio.to_thread(hash_files, folder, files)
