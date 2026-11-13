@@ -13,3 +13,4 @@ considered, consequences.
 | [0006](0006-embedding-model-files.md) | Pinned and verified embedding model files, recorded per build |
 | [0007](0007-startup-order.md) | Startup order: one-shot migrate and ingest services before the API |
 | [0008](0008-baked-models-and-inference.md) | Models baked into the backend image, read offline; inference threading |
+| [0009](0009-retrieval-strategy-and-evaluation.md) | Retrieval strategy and evaluation method (in progress in Phase 2) |

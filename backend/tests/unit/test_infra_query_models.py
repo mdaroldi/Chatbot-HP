@@ -218,3 +218,17 @@ async def test_models_from_settings_build_the_adapters_with_the_settings_and_the
 
     assert subject.state is ModelsState.READY
     assert seen == [("embedder", settings, executor), ("reranker", settings, executor)]
+
+
+async def test_the_verified_model_files_are_known_once_loaded(
+    executor: ThreadPoolExecutor,
+) -> None:
+    """The index probe compares them with the files the index was built with."""
+    subject = models(FakeSource(), Builds(), executor)
+    with pytest.raises(ModelsNotReadyError):
+        subject.verified_files()
+
+    await subject.load()
+
+    dense, sparse = subject.verified_files()
+    assert (dense.name, dense.source, sparse.name) == ("demo/dense", "demo/dense-src", "demo/bm25")

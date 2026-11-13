@@ -19,7 +19,7 @@ from typing import Self
 
 from app.core.settings import Settings
 from app.domain.health import DependencyUnavailableError, FailureReason
-from app.domain.ingestion import ModelSource, VerifiedModel
+from app.domain.ingestion import ModelFiles, ModelSource, VerifiedModel
 from app.domain.retrieval import ModelsNotReadyError, QueryEmbedder, Reranker
 from app.infra.fastembed_embedder import FastembedEmbedder
 from app.infra.fastembed_reranker import FastembedReranker
@@ -78,6 +78,7 @@ class QueryModels:
         self._source, self._executor = source, executor
         self._build_embedder, self._build_reranker = build_embedder, build_reranker
         self._embedder: QueryEmbedder | None = None
+        self._verified: tuple[ModelFiles, ModelFiles] | None = None
         self._rerankers: dict[str, Reranker] = {}
         self._reranker_lock = asyncio.Lock()
 
@@ -126,7 +127,8 @@ class QueryModels:
                 "query models failed to load", extra={"error_type": self.error_type}
             )
             return
-        self._embedder, self.state = embedder, ModelsState.READY
+        self._embedder, self._verified = embedder, (dense.files, sparse.files)
+        self.state = ModelsState.READY
         logger.info("query models ready", extra=self.describe())
 
     async def _load_reranker(self, name: str) -> Reranker:
@@ -153,6 +155,12 @@ class QueryModels:
             if wanted not in self._rerankers:
                 await self._load_reranker(wanted)
         return self._rerankers[wanted]
+
+    def verified_files(self) -> tuple[ModelFiles, ModelFiles]:
+        """The dense and sparse files hashed at load; the index must use the same."""
+        if self.state is not ModelsState.READY or self._verified is None:
+            raise ModelsNotReadyError(f"query models are {self.state.value}")
+        return self._verified
 
     def describe(self) -> dict[str, str]:
         return {

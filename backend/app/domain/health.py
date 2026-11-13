@@ -38,6 +38,8 @@ class FailureReason(StrEnum):
     UNREACHABLE = "unreachable"
     LOADING = "loading"
     FAILED = "failed"
+    MISSING = "missing"
+    INCOMPATIBLE = "incompatible"
 
 
 @dataclass(frozen=True)

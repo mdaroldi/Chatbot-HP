@@ -7,12 +7,14 @@ from typing import cast
 
 import httpx
 import pytest
+from qdrant_client import AsyncQdrantClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.settings import Settings
 from app.infra.inference import CpuAllowance, CpuSource
 from app.infra.lifecycle import open_infrastructure
 from app.infra.probes import PostgresProbe, QdrantProbe
+from app.infra.qdrant_search import IndexProbe
 from app.infra.query_models import ModelNames, ModelsProbe, ModelsState, QueryModels
 from app.main import create_app
 from tests.unit.conftest import SettingsFactory
@@ -40,6 +42,16 @@ def is_shut_down(executor: Executor | None) -> bool:
     return isinstance(executor, ThreadPoolExecutor) and executor._shutdown
 
 
+class SpyQdrant:
+    """Stands in for AsyncQdrantClient: the lifespan only builds and closes it."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def close(self) -> None:
+        self.closed = True
+
+
 class Factories:
     """Records what open_infrastructure created so the test can inspect cleanup."""
 
@@ -50,6 +62,10 @@ class Factories:
         self.source = source or FakeSource()
         self.models: QueryModels | None = None
         self.executor: Executor | None = None
+        self.qdrant = SpyQdrant()
+
+    def qdrant_factory(self, _: Settings) -> AsyncQdrantClient:
+        return cast(AsyncQdrantClient, self.qdrant)
 
     def engine_factory(self, _: Settings) -> AsyncEngine:
         return cast(AsyncEngine, self.engine)
@@ -87,9 +103,10 @@ async def test_open_infrastructure_builds_probes_and_closes_everything_on_exit(
         engine_factory=factories.engine_factory,
         http_client_factory=factories.http_client_factory,
         models_factory=factories.models_factory,
+        qdrant_client_factory=factories.qdrant_factory,
         cpu_allowance_factory=lambda: within(8),
     ) as infra:
-        assert [probe.name for probe in infra.probes] == ["postgres", "qdrant", "models"]
+        assert [probe.name for probe in infra.probes] == ["postgres", "qdrant", "models", "index"]
         assert factories.client is not None
         assert not is_closed(factories.client)
         assert not factories.engine.disposed()
@@ -97,6 +114,7 @@ async def test_open_infrastructure_builds_probes_and_closes_everything_on_exit(
     assert is_closed(factories.client)
     assert factories.engine.disposed()
     assert is_shut_down(factories.executor)
+    assert factories.qdrant.closed
 
 
 async def test_engine_is_disposed_when_startup_fails_halfway(
@@ -110,6 +128,7 @@ async def test_engine_is_disposed_when_startup_fails_halfway(
             engine_factory=factories.engine_factory,
             http_client_factory=factories.http_client_factory,
             models_factory=factories.models_factory,
+            qdrant_client_factory=factories.qdrant_factory,
             cpu_allowance_factory=lambda: within(8),
         ):
             pytest.fail("startup should not have completed")
@@ -128,6 +147,7 @@ async def test_everything_is_closed_when_a_later_startup_step_fails(
             engine_factory=factories.engine_factory,
             http_client_factory=factories.http_client_factory,
             models_factory=factories.models_factory,
+            qdrant_client_factory=factories.qdrant_factory,
             cpu_allowance_factory=lambda: within(8),
         ):
             raise LookupError
@@ -136,6 +156,7 @@ async def test_everything_is_closed_when_a_later_startup_step_fails(
     assert is_closed(factories.client)
     assert factories.engine.disposed()
     assert is_shut_down(factories.executor)
+    assert factories.qdrant.closed
 
 
 # ------------------------------------------------------------------ query models (Phase 2)
@@ -151,6 +172,7 @@ async def test_the_models_load_in_the_background_and_become_ready(
         engine_factory=factories.engine_factory,
         http_client_factory=factories.http_client_factory,
         models_factory=factories.models_factory,
+        qdrant_client_factory=factories.qdrant_factory,
         cpu_allowance_factory=lambda: within(8),
     ) as infra:
         assert infra.models is factories.models
@@ -170,6 +192,7 @@ async def test_startup_does_not_wait_for_the_models(make_settings: SettingsFacto
         engine_factory=factories.engine_factory,
         http_client_factory=factories.http_client_factory,
         models_factory=factories.models_factory,
+        qdrant_client_factory=factories.qdrant_factory,
         cpu_allowance_factory=lambda: within(8),
     ) as infra:
         await asyncio.wait_for(source.started.wait(), timeout=2)
@@ -191,6 +214,7 @@ async def test_more_inference_threads_than_cpus_is_logged_at_startup(
             engine_factory=factories.engine_factory,
             http_client_factory=factories.http_client_factory,
             models_factory=factories.models_factory,
+            qdrant_client_factory=factories.qdrant_factory,
             cpu_allowance_factory=lambda: within(2),
         ):
             pass
@@ -208,7 +232,12 @@ async def test_app_lifespan_registers_real_probes_and_closes_them_on_shutdown(
     async with application.router.lifespan_context(application):
         infra = application.state.infrastructure
         probes = application.state.readiness_probes
-        assert [type(probe) for probe in probes] == [PostgresProbe, QdrantProbe, ModelsProbe]
+        assert [type(probe) for probe in probes] == [
+            PostgresProbe,
+            QdrantProbe,
+            ModelsProbe,
+            IndexProbe,
+        ]
         assert not is_closed(infra.http_client)
 
     assert is_closed(infra.http_client)
