@@ -87,7 +87,7 @@ def test_a_short_section_is_one_chunk_with_the_path_prefix() -> None:
     assert only.section_path == sections[0].path
     assert only.pages == PageRange(pdf_start=1, pdf_end=2, printed_start=5, printed_end=6)
     assert (only.content_type, only.has_warning) == (ContentType.REFERENCE, False)
-    assert (only.chunking_version, only.token_count) == ("v1", 11)
+    assert (only.chunking_version, only.token_count) == ("v2", 11)
 
 
 def test_chunk_ids_follow_the_formula_and_are_stable() -> None:
@@ -309,4 +309,4 @@ def test_front_matter_chunks_have_their_own_type_before_the_title_rules() -> Non
 
 
 def test_the_chunker_reports_its_version() -> None:
-    assert StructureChunker(WordTokenCounter(), 450, 0).version == "v1"
+    assert StructureChunker(WordTokenCounter(), 450, 0).version == "v2"

@@ -140,6 +140,34 @@ def test_a_band_of_body_size_text_splits_tables_of_the_same_width() -> None:
     ]
 
 
+def test_a_band_with_any_body_size_line_splits_tables_even_when_captions_dominate() -> None:
+    """A heading and intro over the next table's caption: mostly 9 pt, still no row."""
+    first_lines, first_grid = bordered_table(top=100)
+    second_lines, second_grid = bordered_table(top=300)
+    # 4 + 10 characters above 9 pt, 15 in the 9 pt caption "Table 1-1 Parts".
+    between = [
+        cell("Keys", 55, 200, size=14),
+        cell("Find keys.", 55, 220, size=10),
+    ]
+
+    tables = extract_tables([*first_lines, *between, *second_lines], [*first_grid, *second_grid])
+
+    assert [(t.top, t.bottom, t.header) for t in tables] == [
+        (100, 180, BORDERED.header),
+        (300, 380, BORDERED.header),
+    ]
+
+
+def test_a_band_of_table_size_lines_only_is_a_row() -> None:
+    """Cells (8 pt) next to a caption-size line (9 pt) stay one row."""
+    lines, grid = bordered_table()
+    note = cell("see note", 100, 167, size=9)
+
+    tables = extract_tables([*lines, note], grid)
+
+    assert [row[1] for row in tables[0].rows] == ["Display", "Bottom cover see note"]
+
+
 def test_boxed_notes_in_body_size_are_not_tables() -> None:
     lines, grid = bordered_table()
     notes = [

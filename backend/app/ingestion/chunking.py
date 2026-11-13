@@ -27,7 +27,7 @@ from app.domain.ingestion import (
 )
 from app.ingestion.front_matter import FRONT_MATTER
 
-VERSION = "v1"
+VERSION = "v2"
 # Fixed forever: chunk ids must not change between runs (uuid5 of NAMESPACE_URL and
 # "hpdocs:chunk-ids").
 CHUNK_NAMESPACE = uuid.UUID("44422236-3dac-56e6-b77d-fb1c07c18519")

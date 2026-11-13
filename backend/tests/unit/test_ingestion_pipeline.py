@@ -75,12 +75,13 @@ class World:
         self.models = FakeModels(self.calls, folder)
         self.embedder = FakeEmbedder(self.calls)
         self.counts: Mapping[str, int] = COUNTS
+        self.version = CONFIG.chunking_version  # what the fake chunker stamps on chunks
         self.now = CLOCK
 
     def _processor(self, dense: object) -> FakeProcessor:
         self.calls.log.append(("build", "processor"))
         assert dense is not None
-        return FakeProcessor(self.calls, self.counts)
+        return FakeProcessor(self.calls, self.counts, self.version)
 
     def _embedder(self, dense: object, sparse: object) -> FakeEmbedder:
         self.calls.log.append(("build", "embedder"))

@@ -22,7 +22,7 @@ MAX_TOKENS = 450
 # Re-measured at commit 7: 65 tokens is the floor that best reproduces the merges of
 # the earlier 50-word floor (25 mergeable sections under each, one differs each way).
 MIN_TOKENS = 65
-CHUNKS = {ENVY: 149, OMEN: 141}
+CHUNKS = {ENVY: 149, OMEN: 138}
 
 
 @pytest.fixture(scope="module")
@@ -52,11 +52,13 @@ def test_no_chunk_exceeds_the_limit_including_its_prefix(
     assert max(c.token_count for c in found) <= MAX_TOKENS
 
 
-# Pinned at commit 10. A change here means cleaning or chunking output changed: bump
-# chunking_version (ingest --if-needed compares the version, not the code) and re-pin.
+# Pinned at commit 10; OMEN re-pinned with chunking v2 (tables end at a heading band,
+# which removed 3 duplicated table chunks). A change here means cleaning or chunking
+# output changed: bump chunking_version (ingest --if-needed compares the version, not
+# the code) and re-pin.
 CHUNK_ID_DIGESTS = {
     ENVY: "b5856b1139e48a76f3d8284efae0c59e692efec7d99f54e34bd1e557b1911176",
-    OMEN: "42db8683ae6822fce8fc7286b67f2dff6d78af144bcf7404bc7baf08c2c28b44",
+    OMEN: "44eb24216c60cecf4903ce1729325872659b7602f4036bc476fb3927e5538c97",
 }
 
 

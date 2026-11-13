@@ -5,9 +5,9 @@ horizontal rules, the other a single detected column. Here a table is a run of a
 least three rules with the same horizontal extent where every band between two
 rules is a row; a row can therefore never be separated from its cells.
 
-A band is a row only if it holds text set at table size (both manuals set cells in
-8 pt, captions in 9 pt and body text in 10 pt). Empty bands and bands of body text,
-headings or boxed notes end a table, which also separates two tables of the same
+A band is a row only if all of its text is set at table size (both manuals set cells
+in 8 pt, captions in 9 pt and body text in 10 pt). Empty bands and bands with any body
+text, heading or boxed note end a table, which also separates two tables of the same
 width on one page.
 """
 
@@ -79,7 +79,9 @@ def _dominant_size(lines: Sequence[TextLine]) -> float:
 
 
 def _is_row(band: Sequence[TextLine]) -> bool:
-    return bool(band) and _dominant_size(band) <= TABLE_MAX_FONT_SIZE
+    # Every line, not the dominant size: a heading and intro over the next table's
+    # caption are mostly 9 pt by length, and would join two tables across a section.
+    return bool(band) and all(line.font_size <= TABLE_MAX_FONT_SIZE for line in band)
 
 
 def _in_band(lines: Sequence[TextLine], upper: float, lower: float) -> list[TextLine]:

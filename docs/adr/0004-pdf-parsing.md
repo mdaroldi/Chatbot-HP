@@ -88,6 +88,10 @@ PDF page numbers.
   tables of the same width on one page. Without a top border, the header is taken from
   the table-size lines just above the first rule, unless another rule lies in between.
   Tables with spanning title rows yield fewer columns, but rows are never split.
+- **Row bands, corrected after commit 10:** a band is a row only if every line in it
+  is set at 9 pt or less. The first rule used the dominant size, which let a band with
+  a heading and intro over the next table's caption count as a row (OMEN PDF 16, 18,
+  27; ADR 0005 corrections).
 - **Font sizes** are rounded to 0.01 pt: pdfminer derives them from glyph boxes and
   reports values such as 8.000000000000057.
 - **Icons:** an image becomes an `[icon]` placeholder only when it sits in a gap
@@ -96,7 +100,9 @@ PDF page numbers.
   outside lines (logos, figures) get none. Measured: ENVY 87 placeholders (57 in body
   text on 45 line segments, 30 in table cells), OMEN 3 (table cells). The spike's 43
   could not be reproduced (its scripts were not kept); 45 body-text segments is the
-  closest match.
+  closest match. Chunk text holds the same counts: commit 10's report showed 4 for
+  OMEN because one table was duplicated across two sections (ADR 0005 corrections),
+  not because of a fourth placeholder.
 
 ### Cleaning (Phase 1, commit 5)
 

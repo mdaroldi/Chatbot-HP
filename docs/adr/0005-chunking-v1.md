@@ -142,3 +142,22 @@ OMEN PDF 3-4), which v1 first left out of the index. PDF page numbers.
   digest of the sorted chunk IDs per document with these values; any change in
   cleaning or chunking output fails it and needs a `chunking_version` bump, because
   `--if-needed` compares the version, not the code.
+
+### Tables across a heading (Phase 1, fix after commit 10)
+
+- **Defect:** a table band counted as a row when its dominant font size (by
+  characters) was table size. On OMEN PDF 16, 18 and 27 two tables of the same width
+  sit on one page with a figure between them, and the band from the first table's
+  last rule to the second's header holds the second's heading or intro (10 pt and up)
+  and its caption (9 pt). The caption is longer, so the band was a row and the two
+  tables became one across the section boundary. Blocks emit a table when any of its
+  lines is in the section, so the whole table went into both sections: 3 duplicated
+  table chunks, and one `[icon]` counted twice in chunk text (4 instead of 3).
+- **Fix:** a band is a row only if **every** line in it is at table size (ADR 0004).
+  Measured: only those three OMEN bands change; ENVY's tables are identical.
+- **`chunking_version` is now `v2`**: the chunk output changed, so `--if-needed`
+  rebuilds an index made with `v1`, and new collections are named
+  `hpdocs_chunks_v2_<build id>`. The design is still the v1 design of this ADR.
+  Corpus tests pin that each table row lands in one section and each kept `[icon]` in
+  one chunk.
+- Measured with 450 and 65: ENVY 149 chunks (digest unchanged), OMEN 138.

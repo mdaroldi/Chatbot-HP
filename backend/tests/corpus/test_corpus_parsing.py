@@ -102,6 +102,19 @@ def test_spare_part_number_stays_next_to_its_component(corpus: Corpus) -> None:
     assert all(any("Bottom cover" in cell for cell in row) for row in rows)
 
 
+# Three OMEN pages hold two tables of the same width with a figure between them; the
+# band from the first table's last rule to the second's header holds the second's
+# heading or intro (10 pt and up) and caption (9 pt). That band ends the first table.
+TWO_TABLE_PAGES = {16, 18, 27}
+
+
+def test_a_heading_between_two_same_width_tables_ends_the_first(corpus: Corpus) -> None:
+    found = tables(corpus[OMEN])
+    per_page = {page: sum(t.pdf_page == page for t in found) for page in TWO_TABLE_PAGES}
+
+    assert per_page == dict.fromkeys(TWO_TABLE_PAGES, 2)
+
+
 # Images inside a gap between two words of one line (body text and table cells).
 # ENVY: 57 in body text, 30 in table cells. OMEN: 3, all in table cells.
 ICONS = {ENVY: 87, OMEN: 3}

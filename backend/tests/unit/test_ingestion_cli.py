@@ -26,7 +26,7 @@ from app.infra.manifest_repository import SqlManifestStore
 from app.infra.model_files import PinnedModelSource
 from app.infra.qdrant_index import QdrantIndex
 from app.ingestion import cli
-from app.ingestion.chunking import StructureChunker
+from app.ingestion.chunking import VERSION, StructureChunker
 from app.ingestion.cli import Runtime, main, open_runtime
 from app.ingestion.pipeline import StructureProcessor
 from tests.unit.ingest_fakes import DENSE, DOCUMENTS, PINS, SPARSE
@@ -43,7 +43,9 @@ SECRET_DIGEST = "d" * 64
 @pytest.fixture
 def world(tmp_path: pathlib.Path) -> World:
     # Sync on purpose: main() runs its own event loop. Local mode holds no sockets.
-    return World(AsyncQdrantClient(location=":memory:"), tmp_path)
+    world = World(AsyncQdrantClient(location=":memory:"), tmp_path)
+    world.version = VERSION  # the CLI configures the real chunker's version
+    return world
 
 
 @pytest.fixture(autouse=True)

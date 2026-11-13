@@ -6,13 +6,15 @@ real bge-small tokenizer is checked by the corpus tests of the embedder commit.
 
 import re
 import unicodedata
+from collections import defaultdict
 from collections.abc import Mapping
 
 import pytest
 
-from app.domain.ingestion import Chunk, ContentType
+from app.domain.ingestion import ICON, BlockKind, Chunk, ContentType
 from app.ingestion.chunking import StructureChunker
 from app.ingestion.front_matter import FRONT_MATTER
+from app.ingestion.lines import count_icons
 from app.ingestion.outline import clean_title, section_paths
 from tests.corpus.conftest import ENVY, OMEN, ParsedCorpusDocument
 from tests.unit.fakes import WordTokenCounter
@@ -76,6 +78,29 @@ def test_every_chunk_has_a_bookmark_path_and_both_page_ranges(
     )
     assert all((c.pages.printed_start, c.pages.printed_end) == (None, None) for c in front)
     assert max(c.token_count for c in chunks[doc_id]) <= 450  # stand-in tokens
+
+
+@BOTH
+def test_each_table_row_lands_in_one_section(corpus: Corpus, doc_id: str) -> None:
+    """A table that ran across a heading was emitted whole into both sections."""
+    owners: defaultdict[tuple[int, str], set[tuple[str, ...]]] = defaultdict(set)
+    for section in corpus[doc_id].sectioned.sections:
+        for block in section.blocks:
+            if block.kind is BlockKind.TABLE_ROW:
+                owners[(block.pages.pdf_start, block.text)].add(section.path)
+
+    assert owners
+    assert {row: paths for row, paths in owners.items() if len(paths) > 1} == {}
+
+
+@BOTH
+def test_every_icon_placeholder_lands_in_one_chunk(
+    corpus: Corpus, chunks: Chunks, doc_id: str
+) -> None:
+    kept = count_icons(corpus[doc_id].cleaned.lines)
+
+    assert kept
+    assert sum(c.text.count(ICON) for c in chunks[doc_id]) == kept
 
 
 @BOTH

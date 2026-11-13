@@ -46,7 +46,7 @@ def test_a_document_becomes_chunks_under_its_bookmark_paths(processed: Processed
     assert processed.pages == 2
     assert [c.section_path for c in processed.chunks] == [("Setup",), ("Setup", "Wireless")]
     assert {c.doc_id for c in processed.chunks} == {"demo-guide"}
-    assert {c.chunking_version for c in processed.chunks} == {"v1"}
+    assert {c.chunking_version for c in processed.chunks} == {"v2"}
     assert "join the demo network" in processed.chunks[1].text
 
 
