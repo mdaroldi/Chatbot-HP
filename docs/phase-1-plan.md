@@ -43,7 +43,7 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 | 10b | `feat(compose): migrate and ingest services, make ingest` (one-shot `migrate` and `ingest` services, backend waits for both, `tools` profile removed, image ships `corpus.toml` and `models.toml`, startup-order ADR and the CLAUDE.md update, acceptance evidence) | done (ADR 0007; no `tools` profile existed, so none was removed; `HF_HOME` on the tmpfs, because hf-xet writes under `~/.cache`) |
 | 10c | `fix: disable third-party telemetry` (`ORT_DISABLE_TELEMETRY=1`, `HF_HUB_DISABLE_TELEMETRY=1`, `HF_HUB_DISABLE_PROGRESS_BARS=1` on every backend-image service; onnxruntime's `disable_telemetry_events()` before the embedder builds its models; Streamlit usage statistics off in compose as well as `config.toml`; Qdrant's was already off; onnxruntime declared directly, already locked) | done |
 | 11 | `ci: corpus job with live download and cached models` (decided with the user: no PDFs in any GitHub cache) | done (the `integration` job runs plain `make test-int`; `make fetch-test-assets` (`tests/downloads.py`) downloads the manuals live from HP on every run and verifies them against `corpus.toml`, 3 attempts with a doubling backoff; failures read CORPUS UNAVAILABLE, CORPUS CHANGED UPSTREAM, MODEL UNAVAILABLE or MODEL CHANGED UPSTREAM; only `backend/models` is cached (`actions/cache/restore` and `save` v6.1.0, key `hashFiles('backend/models.toml')`, no restore-keys, saved right after the download); `tests/unit/test_ci_workflow.py` pins these rules and forbids artifact uploads and `--showlocals`) |
-| 12 | `docs: README ingestion section` (with the first-up note: network access needed, the measured first-up time, later runs need no network, a failed download keeps the backend down (ADR 0007); in the data-governance part: no container sends usage telemetry (onnxruntime, Hugging Face, Qdrant and Streamlit are off by configuration), and the only outbound traffic is ingest's downloads from HP and the Hugging Face hub (plus Anthropic from Phase 3); the services diagram with `migrate` and `ingest`; a third-party licenses section that names tqdm, MPL-2.0, and a model section stating that the dense model files come from Qdrant's quantized ONNX build of bge-small, `Qdrant/bge-small-en-v1.5-onnx-Q`, ADR 0006) | pending |
+| 12 | `docs: README ingestion section` (with the first-up note: network access needed, the measured first-up time, later runs need no network, a failed download keeps the backend down (ADR 0007); in the data-governance part: no container sends usage telemetry (onnxruntime, Hugging Face, Qdrant and Streamlit are off by configuration), and the only outbound traffic is ingest's downloads from HP and the Hugging Face hub (plus Anthropic from Phase 3); the services diagram with `migrate` and `ingest`; a third-party licenses section that names tqdm, MPL-2.0, and a model section stating that the dense model files come from Qdrant's quantized ONNX build of bge-small, `Qdrant/bge-small-en-v1.5-onnx-Q`, ADR 0006) | done (README: ingestion, embedding models, third-party licenses (tqdm and certifi, both MPL-2.0), telemetry and outbound traffic, CI data handling; measured times re-taken on a fresh clone after `fix(compose): build the backend image once`) |
 
 Corpus tests land in the commit of the stage they test (item 10), not all at once. They carry
 the `corpus` marker; `make test-int` runs them, locally and in CI (commit 11). Tests of
@@ -358,6 +358,15 @@ fails the checksum check.
   ingest` runs `docker compose build backend` before the forced run.
 - **Separate ingest image** (ADR 0004 way out): the API image carries the ingestion
   stack, about 92 MB compressed.
+- **Restrict ingest's outbound access** to the hosts it needs: the two HP download
+  hosts (`h10032.www1.hp.com`, `kaas.hpcloud.hp.com`) and the Hugging Face hub with
+  the hosts it redirects downloads to. Today `ingest` is on the `edge` network with
+  unrestricted egress; an egress proxy with an allowlist (or a network policy) would
+  enforce what the code already allows.
+- **Hugging Face "unauthenticated requests" warning:** huggingface-hub prints it
+  twice on the first download: once as plain text, outside the JSON log format, and
+  once as a JSON log line. Keep only the JSON line (or silence that one warning),
+  without hiding other hub warnings.
 
 ## Open points to report
 
