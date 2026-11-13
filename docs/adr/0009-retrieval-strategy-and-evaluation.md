@@ -47,8 +47,8 @@ set frozen before any tuning.
   only the fused score, and the ranks would cost two more searches per request. H1
   (part numbers under dense-only and hybrid) is shown by the benchmark runner, which
   runs each mode. The router is mounted only when `SEARCH_ENDPOINT_ENABLED` is set
-  (otherwise 404; rejected in production until Phase 3 added rate limiting, after
-  which production may enable it with a startup warning). Failures are 503 `retrieval_unavailable` or
+  (otherwise 404; rejected in production; see [Update (Phase 3)](#update-phase-3-2026-11-13)).
+  Failures are 503 `retrieval_unavailable` or
   503 `models_not_ready` in the shared error shape, with fixed messages; a 422 never
   echoes input, including the name of an unknown field.
 - **Index compatibility:** the API is ready only when the alias names a collection with
@@ -228,6 +228,29 @@ k stays 60, and the shipped pipeline always reranks.
   metric. Changing the reranker means recalibrating.
 - **Long queries (Phase 3).** A 1,000-character query is truncated together with 55 of
   the 287 chunks at the reranker's 512 tokens (ADR 0008); the chat message limit takes
-  this as an input.
+  this as an input. *(Figures corrected in [Update (Phase 3)](#update-phase-3-2026-11-13).)*
 - **Evaluation hygiene (Phase 5).** Every final evaluation runs on a single index build
   with its build id recorded (rule above). The held-out split is scored only then.
+
+## Update (Phase 3, 2026-11-13)
+
+The decisions above stand; two statements changed in Phase 3. The original text is kept
+above.
+
+- **The search endpoint may run in production.** "Rejected in production" held for
+  Phase 2. Since Phase 3, `POST /v1/search` is rate-limited (30 per minute, burst 10,
+  keyed by `X-Client-ID` or the peer IP; [ADR 0010](0010-chat-api.md#rate-limiting)),
+  so the settings no longer reject it with `APP_ENV=production`. It is still off by
+  default, and the backend logs a warning at startup when it is enabled in production.
+- **Long queries: corrected truncation figures.** "A 1,000-character query is
+  truncated together with 55 of the 287 chunks" was wrong. Measured on the live index
+  with the pinned MiniLM tokenizer: fastembed 0.9.1 truncates each (query, chunk) pair
+  to 512 tokens with the tokenizer's default `longest_first` strategy, which takes
+  tokens from the longer side first, i.e. the chunk's tail. The longest stored chunk is
+  444 tokens (median 192, p90 412), so no chunk alone reaches the limit, and a query of
+  up to 65 tokens (about 290 characters) never causes a cut. Chunks cut, by query
+  length: 100 tokens 30, 128 tokens 37, 150 tokens 43, 200 tokens 55, 221 tokens (an
+  English 1,000-character query) 69, 256 tokens 101. The chat message limit is
+  `CHAT_MESSAGE_MAX_CHARS=1000`. From the second turn on, the rewrite (at most 30 words
+  and 300 characters) is what reaches the reranker; a long first message still cuts
+  chunk tails, which Phase 5 measures.

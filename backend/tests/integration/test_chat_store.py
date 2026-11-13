@@ -131,3 +131,17 @@ async def test_only_the_pending_answer_index_reads_as_a_pending_conflict(
             await insert_message(connection, row)
 
     assert is_pending_answer_conflict(raised.value) is pending
+
+
+async def test_a_thread_read_mid_answer_shows_the_pending_answer(store: SqlChatStore) -> None:
+    """A client reloading while an answer streams sees it pending, empty, uncited."""
+    created = await store.create_conversation(CLIENT)
+    turn = await store.start_turn(CLIENT, created.id, "Synthetic question?", title="Synthetic")
+
+    thread = await store.get_thread(CLIENT, created.id)
+
+    assert thread is not None
+    (_, pending) = thread.messages
+    assert pending.id == turn.assistant.id
+    assert (pending.outcome, pending.content, pending.refusal) == (Outcome.PENDING, "", False)
+    assert (pending.citations, pending.sources) == ((), ())

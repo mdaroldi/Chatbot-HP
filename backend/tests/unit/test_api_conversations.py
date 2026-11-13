@@ -298,6 +298,26 @@ async def test_get_shows_a_refusal_and_its_reason(
     assert (refusal["citations"], refusal["sources"]) == ([], [])
 
 
+async def test_get_mid_answer_shows_the_pending_answer_without_an_error(
+    http: httpx.AsyncClient, store: InMemoryChatStore
+) -> None:
+    """A client reloading while an answer streams: 200, the answer pending and empty."""
+    conversation = await create(http)
+    await store.start_turn(CLIENT, conversation["id"], "Question?", title="Question")
+
+    response = await http.get(f"/v1/conversations/{conversation['id']}", headers=as_client(CLIENT))
+
+    assert response.status_code == 200
+    pending = response.json()["messages"][1]
+    assert (pending["role"], pending["outcome"], pending["content"]) == (
+        "assistant",
+        "pending",
+        "",
+    )
+    assert (pending["refusal"], pending["refusal_reason"]) == (False, None)
+    assert (pending["citations"], pending["sources"]) == ([], [])
+
+
 @pytest.mark.parametrize("method", ["GET", "DELETE"])
 async def test_another_clients_conversation_is_404_not_403(
     http: httpx.AsyncClient, store: InMemoryChatStore, method: str

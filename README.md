@@ -1,17 +1,17 @@
 # HP Docs Chatbot
 
-A chatbot that will answer questions about two public HP documents using
+A chatbot that answers questions about two public HP documents using
 Retrieval-Augmented Generation (RAG):
 
 - HP ENVY 6000 All-in-One series User Guide
 - OMEN 17.3 inch Gaming Laptop PC Maintenance and Service Guide
 
-> **Status: Phase 2 (retrieval) built.** `docker compose up` downloads the two
+> **Status: Phase 3 (chat API) built.** `docker compose up` downloads the two
 > manuals, verifies them against pinned checksums and builds a hybrid (dense + BM25)
-> Qdrant index of them; the API loads the query models and the reranker, and hybrid
-> search with reranking is benchmarked on a frozen golden set. There is no chat yet,
-> and the Streamlit page is a placeholder: chat comes in Phases 3 and 4; see
-> [Status](#status).
+> Qdrant index of them. The API answers questions over SSE with citations, keeps
+> conversations in Postgres and refuses when the manuals do not hold the answer
+> ([Chat](#chat)). The Streamlit page is still a placeholder: the chat UI comes in
+> Phase 4; see [Status](#status).
 
 ## Architecture
 
@@ -68,9 +68,14 @@ this are recorded in [docs/adr](docs/adr).
 Requirements: Docker with Compose v2.
 
 ```bash
-cp .env.example .env        # then set POSTGRES_PASSWORD in .env
+cp .env.example .env        # then set POSTGRES_PASSWORD and ANTHROPIC_API_KEY in .env
 docker compose up --build   # or: make up (waits until every service is healthy)
 ```
+
+`.env.example` selects the Anthropic API (`LLM_PROVIDER=anthropic`); without
+`ANTHROPIC_API_KEY` the backend stops at startup with a message naming both fixes: set
+the key, or set `LLM_PROVIDER=stub` to run everything offline with the deterministic
+stub model (answers built from the retrieved excerpts, no API calls).
 
 - Frontend: http://localhost:8501 (shows backend health and readiness)
 - API: http://localhost:8000 (`/health`, `/ready`, `/docs`)
@@ -175,8 +180,9 @@ latency margin; the threshold refuses 2 of 48 in-scope questions and catches unr
 ones, but not questions close to the manuals' domain. Full record:
 [the benchmark summary](eval/reports/retrieval-summary.md) and
 [ADR 0009](docs/adr/0009-retrieval-strategy-and-evaluation.md). `POST /v1/search` (off
-by default, `SEARCH_ENDPOINT_ENABLED`) exposes retrieval for debugging; chat comes in
-Phase 3.
+by default, `SEARCH_ENDPOINT_ENABLED`) exposes retrieval for debugging; it is
+rate-limited, and the backend logs a warning at startup when it is enabled with
+`APP_ENV=production`. Chat answers are built on this retrieval ([Chat](#chat)).
 
 **Rerun the benchmark** (dev split; details in [eval/README.md](eval/README.md)):
 
@@ -198,6 +204,64 @@ make ingest                                               # restore the default 
 
 Compare runs only on the same index build: candidate lists are deterministic per
 build, not across builds (ADR 0009).
+
+## Chat
+
+Conversations belong to an anonymous client ID sent as `X-Client-ID` (the Phase 4
+frontend keeps one per browser). Endpoints, under `/v1` (full contract in
+[ADR 0010](docs/adr/0010-chat-api.md)):
+
+| Endpoint | What it does |
+|---|---|
+| `POST /conversations` | Create a conversation (201) |
+| `GET /conversations?limit=20&cursor=` | The client's conversations, newest first, paged |
+| `GET /conversations/{id}` | One conversation with its messages, citations and sources |
+| `DELETE /conversations/{id}` | Delete it with its messages (204) |
+| `POST /conversations/{id}/messages` | Ask; the answer streams as server-sent events |
+
+Another client's conversation is 404. A question is 1 to 1,000 characters.
+
+```bash
+CID=demo-client-1
+CONV=$(curl -s -X POST localhost:8000/v1/conversations -H "X-Client-ID: $CID" | jq -r .id)
+curl -N -X POST "localhost:8000/v1/conversations/$CONV/messages" \
+  -H "X-Client-ID: $CID" -H "Content-Type: application/json" \
+  -d '{"content": "How do I remove the bottom cover of the OMEN laptop?"}'
+```
+
+The stream is `token` events, then `sources` (document, section, printed and PDF
+pages, a snippet for each cited excerpt) and `done` (the validated answer, citations,
+outcome). A failure after the first token ends it with an `error` event; a failure
+before it is a plain JSON error (502/503) and nothing is stored.
+
+**How an answer is made.** From the second turn on, the question is rewritten into a
+standalone search query by a small model (`LLM_REWRITE_MODEL`), falling back to the
+raw question on any problem. Retrieval runs as in [Retrieval](#retrieval). If the top
+rerank score is below the threshold, the assistant refuses without calling the answer
+model. Otherwise the answer model (`LLM_ANSWER_MODEL`) answers from the five excerpts
+only, citing them as `[S1]`, `[S2]` ..., and replies with a marker when they do not
+hold the answer, which becomes the same fixed refusal. Citations to excerpts that were
+not retrieved are removed. The prompt asks the model to carry the WARNING and CAUTION
+notes that apply into the answer. Each stored answer records the chunk IDs, index build, served model, tokens
+and timings.
+
+**Stub model.** `LLM_PROVIDER=stub` answers deterministically from the excerpts, for
+tests, demos and the Phase 6 load tests. Outside production, `[stub:refuse]`,
+`[stub:fail-before]` and `[stub:fail-after]` in a question make it refuse or fail on
+purpose. `make smoke-llm` (manual, billed, needs the key) sends a few synthetic
+requests to the real models and prints the time to first token, the stop reasons and
+whether the follow-up rewrite worked; never the model's text.
+
+**Rate limits** (per `X-Client-ID`): 10 questions a minute with a burst of 5, 120
+conversation reads and writes a minute with a burst of 30; over the limit is 429 with
+`Retry-After`. The limits are kept in memory **per backend replica**, so N replicas
+allow N times the rate.
+
+**Retention.** A conversation is deleted with its messages `CHAT_RETENTION_DAYS` (30)
+after its last message. The backend purges at startup and every
+`RETENTION_PURGE_INTERVAL_MINUTES` (60; 0 turns it off), one replica at a time under a
+Postgres advisory lock; `make purge` runs one purge now and prints the counts. Logs
+carry counts only.
 
 ## Configuration
 
@@ -306,6 +370,8 @@ A unit test fails if this table, `.env.example` and the `Settings` class disagre
 | `make ingest` | Build a new vector index now and move the alias (`up` builds only when needed) |
 | `make inspect-chunks` | Write every chunk to `ingest-review/chunks.md` (git-ignored) for review |
 | `make model-pins` | Regenerate `backend/models.toml` from the hub and print the diff (manual, review before committing) |
+| `make smoke-llm` | Manual and billed: a few synthetic requests to the real Anthropic models; prints time to first token, stop reasons and the rewrite outcome (`SMOKE_ARGS="--runs N"`) |
+| `make purge` | Delete conversations older than `CHAT_RETENTION_DAYS` now (needs `make up`); prints the counts |
 | `make eval-retrieval` | Retrieval benchmark against the running stack (`EVAL_ARGS=preflight` or `run ...`; see [eval/README.md](eval/README.md)) |
 | `make eval` / `load` | Later phases; print "not implemented yet" and fail |
 
@@ -399,13 +465,20 @@ integration job as a required check in the branch protection settings.
   `disable_telemetry_events()` call), the Hugging Face hub (`HF_HUB_DISABLE_TELEMETRY`),
   Qdrant (`QDRANT__TELEMETRY_DISABLED`) and Streamlit (`gatherUsageStats` off). This was
   set from the documentation, not verified by capturing traffic.
-- **Outbound traffic**: at runtime, the only service that reaches the internet is
-  `ingest`, to download the two manuals from HP on its first run. The pinned models
-  come from the Hugging Face hub during the image build only. From Phase 3, the
-  backend will also call the Anthropic API.
-- **Third-party processing**: no LLM is called yet. From Phase 3, when the cloud
-  provider (Anthropic) is enabled, user questions and the retrieved document
-  excerpts will be sent to the Anthropic API to generate answers.
+- **Outbound traffic**: at runtime, `ingest` downloads the two manuals from HP on its
+  first run, and with `LLM_PROVIDER=anthropic` the backend calls the Anthropic API
+  (`https://api.anthropic.com`, set in code; the key is passed explicitly, so no
+  ambient credential or base URL is used). The pinned models come from the Hugging
+  Face hub during the image build only. With `LLM_PROVIDER=stub` nothing leaves the
+  stack after ingestion.
+- **Third-party processing**: with `LLM_PROVIDER=anthropic`, **the user's question,
+  recent conversation history (for the answer and for the follow-up rewrite) and the
+  retrieved document excerpts are sent to the Anthropic API** to generate answers.
+- **Chat data** is personal data: messages are never logged (logs carry IDs, counts,
+  timings and codes; a unit test checks a canary string never reaches a log line),
+  a conversation can be deleted at any time, and retention deletes conversations
+  `CHAT_RETENTION_DAYS` after their last message. Every conversation and message query
+  is scoped to the caller's `X-Client-ID`.
 
 ## Third-party licenses
 
@@ -437,8 +510,28 @@ are not redistributed.
   laptop, about 97% of retrieval time. Latency decisions are left to the Phase 6 load
   tests.
 - **Out-of-scope detection:** the relevance threshold catches unrelated questions but
-  not ones close to the manuals' domain (0 of 4 on the dev split); those must be refused
-  by the Phase 3 prompt ([ADR 0009](docs/adr/0009-retrieval-strategy-and-evaluation.md)).
+  not ones close to the manuals' domain (0 of 4 on the dev split); those are left to
+  the answer prompt's refusal marker, whose rate Phase 5 measures
+  ([ADR 0009](docs/adr/0009-retrieval-strategy-and-evaluation.md)).
+- **Uncited answers:** the model can answer without a valid `[S<n>]` citation. Such an
+  answer is kept and flagged (`flags.uncited`, no sources), not rejected.
+- **Truncated answers:** an answer cut by `LLM_ANSWER_MAX_TOKENS` (2048) or another
+  non-final stop is kept, as the user saw it, and flagged `flags.truncated`.
+- **Long first messages cut chunk tails at the reranker:** the cross-encoder truncates
+  each (question, chunk) pair to 512 tokens from the chunk's end. Up to about 290
+  characters nothing is cut; a 1,000-character first question cuts 69 chunks. From the
+  second turn on, the short rewrite is what reaches the reranker
+  ([ADR 0008](docs/adr/0008-baked-models-and-inference.md#update-phase-3-2026-11-13-long-queries)).
+- **Rate limits are per replica and keyed by a client-chosen ID:** N replicas allow N
+  times the rate, and an anonymous client can rotate its `X-Client-ID` to get a fresh
+  bucket. Rotation also fills each limiter's 10,000-key LRU (`RATE_LIMIT_MAX_KEYS`),
+  which evicts other clients' buckets and resets their limits. The limiter bounds
+  honest clients and memory; it is not abuse protection. `/v1/search` falls back to
+  the peer IP, which every browser shares behind the frontend.
+- **`ANTHROPIC_CUSTOM_HEADERS`:** the Anthropic SDK reads this variable from the
+  backend's environment and adds its headers to every API request, and offers no
+  public way to turn that off. Compose passes the backend an explicit list of
+  variables, so it only takes effect if someone adds it there.
 - **Button glyphs are lost:** the ENVY manual draws many buttons as inline images. No
   vision pass reads them; ingestion puts an `[icon]` placeholder where one sat inside
   a line (87 in ENVY, 3 in OMEN), so an answer can say a button is pictured but not
@@ -460,7 +553,7 @@ The full list, with the reasoning, is in [ADR 0001](docs/adr/0001-architecture-o
 | 0 | Foundation: repo, tooling, CI, compose, health endpoints | done |
 | 1 | Ingestion: download, parse, clean, chunk, embed, upsert, manifest | done |
 | 2 | Retrieval: hybrid search, reranker, golden set, retrieval metrics | done |
-| 3 | Chat API: LLM gateway, prompt, citations, streaming, history | pending |
+| 3 | Chat API: LLM gateway, prompt, citations, streaming, history | done |
 | 4 | Frontend: Streamlit chat UI with conversations and sources | pending |
 | 5 | Benchmark: generation metrics, ablation, report | pending |
 | 6 | Load testing: Locust profiles, tuning, capacity report | pending |

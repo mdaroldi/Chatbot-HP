@@ -97,6 +97,7 @@ make security     # bandit, pip-audit, gitleaks
 make up / down    # docker compose up / down
 make ingest       # force a new index build through compose (up builds only when needed)
 make model-pins   # regenerate backend/models.toml and print the diff (manual, review before committing)
+make smoke-llm    # manual, billed: real-model latency, stops and rewrite outcome (needs the key)
 make purge        # delete conversations past CHAT_RETENTION_DAYS now (via compose)
 make eval-retrieval  # retrieval benchmark via compose (EVAL_ARGS=preflight | run ...)
 make eval         # run the quality benchmark
@@ -190,7 +191,7 @@ Rules:
 | 0 | Foundation: repo, tooling, CI, compose skeleton, health endpoints | done |
 | 1 | Ingestion: download, parse, clean, chunk, embed, upsert, manifest | done |
 | 2 | Retrieval: hybrid search, reranker, golden set, retrieval metrics | done |
-| 3 | Chat API: LLM gateway, prompt, citations, streaming, history | pending |
+| 3 | Chat API: LLM gateway, prompt, citations, streaming, history | done |
 | 4 | Frontend: Streamlit chat UI with conversations and sources | pending |
 | 5 | Benchmark: generation metrics, ablation, report | pending |
 | 6 | Load testing: Locust profiles, tuning, capacity report | pending |

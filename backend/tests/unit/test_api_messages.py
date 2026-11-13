@@ -705,3 +705,33 @@ async def test_a_disconnect_while_a_token_is_being_sent_stores_the_answer_cancel
     assert rig.answer.closed == 1
     _, assistant = await stored(rig, conversation_id)
     assert assistant.outcome is Outcome.CANCELLED
+
+
+async def test_canary_audit_no_log_line_ever_carries_user_or_model_text(
+    settings: Settings, json_logs: LogReader
+) -> None:
+    """The real stub answers; questions, the title, the rewrite and the answers all hold
+    the canary, through a completed, a rewritten, a refused and a failed turn.
+    """
+    rig = Rig(rewrite=FakeProvider((f"rewritten {CANARY}",)))
+    stub = StubProvider(honour_directives=True)
+    conversation_id = await rig.conversation()
+    async with serve(build(settings, rig, lambda: rig.service(provider=stub))) as http:
+        outcomes = []
+        for content in (
+            f"How do I clean the fan? {CANARY}",
+            f"And then? {CANARY}",
+            f"[stub:refuse] {CANARY}",
+            f"[stub:fail-after] {CANARY}",
+        ):
+            response = await post(http, conversation_id, {"content": content})
+            assert response.status_code == 200, response.text
+            stream = parse(response.text)
+            outcomes.append(stream.names()[-1])
+
+    assert outcomes == ["done", "done", "done", "error"]
+    rewrites = {answer.rewritten_query for answer in rig.store.answers.values()}
+    assert f"rewritten {CANARY}" in rewrites  # stored with the answer, never logged
+    logs = json_logs()
+    assert len(logs) >= 8  # access lines and one answer line per turn at least
+    assert CANARY not in json.dumps(logs)

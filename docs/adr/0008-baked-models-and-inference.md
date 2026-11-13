@@ -162,7 +162,8 @@ longest dev question is 26 tokens). A query at the `QUERY_MAX_CHARS` limit of 1,
 characters is truncated together with 55 of the 287 chunks: the tokenizer cuts the
 pair to 512 tokens, so the reranker scores part of the pair. `QUERY_MAX_CHARS` stays
 at 1,000 for now; **Phase 3 takes this as an input for the chat message length limit**
-(the standalone query, after rewriting, is what reaches the reranker).
+(the standalone query, after rewriting, is what reaches the reranker). *(The 55-chunk figure is
+corrected in [Update (Phase 3)](#update-phase-3-2026-11-13-long-queries).)*
 
 ## Alternatives considered
 
@@ -220,3 +221,24 @@ per image.
 - **Cost:** readiness about 2.9 s later per API start (p50). The warm-up is kept: it
   makes `/ready` mean that the largest request shape has run once on every loaded
   model, whatever made the earlier call slow.
+
+### Update (Phase 3, 2026-11-13): long queries
+
+The figure under "Reranker input" in [Measurements](#measurements-phase-2-commit-6)
+("a query at the `QUERY_MAX_CHARS` limit of 1,000 characters is truncated together with
+55 of the 287 chunks") was wrong; the original text is kept. fastembed 0.9.1 calls
+`enable_truncation(max_length=512, direction="right")` without a strategy, so the
+tokenizer's default `longest_first` applies: tokens come off the longer side of the
+(query, chunk) pair first, which is the chunk's tail, and the query is cut only once
+it is longer than what is left of the chunk. Measured on the live index with the
+pinned MiniLM tokenizer:
+
+- No chunk alone reaches 512 tokens: the longest is 444 (median 192, p90 412).
+- A query of up to **65 tokens (about 290 characters)** cuts nothing; the longest dev
+  question is 26 tokens.
+- Chunks cut, by query length: 100 tokens 30, 128 tokens 37, 150 tokens 43,
+  **200 tokens 55**, **221 tokens (an English 1,000-character query) 69**, 256 tokens 101.
+
+Phase 3 set `CHAT_MESSAGE_MAX_CHARS=1000`. From the second turn on, the rewrite (at most
+300 characters) is what reaches the reranker; a long first message still cuts chunk
+tails, a known limitation that Phase 5 measures ([ADR 0010](0010-chat-api.md#consequences)).
