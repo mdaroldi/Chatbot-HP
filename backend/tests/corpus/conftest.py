@@ -1,7 +1,8 @@
 """Corpus fixtures: the real HP manuals, fetched and verified once per session.
 
-A download problem fails with a CORPUS UNAVAILABLE message, so it can never be
-mistaken for a parsing regression (which fails with an assertion error).
+A download problem fails with a CORPUS UNAVAILABLE message, and a live file that no
+longer matches its pin with CORPUS CHANGED UPSTREAM (tests/downloads.py), so neither
+can be mistaken for a parsing regression (which fails with an assertion error).
 
 CI logs of a public repository are public, and pytest prints the values an assert
 compares, including the arguments of calls inside it. So corpus assertions compare
@@ -17,17 +18,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from pydantic import SecretStr
 
-from app.core.settings import Settings
 from app.domain.ingestion import CorpusError, ParsedDocument, TextLine
-from app.infra.corpus_http import HttpCorpusSource, create_corpus_http_client
 from app.infra.pdfplumber_parser import PdfplumberParser
 from app.ingestion.cleaning import CleanedDocument, clean
 from app.ingestion.corpus import load_corpus
 from app.ingestion.footer import FooterSplit, split_footers
 from app.ingestion.lines import group_lines
 from app.ingestion.sections import SectionedDocument, build_sections
+from tests.downloads import download_settings, fail, fetch_corpus, with_retries
 
 ENVY = "envy-6000-user-guide"
 OMEN = "omen-17-service-guide"
@@ -61,21 +60,12 @@ class ParsedCorpusDocument:
     sectioned: SectionedDocument
 
 
-async def _fetch_all() -> dict[str, Path]:
-    # The password is never used: corpus tests touch no database.
-    settings = Settings(postgres_password=SecretStr("unused-by-corpus-tests"))
-    documents = load_corpus()
-    async with create_corpus_http_client(settings) as client:
-        source = HttpCorpusSource.from_settings(client, documents, settings)
-        return {d.doc_id: await source.fetch(d) for d in documents}
-
-
 @pytest.fixture(scope="session")
 def corpus_files() -> Mapping[str, Path]:
     try:
-        return asyncio.run(_fetch_all())
+        return asyncio.run(with_retries(lambda: fetch_corpus(download_settings())))
     except CorpusError as exc:
-        pytest.fail(f"CORPUS UNAVAILABLE (not a parsing failure): {exc}", pytrace=False)
+        fail(exc)
 
 
 @pytest.fixture(scope="session")

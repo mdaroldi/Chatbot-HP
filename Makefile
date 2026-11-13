@@ -16,6 +16,7 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 	-v trivy-cache:/root/.cache $(TRIVY_IMAGE)
 
 .PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int \
+	fetch-test-assets \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins eval load check
 
 help: ## List available targets
@@ -59,10 +60,14 @@ coverage-summary: ## Markdown coverage tables (used for the CI job summary)
 		(cd $$project && uv run --frozen coverage report --format=markdown) || exit 1; echo; \
 	done
 
-# Marker expression for test-int. CI overrides it to skip the corpus and model tests
-# (they download the HP manuals and the embedding models) until a dedicated job with
-# cached downloads exists.
+# Marker expression for test-int; CI runs the default. Override it locally to run a
+# subset, for example TEST_INT_MARKERS=integration to skip the HP manuals and models.
 TEST_INT_MARKERS ?= integration or corpus or model
+
+# The corpus is fetched live from HP and verified against backend/corpus.toml; models go
+# to EMBEDDING_CACHE_DIR. Failures read CORPUS/MODEL UNAVAILABLE or CHANGED UPSTREAM.
+fetch-test-assets: ## Download and verify the HP manuals and pinned models for test-int (3 attempts)
+	cd $(BACKEND) && uv run --frozen python -m tests.downloads --attempts 3 --backoff-seconds 10
 
 test-int: ## Integration tests (real Postgres and Qdrant, needs Docker), corpus and model tests
 	$(TEST_COMPOSE) up -d --wait

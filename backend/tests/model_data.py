@@ -7,8 +7,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.settings import Settings
-from app.domain.ingestion import ModelFiles, VerifiedModel
-from app.infra.model_files import HuggingFaceHub, PinnedModelSource, load_pins, snapshot_dir
+from app.domain.ingestion import ModelError, ModelFiles, VerifiedModel
+from app.infra.model_files import snapshot_dir
+from tests.downloads import fail, fetch_model, with_retries
 
 REVISION = "0123456789abcdef0123456789abcdef01234567"
 NEXT_REVISION = "fedcba9876543210fedcba9876543210fedcba98"
@@ -68,6 +69,11 @@ def hub_with(source: str = "demo/dense-onnx", files: dict[str, bytes] | None = N
 
 
 def fetch_verified(settings: Settings, name: str) -> VerifiedModel:
-    """The real pinned model, verified in EMBEDDING_CACHE_DIR (downloaded on first use)."""
-    source = PinnedModelSource(load_pins(), settings.embedding_cache_dir, HuggingFaceHub())
-    return asyncio.run(source.fetch(name))
+    """The real pinned model, verified in EMBEDDING_CACHE_DIR (downloaded on first use).
+
+    A download failure ends the test as MODEL UNAVAILABLE (tests/downloads.py).
+    """
+    try:
+        return asyncio.run(with_retries(lambda: fetch_model(settings, name)))
+    except ModelError as exc:
+        fail(exc)

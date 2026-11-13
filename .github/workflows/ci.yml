@@ -52,9 +52,14 @@ jobs:
         run: make coverage-summary >> "$GITHUB_STEP_SUMMARY"
 
   integration:
-    name: Integration tests (real Postgres and Qdrant)
+    name: Integration, corpus and model tests (real services, live HP manuals)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
+    env:
+      # The same telemetry switches as the compose services (data governance).
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      HF_HUB_DISABLE_PROGRESS_BARS: "1"
+      ORT_DISABLE_TELEMETRY: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,9 +69,33 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
       - run: make install
+      # Only the open-source embedding models are cached, keyed by their pins (no
+      # restore-keys, so a changed pin never restores old files; every file's SHA-256 is
+      # checked on use anyway). No HP content is stored by GitHub: the manuals are never
+      # cached or uploaded, and corpus assertions print identifiers, not text.
+      - name: Restore the embedding model cache
+        id: models-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: backend/models
+          key: embedding-models-${{ hashFiles('backend/models.toml') }}
+      # Downloads the manuals live from HP on every run and verifies them against the
+      # pinned checksums in backend/corpus.toml; fetches any model the cache lacks.
+      # Up to 3 attempts with backoff. Fails as CORPUS UNAVAILABLE (host unreachable),
+      # CORPUS CHANGED UPSTREAM (checksum mismatch) or MODEL UNAVAILABLE / CHANGED
+      # UPSTREAM, never as a test failure.
+      - name: Download and verify the HP manuals and the pinned models
+        run: make fetch-test-assets
+      # Saved right after a good download, so a later test failure does not lose it.
+      - name: Save the embedding model cache
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: backend/models
+          key: ${{ steps.models-cache.outputs.cache-primary-key }}
       # Same docker-compose.test.yml as locally; make tears it down even on failure.
-      # Corpus tests are excluded until a job with a cached corpus download exists.
-      - run: make test-int TEST_INT_MARKERS="integration and not corpus"
+      # Integration, corpus and model tests; the manuals were verified on disk above.
+      - run: make test-int
 
   security:
     name: Security (bandit, pip-audit, gitleaks)

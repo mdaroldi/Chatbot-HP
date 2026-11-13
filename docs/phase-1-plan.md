@@ -42,15 +42,15 @@ parsing spike. Page numbers below are **PDF page numbers** unless marked "printe
 | 10a | `fix(ingestion): end a table at a band with any body-size line` (OMEN chunk text held 4 `[icon]` against 3 in the lines: tables on PDF 16, 18, 27 ran across a heading and went into two sections; 3 duplicated chunks, OMEN 141 → 138; `chunking_version` v2; ADR 0004 and 0005 corrections) | done |
 | 10b | `feat(compose): migrate and ingest services, make ingest` (one-shot `migrate` and `ingest` services, backend waits for both, `tools` profile removed, image ships `corpus.toml` and `models.toml`, startup-order ADR and the CLAUDE.md update, acceptance evidence) | done (ADR 0007; no `tools` profile existed, so none was removed; `HF_HOME` on the tmpfs, because hf-xet writes under `~/.cache`) |
 | 10c | `fix: disable third-party telemetry` (`ORT_DISABLE_TELEMETRY=1`, `HF_HUB_DISABLE_TELEMETRY=1`, `HF_HUB_DISABLE_PROGRESS_BARS=1` on every backend-image service; onnxruntime's `disable_telemetry_events()` before the embedder builds its models; Streamlit usage statistics off in compose as well as `config.toml`; Qdrant's was already off; onnxruntime declared directly, already locked) | done |
-| 11 | `ci: corpus job with cached download` (also runs the `model` tests, with the model cache restored) | pending |
+| 11 | `ci: corpus job with live download and cached models` (decided with the user: no PDFs in any GitHub cache) | done (the `integration` job runs plain `make test-int`; `make fetch-test-assets` (`tests/downloads.py`) downloads the manuals live from HP on every run and verifies them against `corpus.toml`, 3 attempts with a doubling backoff; failures read CORPUS UNAVAILABLE, CORPUS CHANGED UPSTREAM, MODEL UNAVAILABLE or MODEL CHANGED UPSTREAM; only `backend/models` is cached (`actions/cache/restore` and `save` v6.1.0, key `hashFiles('backend/models.toml')`, no restore-keys, saved right after the download); `tests/unit/test_ci_workflow.py` pins these rules and forbids artifact uploads and `--showlocals`) |
 | 12 | `docs: README ingestion section` (with the first-up note: network access needed, the measured first-up time, later runs need no network, a failed download keeps the backend down (ADR 0007); in the data-governance part: no container sends usage telemetry (onnxruntime, Hugging Face, Qdrant and Streamlit are off by configuration), and the only outbound traffic is ingest's downloads from HP and the Hugging Face hub (plus Anthropic from Phase 3); the services diagram with `migrate` and `ingest`; a third-party licenses section that names tqdm, MPL-2.0, and a model section stating that the dense model files come from Qdrant's quantized ONNX build of bge-small, `Qdrant/bge-small-en-v1.5-onnx-Q`, ADR 0006) | pending |
 
 Corpus tests land in the commit of the stage they test (item 10), not all at once. They carry
-the `corpus` marker; `make test-int` runs them, and the CI integration job excludes them
-(`-m "integration and not corpus"`) until commit 11 adds the cached corpus job. Tests of
+the `corpus` marker; `make test-int` runs them, locally and in CI (commit 11). Tests of
 the real embedding models (`tests/embeddings/`) carry the `model` marker, and so do corpus
-tests that need a model. The CI expression already leaves them out, because they are not
-marked `integration`; commit 11 caches `EMBEDDING_CACHE_DIR` and runs them.
+tests that need a model. CI downloads the manuals live from HP on every run and verifies
+them against the pinned checksums; no HP content is stored by GitHub. Only the
+open-source model files are cached between runs.
 
 ## Decisions before commit 9
 
@@ -196,8 +196,9 @@ The user's design, with accepted changes 1 to 7:
    (`python -m app.ingestion`). Trade-off and way out recorded in ADR 0004.
 6. Sparse vectors use fastembed `Qdrant/bm25`; the collection's sparse vector uses
    `modifier=IDF`.
-7. Corpus tests run under `make test-int` and in a **required** CI corpus job with a
-   cached download; never in `make check`. A download failure and a failed assertion
+7. Corpus tests run under `make test-int` and in a **required** CI job that downloads
+   the manuals live from HP on every run (no PDF is cached by GitHub); never in
+   `make check`. A download failure and a failed assertion
    produce clearly different messages. If HP blocks the CI runner, tell the user and
    propose a documented local-only job.
 

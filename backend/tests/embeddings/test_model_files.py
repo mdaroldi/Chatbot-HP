@@ -1,4 +1,9 @@
-"""The real pinned models (ADR 0006): each pin downloads as pinned and loads with no network."""
+"""The real pinned models (ADR 0006): each pin downloads as pinned and loads with no network.
+
+These download into a fresh cache on every run on purpose (the restored CI cache is not
+used), because only a real download shows that the pins still match the hub. A hub
+failure ends a test as MODEL UNAVAILABLE, never as an assertion error.
+"""
 
 from pathlib import Path
 
@@ -10,6 +15,7 @@ from app.domain.ingestion import ModelFiles
 from app.infra.fastembed_embedder import FastembedEmbedder
 from app.infra.fastembed_tokens import FastembedTokenCounter
 from app.infra.model_files import HuggingFaceHub, PinnedModelSource, load_pins, snapshot_dir
+from tests.downloads import fetch_or_fail
 
 pytestmark = pytest.mark.model
 
@@ -25,7 +31,8 @@ def fresh_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
 async def test_each_pinned_revision_downloads_with_the_pinned_digests(
     pin: ModelFiles, fresh_cache: Path
 ) -> None:
-    verified = await PinnedModelSource(PINS, fresh_cache, HuggingFaceHub()).fetch(pin.name)
+    source = PinnedModelSource(PINS, fresh_cache, HuggingFaceHub())
+    verified = await fetch_or_fail(lambda: source.fetch(pin.name))
 
     assert verified.files == pin
     # The hub cache layout is the one the next run looks in, so it needs no network.
@@ -40,8 +47,8 @@ async def test_verified_models_load_and_run_without_the_hub(
     fresh_cache: Path, model_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = PinnedModelSource(PINS, fresh_cache, HuggingFaceHub())
-    dense = await source.fetch(model_settings.embedding_dense_model)
-    sparse = await source.fetch(model_settings.embedding_sparse_model)
+    dense = await fetch_or_fail(lambda: source.fetch(model_settings.embedding_dense_model))
+    sparse = await fetch_or_fail(lambda: source.fetch(model_settings.embedding_sparse_model))
     for name in ("snapshot_download", "model_info", "list_repo_tree"):
         monkeypatch.setattr(model_management, name, no_network)
 
