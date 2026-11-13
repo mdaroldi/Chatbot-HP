@@ -219,6 +219,47 @@ def test_a_clean_preflight_passes_and_writes_nothing(
     assert (done["chunks"], done["anchors"], done["match_counts"]) == (1, 4, {"1": 4})
 
 
+def test_the_preflight_lists_every_anchor_matching_two_or_more_chunks(
+    eval_dir: pathlib.Path, json_logs: LogReader
+) -> None:
+    """For the planner's review of false positives: ids, counts and paths, never text."""
+    text = f"{CANARY} the {FACT} sheets"
+    runtime = FakeRuntime(
+        chunks=[
+            IndexedChunk("c1", ENVY, ("Paper", "Load paper"), text),
+            IndexedChunk("c2", ENVY, ("Printing", "Print documents"), text),
+            IndexedChunk("c3", ENVY, ("Scanning",), "nothing relevant"),
+        ]
+    )
+
+    assert invoke(["preflight"], eval_dir, runtime) == 0
+
+    listed = lines(json_logs, "anchor matches several chunks")
+    assert [(r["question_id"], r["split"], r["anchor"], r["matches"]) for r in listed] == [
+        ("f1", "dev", 0, 2),
+        ("f2", "dev", 0, 2),
+        ("f3", "dev", 0, 2),
+        ("f4", "heldout", 0, 2),
+    ]
+    assert listed[0]["chunks"] == [
+        {"chunk_id": "c1", "doc_id": ENVY, "section_path": ["Paper", "Load paper"]},
+        {"chunk_id": "c2", "doc_id": ENVY, "section_path": ["Printing", "Print documents"]},
+    ]
+    (done,) = lines(json_logs, "preflight passed")
+    assert done["multi_match"] == 4
+    logged = json.dumps(json_logs())
+    assert CANARY not in logged
+    assert FACT not in logged
+
+
+def test_a_single_match_is_not_listed(eval_dir: pathlib.Path, json_logs: LogReader) -> None:
+    assert invoke(["preflight"], eval_dir, FakeRuntime()) == 0
+
+    assert lines(json_logs, "anchor matches several chunks") == []
+    (done,) = lines(json_logs, "preflight passed")
+    assert done["multi_match"] == 0
+
+
 def test_an_unresolved_anchor_fails_the_preflight_and_names_the_question(
     eval_dir: pathlib.Path, json_logs: LogReader
 ) -> None:

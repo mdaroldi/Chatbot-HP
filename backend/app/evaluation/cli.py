@@ -229,10 +229,29 @@ def _log_preflight(report: Preflight) -> None:
                 "problem": str(problem.problem),
             },
         )
+    for resolution in report.multi_match:
+        logger.info(
+            "anchor matches several chunks",
+            extra={
+                "question_id": resolution.question_id,
+                "split": resolution.split.value,
+                "anchor": resolution.anchor,
+                "matches": resolution.matches,
+                "chunks": [
+                    {
+                        "chunk_id": m.chunk_id,
+                        "doc_id": m.doc_id,
+                        "section_path": list(m.section_path),
+                    }
+                    for m in resolution.matched
+                ],
+            },
+        )
     counts = Counter(str(r.matches) for r in report.resolutions)
     extra = {
         "chunks": report.chunks,
         "anchors": len(report.resolutions),
+        "multi_match": len(report.multi_match),
         "match_counts": dict(sorted(counts.items(), key=lambda item: int(item[0]))),
     }
     if report.ok:

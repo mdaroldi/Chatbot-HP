@@ -70,7 +70,22 @@ set frozen before any tuning.
 - **Failures:** every Qdrant failure (down, timeout, missing alias, unexpected payload)
   is `RetrievalUnavailableError`, logged with the stage and the exception type only.
 
-## Evaluation method (to be completed at commit 11)
+## Evaluation method (to be completed at commit 11b)
 
 Golden set file `eval/golden/retrieval-v1.toml`; version, SHA-256, metrics,
 selection rule, hypotheses H1 to H3 and their results follow with the freeze.
+
+**Before the freeze (record):**
+
+- **Commit of v1.0.0.** The file was committed unchanged at `fa0526d`, before the
+  review of its multi-match anchors and before any metric was read. Committing it is
+  not the freeze: the freeze is this ADR's version and SHA-256 record plus the pin
+  test (commit 11b). A v1.0.1, if the review asks for one, lands as its own commit
+  before 11b.
+- **One pre-freeze smoke run.** In commit 10, `hybrid-rerank` ran once on the 56 dev
+  questions to prove the Docker path of the benchmark. Its metrics were not read and
+  its output was deleted. No other configuration ran on dev before the freeze.
+- **Multi-match review (commit 11a).** The preflight also lists every anchor that
+  matches two or more chunks, with its question id, anchor index, match count and the
+  section path of each matching chunk (no chunk text), so false positive coverage can
+  be reviewed before the freeze.

@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.domain.evaluation import Category, Metric, OosKind, Split
+from app.domain.evaluation import Category, IndexedChunk, Metric, OosKind, Split
 from app.domain.retrieval import SearchMode
 from app.evaluation.metrics import MetricSummary
 from app.evaluation.runner import (
@@ -12,6 +12,7 @@ from app.evaluation.runner import (
     ConfigSummary,
     HeldoutRefusedError,
     Latency,
+    MatchedChunk,
     QuestionRun,
     calibrate,
     preflight,
@@ -21,6 +22,7 @@ from app.evaluation.runner import (
     summarize_config,
 )
 from tests.unit.eval_fakes import (
+    ENVY,
     OMEN,
     Scripted,
     ScriptedRetriever,
@@ -79,6 +81,26 @@ def test_preflight_resolves_every_anchor_of_both_splits() -> None:
     ]
     assert report.ok
     assert report.problems == ()
+
+
+def test_preflight_records_which_chunks_each_anchor_matched_without_text() -> None:
+    gold = golden(question("a", facts=(("tray holds 80",), ("two hours",))), oos("c"))
+    chunks = [
+        IndexedChunk("x", ENVY, ("Paper", "Load paper"), "The TRAY holds 80 sheets."),
+        IndexedChunk("y", ENVY, ("Specs",), "Off after two hours. The tray holds 80 too."),
+        IndexedChunk("z", OMEN, ("Specs",), "The tray holds 80."),  # another manual
+    ]
+
+    report = preflight(gold, chunks)
+
+    first, second = report.resolutions
+    assert first.matched == (
+        MatchedChunk("x", ENVY, ("Paper", "Load paper")),
+        MatchedChunk("y", ENVY, ("Specs",)),
+    )
+    assert second.matched == (MatchedChunk("y", ENVY, ("Specs",)),)
+    assert (first.matches, second.matches) == (2, 1)
+    assert report.multi_match == (first,)  # two or more matches, in golden order
 
 
 def test_an_unresolved_anchor_fails_the_preflight_and_names_its_question() -> None:

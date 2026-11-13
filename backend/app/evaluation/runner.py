@@ -22,6 +22,7 @@ from fractions import Fraction
 from typing import Protocol
 
 from app.domain.evaluation import (
+    Anchor,
     Category,
     GoldenQuestion,
     GoldenSet,
@@ -59,11 +60,24 @@ class AnchorProblem(StrEnum):
 
 
 @dataclass(frozen=True)
+class MatchedChunk:
+    """Which chunk an anchor matched: ids and the citation path, never its text."""
+
+    chunk_id: str
+    doc_id: str
+    section_path: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class AnchorResolution:
     question_id: str
     split: Split
     anchor: int
-    matches: int
+    matched: tuple[MatchedChunk, ...]
+
+    @property
+    def matches(self) -> int:
+        return len(self.matched)
 
     @property
     def problem(self) -> AnchorProblem | None:
@@ -86,6 +100,11 @@ class Preflight:
     @property
     def ok(self) -> bool:
         return not self.problems
+
+    @property
+    def multi_match(self) -> tuple[AnchorResolution, ...]:
+        """Anchors matching two or more chunks, reviewed for false positive coverage."""
+        return tuple(r for r in self.resolutions if r.matches >= 2)
 
 
 @dataclass(frozen=True)
@@ -187,8 +206,14 @@ def select_questions(
 
 def preflight(golden: GoldenSet, chunks: Sequence[IndexedChunk]) -> Preflight:
     """Every anchor of both splits: resolving one reads no score, so held-out is safe."""
+    by_id = {c.chunk_id: c for c in chunks}
+
+    def matched(anchor: Anchor) -> tuple[MatchedChunk, ...]:
+        found = (by_id[chunk_id] for chunk_id in matching_chunks(anchor, chunks))
+        return tuple(MatchedChunk(c.chunk_id, c.doc_id, c.section_path) for c in found)
+
     resolutions = tuple(
-        AnchorResolution(q.id, q.split, n, len(matching_chunks(anchor, chunks)))
+        AnchorResolution(q.id, q.split, n, matched(anchor))
         for q in golden.questions
         for n, anchor in enumerate(q.anchors)
     )
