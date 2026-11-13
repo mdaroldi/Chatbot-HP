@@ -1,8 +1,8 @@
 """POST /v1/search: the retrieval pipeline over HTTP, for debugging and the benchmark.
 
-It is mounted only when SEARCH_ENDPOINT_ENABLED is set (rejected in production), and
-it returns chunk text, so it is not a public API. The limits come from settings, so
-the request model is built per app.
+It is mounted only when SEARCH_ENDPOINT_ENABLED is set (production logs a startup
+warning), it is rate-limited, and it returns chunk text, so it is not a public API.
+The limits come from settings, so the request model is built per app.
 """
 
 import dataclasses
@@ -13,7 +13,8 @@ from typing import Annotated, cast
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.api.dependencies import get_app_settings, get_client_id, get_retrieval_service
+from app.api.dependencies import get_app_settings, get_retrieval_service
+from app.api.rate_limits import limit_search
 from app.core.settings import Settings
 from app.domain.retrieval import RetrievalResult, RetrievedChunk, SearchMode
 from app.services.retrieval import RetrievalService, config_from_settings
@@ -160,8 +161,8 @@ def search_request_model(settings: Settings, doc_ids: Collection[str]) -> type[S
 
 def build_search_router(settings: Settings, doc_ids: Collection[str]) -> APIRouter:
     body_model = search_request_model(settings, doc_ids)
-    # The client ID is checked like the request ID; Phase 3's rate limiter keys on it.
-    router = APIRouter(prefix="/v1", tags=["search"], dependencies=[Depends(get_client_id)])
+    # Rate-limited by client ID, else by peer IP (app.api.rate_limits).
+    router = APIRouter(prefix="/v1", tags=["search"], dependencies=[Depends(limit_search)])
 
     @router.post(
         "/search",

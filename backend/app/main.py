@@ -1,5 +1,6 @@
 """Application factory. Run with: uvicorn app.main:create_app --factory --no-server-header"""
 
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager
@@ -11,11 +12,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.conversations import router as conversations_router
 from app.api.errors import register_domain_error_handlers
 from app.api.health import router as health_router
+from app.api.rate_limits import RateLimiters
 from app.api.search import build_search_router
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
-from app.core.settings import Settings, get_settings
+from app.core.settings import Environment, Settings, get_settings
 from app.domain.retrieval import ProductName
 from app.infra.chat_store import SqlChatStore
 from app.infra.lifecycle import Infrastructure, open_infrastructure
@@ -25,6 +27,8 @@ from app.ingestion.corpus import load_corpus
 from app.services.retrieval import RetrievalService, product_names
 
 ModelsFactory = Callable[[Settings, Executor], QueryModels]
+
+_logger = logging.getLogger(__name__)
 
 _CORS_METHODS = ["GET", "POST", "DELETE"]
 _CORS_HEADERS = ["Content-Type", "X-Request-ID", "X-Client-ID"]
@@ -102,11 +106,16 @@ def create_app(
     # The corpus allowlist names the searchable documents and the product rule's names.
     corpus = load_corpus()
     app.state.products = product_names(corpus)
+    # In memory and per replica; built here, not in the lifespan, as it opens nothing.
+    app.state.rate_limiters = RateLimiters.from_settings(settings)
     register_exception_handlers(app)
     register_domain_error_handlers(app)
     app.include_router(health_router)
     app.include_router(conversations_router)
     if settings.search_endpoint_enabled:
+        if settings.app_env is Environment.PRODUCTION:
+            # Allowed (rate-limited) but unusual: it returns raw document chunks.
+            _logger.warning("search endpoint enabled in production")
         app.include_router(build_search_router(settings, [doc.doc_id for doc in corpus]))
 
     # add_middleware wraps the current stack: the last one added is the outermost.

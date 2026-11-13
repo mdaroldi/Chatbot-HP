@@ -250,7 +250,12 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `INFERENCE_ONNX_THREADS` | `2` | ONNX intra-op threads per model call; workers times threads should fit the container's CPUs. |
 | `QDRANT_SEARCH_TIMEOUT_SECONDS` | `2.0` | Deadline for one Qdrant search. |
 | `QUERY_MAX_CHARS` | `1000` | Longest accepted question, in characters. |
-| `SEARCH_ENDPOINT_ENABLED` | `false` | Serve the `POST /v1/search` debug endpoint; rejected in production. |
+| `RATE_LIMIT_CONVERSATIONS_PER_MINUTE` | `120` | Conversation create, list, read and delete calls per client ID per minute. |
+| `RATE_LIMIT_CONVERSATIONS_BURST` | `30` | Conversation calls a client may make at once (opening the UI loads several). |
+| `RATE_LIMIT_SEARCH_PER_MINUTE` | `30` | `POST /v1/search` calls per client ID (else per IP) per minute. |
+| `RATE_LIMIT_SEARCH_BURST` | `10` | Search calls allowed at once. |
+| `RATE_LIMIT_MAX_KEYS` | `10000` | Client IDs or IPs tracked per limiter and replica; the least recent is forgotten. |
+| `SEARCH_ENDPOINT_ENABLED` | `false` | Serve the `POST /v1/search` debug endpoint (returns chunk text); a warning is logged when enabled in production. |
 <!-- settings-table:end -->
 
 A unit test fails if this table, `.env.example` and the `Settings` class disagree.

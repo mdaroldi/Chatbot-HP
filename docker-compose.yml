@@ -126,7 +126,13 @@ services:
       RETRIEVAL_RELEVANCE_THRESHOLD: ${RETRIEVAL_RELEVANCE_THRESHOLD:--6.54}
       RETRIEVAL_DENSE_QUERY_PREFIX: ${RETRIEVAL_DENSE_QUERY_PREFIX:-}
       QUERY_MAX_CHARS: ${QUERY_MAX_CHARS:-1000}
-      # The debug search endpoint; rejected when APP_ENV=production.
+      # Rate limits (in memory, per replica): chat by X-Client-ID, search by it or IP.
+      RATE_LIMIT_CONVERSATIONS_PER_MINUTE: ${RATE_LIMIT_CONVERSATIONS_PER_MINUTE:-120}
+      RATE_LIMIT_CONVERSATIONS_BURST: ${RATE_LIMIT_CONVERSATIONS_BURST:-30}
+      RATE_LIMIT_SEARCH_PER_MINUTE: ${RATE_LIMIT_SEARCH_PER_MINUTE:-30}
+      RATE_LIMIT_SEARCH_BURST: ${RATE_LIMIT_SEARCH_BURST:-10}
+      RATE_LIMIT_MAX_KEYS: ${RATE_LIMIT_MAX_KEYS:-10000}
+      # The debug search endpoint (chunk text); a startup warning when on in production.
       SEARCH_ENDPOINT_ENABLED: ${SEARCH_ENDPOINT_ENABLED:-false}
       # Query models (ADR 0008): read offline from the store baked into the image.
       EMBEDDING_DENSE_MODEL: ${EMBEDDING_DENSE_MODEL:-BAAI/bge-small-en-v1.5}

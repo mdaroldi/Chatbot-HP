@@ -560,14 +560,45 @@ def test_prefetch_limits_must_cover_the_rerank_candidates(
         Settings()
 
 
-def test_the_search_endpoint_is_rejected_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_search_endpoint_can_be_enabled_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rate-limited since Phase 3, so production may enable it (with a startup warning)."""
     monkeypatch.setenv("SEARCH_ENDPOINT_ENABLED", "true")
-    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("APP_ENV", "production")
+
     assert Settings().search_endpoint_enabled is True
 
-    monkeypatch.setenv("APP_ENV", "production")
-    with pytest.raises(ValidationError, match="search_endpoint_enabled=true is not allowed"):
-        Settings()
+
+def test_rate_limit_defaults() -> None:
+    settings = Settings()
+
+    assert (
+        settings.rate_limit_conversations_per_minute,
+        settings.rate_limit_conversations_burst,
+    ) == (120, 30)
+    assert (settings.rate_limit_search_per_minute, settings.rate_limit_search_burst) == (30, 10)
+    assert settings.rate_limit_max_keys == 10_000
+
+
+@pytest.mark.parametrize(
+    ("name", "lowest", "highest"),
+    [
+        ("RATE_LIMIT_CONVERSATIONS_PER_MINUTE", 1, 100_000),
+        ("RATE_LIMIT_CONVERSATIONS_BURST", 1, 10_000),
+        ("RATE_LIMIT_SEARCH_PER_MINUTE", 1, 100_000),
+        ("RATE_LIMIT_SEARCH_BURST", 1, 10_000),
+        ("RATE_LIMIT_MAX_KEYS", 1, 1_000_000),
+    ],
+)
+def test_rate_limit_bounds(
+    monkeypatch: pytest.MonkeyPatch, name: str, lowest: int, highest: int
+) -> None:
+    for valid in (lowest, highest):
+        monkeypatch.setenv(name, str(valid))
+        assert getattr(Settings(), name.lower()) == valid
+    for invalid in (lowest - 1, highest + 1):
+        monkeypatch.setenv(name, str(invalid))
+        with pytest.raises(ValidationError):
+            Settings()
 
 
 @pytest.mark.parametrize("raw", ["", "  "])

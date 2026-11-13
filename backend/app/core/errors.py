@@ -31,6 +31,8 @@ class AppError(Exception):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
+        # Response headers the error needs, e.g. Retry-After on 429.
+        self.headers: Mapping[str, str] = {}
 
 
 def error_body(
@@ -74,7 +76,7 @@ def _status_code_slug(status: int) -> str:
 
 async def _handle_app_error(_: Request, exc: Exception) -> JSONResponse:
     error = cast(AppError, exc)
-    return _json_error(error.status_code, error.code, error.message)
+    return _json_error(error.status_code, error.code, error.message, headers=error.headers)
 
 
 async def _handle_http_exception(_: Request, raised: Exception) -> JSONResponse:

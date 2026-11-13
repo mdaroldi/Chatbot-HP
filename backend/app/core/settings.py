@@ -251,9 +251,38 @@ class Settings(BaseSettings):
     query_max_chars: int = Field(
         default=1000, ge=1, le=4000, description="Longest accepted question, in characters."
     )
+    rate_limit_conversations_per_minute: int = Field(
+        default=120,
+        ge=1,
+        le=100_000,
+        description="Conversation create, list, read and delete calls per client ID per minute.",
+    )
+    rate_limit_conversations_burst: int = Field(
+        default=30,
+        ge=1,
+        le=10_000,
+        description="Conversation calls a client may make at once (opening the UI loads several).",
+    )
+    rate_limit_search_per_minute: int = Field(
+        default=30,
+        ge=1,
+        le=100_000,
+        description="`POST /v1/search` calls per client ID (else per IP) per minute.",
+    )
+    rate_limit_search_burst: int = Field(
+        default=10, ge=1, le=10_000, description="Search calls allowed at once."
+    )
+    rate_limit_max_keys: int = Field(
+        default=10_000,
+        ge=1,
+        le=1_000_000,
+        description="Client IDs or IPs tracked per limiter and replica; the least recent "
+        "is forgotten.",
+    )
     search_endpoint_enabled: bool = Field(
         default=False,
-        description="Serve the `POST /v1/search` debug endpoint; rejected in production.",
+        description="Serve the `POST /v1/search` debug endpoint (returns chunk text); a "
+        "warning is logged when enabled in production.",
     )
 
     @field_validator("cors_allowed_origins", mode="before")
@@ -294,13 +323,6 @@ class Settings(BaseSettings):
         prefetch = min(self.retrieval_prefetch_dense_limit, self.retrieval_prefetch_sparse_limit)
         if prefetch < self.retrieval_rerank_candidates:
             raise ValueError("prefetch limits must be at least retrieval_rerank_candidates")
-        return self
-
-    @model_validator(mode="after")
-    def _no_search_endpoint_in_production(self) -> "Settings":
-        """The debug endpoint has no rate limiter until Phase 3."""
-        if self.app_env is Environment.PRODUCTION and self.search_endpoint_enabled:
-            raise ValueError("search_endpoint_enabled=true is not allowed in production")
         return self
 
     @property

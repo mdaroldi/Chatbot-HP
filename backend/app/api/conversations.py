@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from app.api.cursor import decode_cursor, encode_cursor
 from app.api.dependencies import get_chat_store, require_client_id
+from app.api.rate_limits import limit_conversations
 from app.domain.chat import Conversation, Message, Source
 from app.domain.chat_store import ChatStore, ConversationNotFoundError
 
@@ -26,7 +27,9 @@ MAX_CURSOR_CHARS = 256
 ClientId = Annotated[str, Depends(require_client_id)]
 Store = Annotated[ChatStore, Depends(get_chat_store)]
 
-router = APIRouter(prefix="/v1/conversations", tags=["conversations"])
+router = APIRouter(
+    prefix="/v1/conversations", tags=["conversations"], dependencies=[Depends(limit_conversations)]
+)
 
 
 class ConversationOut(BaseModel):
