@@ -21,10 +21,11 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from app.core.settings import Settings
+from app.core.tasks import shielded
 from app.domain.chat import (
     REFUSAL_TEXT,
     AnswerFlags,
@@ -69,9 +70,6 @@ ANSWER_WITHDRAWN = ("answer_withdrawn", "The answer was withdrawn.")
 INTERNAL_ERROR = "internal_error"
 # Pre-first-token cancellation comes from the client going away (commit 10's watcher).
 CLIENT_DISCONNECTED = "client_disconnected"
-
-# Final writes in flight, kept referenced until done (the loop holds tasks weakly).
-_WRITES: set[object] = set()
 
 
 @dataclass(frozen=True)
@@ -279,7 +277,7 @@ class ChatService:
                 "error_code": code,
             },
         )
-        await _shielded(self._store.discard_turn(state.client_id, turn))
+        await shielded(self._store.discard_turn(state.client_id, turn))
 
     async def _withdraw(self, state: _State, trace: _Trace) -> AnswerFailed:
         """A provider safety stop after text was shown: the text is not kept."""
@@ -454,7 +452,7 @@ class ChatService:
 
     async def _write(self, state: _State, answer: AnswerRecord) -> None:
         turn = state.turn
-        stored = await _shielded(
+        stored = await shielded(
             self._store.finish_answer(state.client_id, turn.assistant.id, answer)
         )
         if stored is None:
@@ -467,16 +465,6 @@ class ChatService:
                 },
             )
         _log_answer(turn, answer)
-
-
-async def _shielded[T](write: Coroutine[object, None, T]) -> T:
-    """Run a store write in its own task to the end, even if the request is cancelled
-    (again) while it runs; the caller still sees the cancellation.
-    """
-    task = asyncio.ensure_future(write)
-    _WRITES.add(task)
-    task.add_done_callback(_WRITES.discard)
-    return await asyncio.shield(task)
 
 
 def _error_code(error: Exception) -> str:
