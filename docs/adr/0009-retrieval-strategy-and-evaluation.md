@@ -73,8 +73,33 @@ set frozen before any tuning.
 ## Relevance threshold (calibration record)
 
 Calibrated on `Xenova/ms-marco-MiniLM-L-6-v2` @ `a09144355adeed5f58c8ed011d209bf8ee5a1fec`, threshold `-6.54`
-(run `20261113t153722z-06bf4c0280ab`, dev split, build `20261113t153253z`). A unit test
-fails when the reranker pin moves without this record. Results follow below.
+(run `20261113t153722z-06bf4c0280ab`, dev split, build `20261113t153253z`), reproduced
+exactly after the tie fix by runs `20261113t170151z-e417067988f3` and
+`20261113t171404z-e417067988f3`. A unit test fails when the reranker pin moves without
+this record. Results follow below.
+
+## Finding: RRF ties at the cutoff (fixed at `e417067`)
+
+Qdrant broke score ties at its own `limit` differently between runs; RRF scores are
+rank-based, so ties are common. The store now asks for the union of both prefetch
+limits (in hybrid mode, every fused point) and cuts client side by score descending,
+then chunk id ascending, in every mode. Two identical post-fix full-matrix runs differ
+on 0 of 56 candidate lists for every configuration. Pre-fix evidence of the noise
+(runs on `1ae6ccc` and `06bf4c0`, kept in `eval/reports/runs/`, git-ignored):
+
+- Between identical runs, the reference's candidate set differed on 10 to 12 of 56 dev
+  questions: one chunk swapped at position 20 among equal fused scores. No MiniLM
+  score changed.
+- jina-turbo's Recall@5 moved from 0.948 to 0.927 between two runs (post-fix: 0.948).
+- The reference's total p95 over the five pre-fix runs: 2275, 3577, 2392, 2348 and
+  2170 ms. The first three set the 1302 ms tie margin.
+- The noise also reached the order of plain `hybrid` (47 of 56 lists reordered between
+  two runs) and `sparse` (7), and inflated the "changed by the setting" counts of RRF
+  k = 2 (10 and 8, post-fix 0) and the product filter (14 and 17, post-fix 7).
+
+The post-fix runs are the record in `eval/reports/retrieval-summary.md`. Only plain
+`hybrid` moved (Recall@5 0.878 to 0.889, MRR 0.841 to 0.852); the selection, the
+threshold and every default are unchanged.
 
 ## Evaluation method
 

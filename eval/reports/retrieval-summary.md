@@ -23,47 +23,62 @@ identifiers, scores and timings only. Method and decisions:
 - **Selection rule:** highest Recall@5, where overlapping intervals count as tied; then
   higher MRR; then lower p95, where a gap of up to 1302 ms is a tie; then matrix order.
 
+Every number below is from the post-fix runs (code `e417067`, deterministic candidate
+lists; see "Latency and determinism"). The pre-fix runs are kept as the evidence of the
+tie noise and of the p95 tie margin; their numbers are recorded in ADR 0009.
+
 | Run | Code | Build | Configs |
 |---|---|---|---|
-| `20261113t143340z-1ae6cccf3956` | `1ae6ccc` | `20261113t134027z` | four-way baseline |
-| `20261113t143602z-1ae6cccf3956` | `1ae6ccc` | `20261113t134027z` | reference + four single changes |
-| `20261113t144854z-1ae6cccf3956` | `1ae6ccc` | `20261113t134027z` | the three tied changes + reference, reverse order |
-| `20261113t153000z-1ae6cccf3956` | `1ae6ccc` | `20261113t145757z` (avg_len `auto`, 107.26), by `--collection` | reference |
-| `20261113t153722z-06bf4c0280ab` | `06bf4c0` | `20261113t153253z` | full matrix, amended rule (**the reference run for the tables below**) |
+| `20261113t143340z-1ae6cccf3956` | `1ae6ccc` | `20261113t134027z` | pre-fix: four-way baseline |
+| `20261113t143602z-1ae6cccf3956` | `1ae6ccc` | `20261113t134027z` | pre-fix: reference + four single changes |
+| `20261113t144854z-1ae6cccf3956` | `1ae6ccc` | `20261113t134027z` | pre-fix: the three tied changes + reference, reverse order |
+| `20261113t153000z-1ae6cccf3956` | `1ae6ccc` | `20261113t145757z` (avg_len `auto`), by `--collection` | pre-fix: reference |
+| `20261113t153722z-06bf4c0280ab` | `06bf4c0` | `20261113t153253z` | pre-fix: full matrix, amended rule |
+| `20261113t170151z-e417067988f3` | `e417067` | `20261113t153253z` | full matrix (**the record for the tables below**) |
+| `20261113t171404z-e417067988f3` | `e417067` | `20261113t153253z` | full matrix again (determinism check) |
+| `20261113t172817z-e417067988f3` | `e417067` | `20261113t172701z` (avg_len `auto`, 107.26), by `--collection` | reference |
 
-## Metrics (run `20261113t153722z-06bf4c0280ab`)
+## Metrics (run `20261113t170151z-e417067988f3`)
 
 | config | Recall@5 [95% CI] | MRR [95% CI] | Recall@20 | nDCG@5 | p50 / p95 ms |
 |---|---|---|---|---|---|
-| `dense` | 0.899 [0.819, 0.965] | 0.827 [0.742, 0.910] | 0.927 | 0.821 | 10 / 29 |
-| `sparse` | 0.906 [0.826, 0.969] | 0.793 [0.704, 0.877] | 0.944 | 0.795 | 2 / 27 |
-| `hybrid` | 0.878 [0.792, 0.951] | 0.841 [0.760, 0.917] | 0.976 | 0.818 | 11 / 15 |
-| `hybrid-rerank` | 0.941 [0.889, 0.986] | 0.898 [0.826, 0.958] | 0.976 | 0.881 | 1869 / 2170 |
-| `hybrid-rerank-jina-turbo` | 0.927 [0.865, 0.976] | 0.853 [0.777, 0.924] | 0.976 | 0.845 | 2259 / 2502 |
-| `hybrid-rerank-product-filter` | 0.941 [0.889, 0.986] | 0.898 [0.826, 0.958] | 0.976 | 0.881 | 2088 / 2429 |
-| `hybrid-rerank-bge-prefix` | 0.941 [0.889, 0.986] | 0.898 [0.826, 0.958] | 0.976 | 0.881 | 2069 / 2275 |
-| `hybrid-rerank-rrf-k2` | 0.941 [0.889, 0.986] | 0.898 [0.826, 0.958] | 0.976 | 0.881 | 2079 / 2455 |
+| `dense` | 0.899 [0.819, 0.965] | 0.827 [0.742, 0.910] | 0.927 | 0.821 | 11 / 15 |
+| `sparse` | 0.906 [0.826, 0.969] | 0.793 [0.704, 0.877] | 0.944 | 0.795 | 3 / 16 |
+| `hybrid` | 0.889 [0.805, 0.962] | 0.852 [0.769, 0.927] | 0.976 | 0.831 | 11 / 13 |
+| `hybrid-rerank` | 0.941 [0.889, 0.986] | 0.898 [0.826, 0.958] | 0.976 | 0.881 | 2039 / 2644 |
+| `hybrid-rerank-jina-turbo` | 0.948 [0.899, 0.990] | 0.854 [0.779, 0.924] | 0.976 | 0.853 | 2703 / 3338 |
+| `hybrid-rerank-product-filter` | 0.941 [0.889, 0.986] | 0.898 [0.826, 0.958] | 0.976 | 0.881 | 2427 / 2961 |
+| `hybrid-rerank-bge-prefix` | 0.941 [0.889, 0.986] | 0.898 [0.826, 0.958] | 0.976 | 0.881 | 2514 / 3035 |
+| `hybrid-rerank-rrf-k2` | 0.941 [0.889, 0.986] | 0.898 [0.826, 0.958] | 0.976 | 0.881 | 2346 / 3049 |
 
-The avg_len `auto` build (run `20261113t153000z`, `hybrid-rerank` only) scored exactly
-the same: Recall@5 0.941, MRR 0.898, Recall@20 0.976, nDCG@5 0.881, p50 / p95 1833 / 2348 ms.
+The second run (`171404z`) gave the same quality metrics on every row. Its p95 values
+were 14, 15, 19, 2937, 3968, 3009, 3636 and 3097 ms in the order above, and it made the
+same selection. The avg_len `auto` build (run `172817z`, `hybrid-rerank` only) scored
+exactly the same as the reference: Recall@5 0.941, MRR 0.898, Recall@20 0.976, nDCG@5
+0.881, p50 / p95 2595 / 2951 ms.
 
-**Selected: `hybrid-rerank`.** All eight rows tie on Recall@5. Five share the top MRR
-(0.898): the reference, product filter, BGE prefix, RRF k = 2 and the avg_len build,
-which was run separately. Their p95 values fall within the margin, so matrix order
-decides. jina-turbo loses on MRR (0.853).
+**Selected: `hybrid-rerank`.** All eight rows tie on Recall@5 (overlapping intervals).
+Five share the top MRR (0.898): the reference, product filter, BGE prefix, RRF k = 2
+and the avg_len build, which was run separately. Their p95 values fall within the
+margin, so matrix order decides. jina-turbo has the highest Recall@5 point estimate
+(0.948, tied) and loses on MRR (0.854).
 
-## Recall@5 / MRR by category, four-way baseline
+## Recall@5 / MRR by category, four-way baseline (run `170151z`)
 
 | category | n | `dense` R@5 / MRR | `sparse` R@5 / MRR | `hybrid` R@5 / MRR | `hybrid-rerank` R@5 / MRR |
 |---|---|---|---|---|---|
-| factual | 10 | 1.000 / 0.853 | 0.800 / 0.554 | 0.900 / 0.679 | 1.000 / 0.875 |
+| factual | 10 | 1.000 / 0.853 | 0.800 / 0.554 | 0.900 / 0.681 | 1.000 / 0.875 |
 | procedure | 8 | 1.000 / 1.000 | 1.000 / 0.938 | 1.000 / 1.000 | 1.000 / 1.000 |
 | table | 6 | 0.833 / 0.667 | 1.000 / 0.833 | 0.833 / 0.769 | 1.000 / 1.000 |
 | part_number | 6 | 1.000 / 0.833 | 1.000 / 1.000 | 1.000 / 1.000 | 1.000 / 1.000 |
 | warning | 5 | 0.800 / 0.667 | 1.000 / 0.717 | 0.800 / 0.695 | 1.000 / 0.750 |
-| prerequisite | 5 | 0.433 / 0.800 | 0.500 / 0.900 | 0.433 / 0.900 | 0.433 / 0.900 |
-| ambiguous | 4 | 1.000 / 0.875 | 1.000 / 0.688 | 1.000 / 0.875 | 1.000 / 0.708 |
+| prerequisite | 5 | 0.433 / 0.800 | 0.500 / 0.900 | 0.533 / 0.900 | 0.433 / 0.900 |
+| ambiguous | 4 | 1.000 / 0.875 | 1.000 / 0.688 | 1.000 / 1.000 | 1.000 / 0.708 |
 | follow_up | 4 | 1.000 / 0.833 | 1.000 / 0.800 | 1.000 / 0.875 | 1.000 / 0.812 |
+
+Against the pre-fix baseline, only `hybrid` without rerank moved (factual MRR 0.679 to
+0.681, prerequisite Recall@5 0.433 to 0.533, ambiguous MRR 0.875 to 1.000): its order
+among tied fused scores is now fixed by chunk id.
 
 ## Hypotheses
 
@@ -74,13 +89,13 @@ decides. jina-turbo loses on MRR (0.853).
   ties dense on Recall@5 (0.833) and is slightly ahead on MRR (0.769 vs 0.667). Rerank
   lifts `table` to 1.000 / 1.000.
 - **H2 (rerank improves MRR over hybrid): the direction holds, not significant.** MRR
-  is 0.898 [0.826, 0.958] against 0.841 [0.760, 0.917]; the intervals overlap. Recall@5
-  rises from 0.878 to 0.941, and nDCG@5 from 0.818 to 0.881.
+  is 0.898 [0.826, 0.958] against 0.852 [0.769, 0.927]; the intervals overlap. Recall@5
+  rises from 0.889 to 0.941, and nDCG@5 from 0.831 to 0.881.
 - **H3 (the product filter does not lower Recall@5): holds, with no effect.** The rule
   fired on 12 dev questions (9 in scope, 3 near-domain). That matches the rule applied
   offline to the dev questions and a case-insensitive name search (also 12 and 9). On
-  9 of the 12, the filter changed the candidate set (about 1.8 chunks dropped per
-  question), but no question's score or top rerank score changed.
+  7 of the 12, the filter changed the candidate set (about 2.9 chunks dropped per
+  changed question), but no question's score or top rerank score changed.
 
 ## Single changes from `hybrid-rerank`
 
@@ -88,32 +103,35 @@ No single change improved dev quality, so the matrix has no combination row.
 
 - **BGE query prefix, RRF k = 2, product filter, avg_len `auto`:** every metric is
   identical to the reference.
-- **jina-turbo reranker:** lower MRR (0.853 against 0.898) and higher p95.
+- **jina-turbo reranker:** lower MRR (0.854 against 0.898) and higher p95.
 
 **Check that each setting was applied.** Counts of dev questions (of 56) whose candidate
-list or top 5 differs from the reference in the same run:
+list or top 5 differs from the reference (run `170151z`):
 
 | Change | Candidate list differs | Top 5 differs | Top rerank score differs |
 |---|---|---|---|
-| reference vs itself, separate runs (noise) | 10, 12 | 1, 1 | 0 |
-| BGE prefix | 47, 45 | 8, 8 | 2, 1 |
-| product filter | 14, 17 | 2, 1 | 0 |
-| RRF k = 2 | 10, 8 | 0, 0 | 0 |
-| avg_len `auto` (vs run `144854z`) | 36 | 6 | 0 |
-| jina-turbo | 56 (reordered) | 55 | 56 |
+| reference vs itself, run `171404z` (noise) | 0 | 0 | 0 |
+| BGE prefix | 45 | 8 | 1 |
+| product filter | 7 | 1 | 0 |
+| RRF k = 2 | 0 | 0 | 0 |
+| avg_len `auto` (run `172817z`) | 39 | 6 | 0 |
+| jina-turbo | 0 (same set, reordered) | 55 | 56 |
 
-- **RRF k = 2:** applied. Its fused scores range from 0.5 to 1.0, against 0.017 to
-  0.033 at k = 60. Its candidate sets change no more than the noise, because the
-  reranker reorders the same top 20.
-- **Product filter:** applied; it changes the candidate set on 9 of the 12 questions
-  where it fired.
+- **RRF k = 2:** applied. Its fused candidate scores range from 0.048 to 1.0,
+  against 0.013 to 0.033 at k = 60. The fused top 20 holds the same chunks as at k = 60
+  on all 56 questions (measured; with up to 40 fused points it could differ), so only
+  the order before the rerank changes, and the reranker reorders the same 20. Before
+  the fix, its 10 and 8 changed lists were tie noise.
+- **Product filter:** applied; it changes the candidate set on 7 of the 12 questions
+  where it fired (pre-fix: 9, inflated by the noise).
 - **The changed top 5s:** under BGE prefix and avg_len `auto`, the top 5 changes on
   some questions but no anchor score does.
 
 ## Relevance threshold
 
-Calibrated on `hybrid-rerank` (MiniLM-L6 @ `a09144355ade`), run `20261113t153722z`.
-The rule is the highest top rerank score that keeps false refusals at or below 5% of
+Calibrated on `hybrid-rerank` (MiniLM-L6 @ `a09144355ade`), run `20261113t153722z`
+(pre-fix), and reproduced exactly by the post-fix runs `170151z` and `171404z`. The
+rule is the highest top rerank score that keeps false refusals at or below 5% of
 in-scope questions (at most 2 of 48).
 
 - **Threshold:** -6.539, set as **-6.54**. Rounding down refuses the same questions.
@@ -129,13 +147,16 @@ revision. With jina-turbo, the threshold would be -1.546, with 0 of 4 near-domai
 ## Latency and determinism
 
 - **Latency is method-limited.** A laptop VM has order and load effects. The
-  reference's total p95 was 2275, 3577, 2392, 2348 and 2170 ms over five runs; its p50
-  ranged from 1833 to 2131 ms. The tie margin (1302 ms) is the spread of the first
-  three. All five spread to 1407 ms, which changes no selection. In run `143340z`, rerank was about 97%
-  of the time (p50 1887 of 1928 ms). Latency decisions are deferred to the Phase 6
-  load tests.
-- **RRF ties at the cutoff are not deterministic.** Between identical runs, the
-  candidate set differed on 10 to 12 of 56 questions: one chunk swaps at position 20
-  among equal fused scores. No per-question score changed for the MiniLM reranker. The
-  effect is bounded, but jina-turbo's Recall@5 moved from 0.948 to 0.927 between two
-  runs because of it.
+  reference's total p95 was 2275, 3577, 2392, 2348 and 2170 ms over the five pre-fix
+  runs, and 2644, 2937 and 2951 ms over the three post-fix runs; its p50 ranged from
+  1833 to 2595 ms. The tie margin (1302 ms) is the spread of the first three. All eight
+  spread to 1407 ms, which changes no selection. In run `170151z`, rerank was about 97%
+  of the time (p50 1986 of 2039 ms). Latency decisions are deferred to the Phase 6 load
+  tests.
+- **Candidate lists are deterministic (fix `e417067`).** Before it, Qdrant broke score
+  ties at its own limit differently between runs: the reference's candidate set
+  differed on 10 to 12 of 56 questions between identical runs, and jina-turbo's
+  Recall@5 moved from 0.948 to 0.927. The store now asks for the union of both
+  prefetches (every fused point) and cuts client side by score descending, then chunk
+  id ascending, in every mode. Between the two post-fix full-matrix runs, 0 of 56
+  candidate lists differ for every configuration, in order and in every score.
