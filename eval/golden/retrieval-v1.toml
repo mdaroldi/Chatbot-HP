@@ -1,11 +1,11 @@
-# Golden retrieval set v1.0.0 (DRAFT for review).
+# Golden retrieval set v1.0.1. Changes from v1.0.0: three anchors tightened after the preflight review.
 # Written from the two HP manuals, not from the index. Questions are original wording.
 # Anchors: a chunk satisfies an anchor when doc_id matches and ALL facts occur in its text.
 # match = any: one satisfied anchor is enough; match = all: every anchor must be covered.
 # The optional `section` field is deliberately unused in v1.0.0 (section_path format
 # not confirmed). Do not edit questions or anchors after the freeze commit.
 
-version = "1.0.0"
+version = "1.0.1"
 
 [[questions]]
 id = "envy-factual-001"
@@ -587,7 +587,7 @@ match = "all"
 
 [[questions.anchors]]
 doc_id = "omen-17-service-guide"
-facts = ["Open the computer to 135"]
+facts = ["can remain attached to the computer"]
 
 [[questions.anchors]]
 doc_id = "omen-17-service-guide"
@@ -632,7 +632,7 @@ match = "any"
 
 [[questions.anchors]]
 doc_id = "envy-6000-user-guide"
-facts = ["located inside the cartridge access door"]
+facts = ["serial number", "located inside the cartridge access door"]
 
 [[questions.anchors]]
 doc_id = "omen-17-service-guide"
@@ -666,7 +666,7 @@ facts = ["Press to turn the printer on or off"]
 
 [[questions.anchors]]
 doc_id = "omen-17-service-guide"
-facts = ["initiate Sleep"]
+facts = ["briefly to initiate Sleep"]
 
 [[questions]]
 id = "omen-followup-001"
