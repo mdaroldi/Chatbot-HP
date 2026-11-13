@@ -9,12 +9,19 @@ outcome is stored with its trace and logged once, as ids, counts, codes and timi
 never as text.
 
 `answer` is an async generator of events: the API reads the first one before it
-starts the response, so failures before the first token stay HTTP errors.
+starts the response, so failures before the first token stay HTTP errors. Until the
+first token nothing is kept: a failure or a cancellation removes the turn as if it was
+never sent. After it, what the user saw is stored: a model error as `failed` (with an
+error event), a cancellation or a closed stream as `cancelled`, a provider refusal as a
+withdrawn answer. The final write runs in its own shielded task, so a second
+cancellation cannot leave the answer pending.
 """
 
+import asyncio
+import contextlib
 import logging
 import time
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from app.core.settings import Settings
@@ -22,6 +29,7 @@ from app.domain.chat import (
     REFUSAL_TEXT,
     AnswerFlags,
     AnswerRecord,
+    ChatError,
     Message,
     Outcome,
     RefusalReason,
@@ -31,14 +39,38 @@ from app.domain.chat import (
 )
 from app.domain.chat_store import ChatStore, ConversationNotFoundError, Turn
 from app.domain.citations import snippet, validate_citations
-from app.domain.llm import GenerationRequest, LLMProvider, PromptMessage, Purpose, Usage
+from app.domain.llm import (
+    GenerationRequest,
+    LLMError,
+    LLMProvider,
+    PromptMessage,
+    Purpose,
+    StopReason,
+    Usage,
+)
 from app.domain.marker import MarkerDetector
 from app.domain.prompt import ANSWER_SYSTEM_PROMPT, HistoryBudget, answer_messages
-from app.domain.retrieval import IndexBuildRef, IndexIdentity, RetrievalConfig, RetrievalResult
+from app.domain.retrieval import (
+    IndexBuildRef,
+    IndexIdentity,
+    ModelsNotReadyError,
+    RetrievalConfig,
+    RetrievalResult,
+    RetrievalUnavailableError,
+)
 from app.services.retrieval import RetrievalService
 from app.services.rewrite import QueryRewriter, RewriteResult
 
 logger = logging.getLogger(__name__)
+
+# The error event after a provider safety refusal: the text already shown is withdrawn.
+ANSWER_WITHDRAWN = ("answer_withdrawn", "The answer was withdrawn.")
+INTERNAL_ERROR = "internal_error"
+# Pre-first-token cancellation comes from the client going away (commit 10's watcher).
+CLIENT_DISCONNECTED = "client_disconnected"
+
+# Final writes in flight, kept referenced until done (the loop holds tasks weakly).
+_WRITES: set[object] = set()
 
 
 @dataclass(frozen=True)
@@ -65,7 +97,16 @@ class AnswerDone:
     answer: AnswerRecord
 
 
-AnswerEvent = AnswerToken | AnswerDone
+@dataclass(frozen=True)
+class AnswerFailed:
+    """The answer stopped after text was shown; code and message are fixed and safe."""
+
+    turn: Turn
+    code: str
+    message: str
+
+
+AnswerEvent = AnswerToken | AnswerDone | AnswerFailed
 
 
 @dataclass(frozen=True)
@@ -95,12 +136,30 @@ class _Generation:
     """What the model produced so far: shown text (or a refusal), usage and timing."""
 
     parts: list[str] = field(default_factory=list)
-    refused: bool = False
+    refused: bool = False  # the leading marker (layer 2)
+    provider_refused: bool = False  # the provider's own safety stop
     late_marker: bool = False
     model: str | None = None
     usage: Usage = field(default_factory=lambda: Usage(None, None))
     ttft: float | None = None  # clock reading of the first visible text
     generation_ms: float | None = None
+
+    @property
+    def shown_text(self) -> str:
+        return "".join(self.parts).strip()
+
+
+@dataclass
+class _State:
+    """How far one turn got, for the outcome to store when it stops early."""
+
+    client_id: str
+    turn: Turn
+    start: float
+    trace: _Trace | None = None
+    generation: _Generation = field(default_factory=_Generation)
+    shown: bool = False  # an event reached the user
+    finishing: bool = False  # the final write has started
 
 
 class ChatService:
@@ -131,36 +190,109 @@ class ChatService:
 
     async def answer(
         self, client_id: str, conversation_id: str, question: str
-    ) -> AsyncIterator[AnswerEvent]:
+    ) -> AsyncGenerator[AnswerEvent, None]:
         """Raises ConversationNotFoundError or ConversationBusyError before anything
-        is stored, and UnknownDocumentError after removing the turn it started.
+        is stored; any other failure before the first event removes the turn first.
         """
         start = self._clock()
         thread = await self._store.get_thread(client_id, conversation_id)
         if thread is None:
             raise ConversationNotFoundError
-        history = thread.messages
         turn = await self._store.start_turn(
             client_id, conversation_id, question, title=conversation_title(question)
         )
+        state = _State(client_id, turn, start)
+        try:
+            async with contextlib.aclosing(self._run(state, question, thread.messages)) as run:
+                async for event in run:
+                    state.shown = True
+                    yield event
+        except (asyncio.CancelledError, GeneratorExit):
+            await self._stop(state, CLIENT_DISCONNECTED, Outcome.CANCELLED, None)
+            raise
+        except Exception as error:
+            code = _error_code(error)
+            await self._stop(state, code, Outcome.FAILED, code)
+            if not state.shown or not isinstance(error, LLMError):
+                raise
+            yield AnswerFailed(turn, error.code, error.message)
+
+    async def _run(
+        self, state: _State, question: str, history: Sequence[Message]
+    ) -> AsyncGenerator[AnswerEvent, None]:
         build = await self._index.current()
         rewrite = await self._rewriter.rewrite(question, history)
         retrieved = await self._retrieval.retrieve(rewrite.query, self._retrieval_config)
-        trace = _Trace(client_id, turn, start, build, rewrite, retrieved)
+        trace = state.trace = _Trace(
+            state.client_id, state.turn, state.start, build, rewrite, retrieved
+        )
         if retrieved.relevance.above_threshold is False:
             yield AnswerToken(REFUSAL_TEXT)
-            yield await self._finish(trace, self._below_threshold(trace))
+            yield await self._finish(state, self._below_threshold(trace))
             return
-        messages = await self._prompt(trace, question, history)
-        generation = _Generation()
-        async for token in self._generate(messages, generation):
-            yield token
-        if generation.refused:
+        messages = self._prompt(trace, question, history)
+        generation = state.generation
+        # Closed explicitly, so leaving early closes the provider stream at once.
+        async with contextlib.aclosing(self._generate(messages, generation)) as tokens:
+            async for token in tokens:
+                yield token
+        if generation.provider_refused and state.shown:
+            yield await self._withdraw(state, trace)
+            return
+        if generation.refused or generation.provider_refused:
             generation.ttft = self._clock()  # the fixed text is the first one shown
             yield AnswerToken(REFUSAL_TEXT)
-        yield await self._finish(trace, self._answered(trace, generation))
+        yield await self._finish(state, self._answered(trace, generation))
 
-    async def _prompt(
+    async def _stop(
+        self, state: _State, discard_code: str, outcome: Outcome, error_code: str | None
+    ) -> None:
+        """Before the first event, remove the turn; after it, store what was shown
+        (unless the final write already started).
+        """
+        trace = state.trace
+        if trace is None or not state.shown:
+            await self._discard(state, discard_code)
+        elif not state.finishing:
+            record = self._record(
+                trace,
+                outcome,
+                state.generation.shown_text,
+                generation=state.generation,
+                error_code=error_code,
+                flags=AnswerFlags(rewrite_fallback=trace.rewrite_fallback),
+            )
+            await self._write(state, record)
+
+    async def _discard(self, state: _State, code: str) -> None:
+        turn = state.turn
+        logger.warning(
+            "turn discarded",
+            extra={
+                "conversation_id": turn.assistant.conversation_id,
+                "message_id": turn.assistant.id,
+                "error_code": code,
+            },
+        )
+        await _shielded(self._store.discard_turn(state.client_id, turn))
+
+    async def _withdraw(self, state: _State, trace: _Trace) -> AnswerFailed:
+        """A provider safety stop after text was shown: the text is not kept."""
+        code, message = ANSWER_WITHDRAWN
+        record = self._record(
+            trace,
+            Outcome.REFUSED,
+            REFUSAL_TEXT,
+            reason=RefusalReason.PROVIDER_REFUSED,
+            generation=state.generation,
+            error_code=code,
+            flags=AnswerFlags(rewrite_fallback=trace.rewrite_fallback),
+        )
+        state.finishing = True
+        await self._write(state, record)
+        return AnswerFailed(state.turn, code, message)
+
+    def _prompt(
         self, trace: _Trace, question: str, history: Sequence[Message]
     ) -> tuple[PromptMessage, ...]:
         try:
@@ -170,12 +302,11 @@ class ChatService:
         except ValueError:
             # Only an untitled document raises here; its message names the document,
             # so the fixed-message error replaces it (and its context) entirely.
-            await self._store.discard_turn(trace.client_id, trace.turn)
             raise UnknownDocumentError from None
 
     async def _generate(
         self, messages: tuple[PromptMessage, ...], generation: _Generation
-    ) -> AsyncIterator[AnswerToken]:
+    ) -> AsyncGenerator[AnswerToken, None]:
         """Stream the answer through the marker detector, filling `generation`.
 
         A leading marker stops reading at once: leaving the context closes the stream.
@@ -191,18 +322,23 @@ class ChatService:
         detector = MarkerDetector()
         begin = self._clock()
         async with self._provider.stream(request) as stream:
-            async for piece in stream:
-                visible = detector.feed(piece)
-                if detector.refused:
-                    break
-                if visible:
-                    yield self._shown(generation, visible)
-            rest = "" if detector.refused else detector.finish()
-            if rest:
-                yield self._shown(generation, rest)
-            generation.model, generation.usage = stream.served_model, stream.usage
+            try:
+                async for piece in stream:
+                    visible = detector.feed(piece)
+                    if detector.refused:
+                        break
+                    if visible:
+                        yield self._shown(generation, visible)
+                generation.provider_refused = stream.stop_reason is StopReason.REFUSAL
+                held = detector.refused or generation.provider_refused
+                rest = "" if held else detector.finish()
+                if rest:
+                    yield self._shown(generation, rest)
+            finally:
+                # Usage and model as last reported, even when the stream failed.
+                generation.model, generation.usage = stream.served_model, stream.usage
+                generation.generation_ms = (self._clock() - begin) * 1000
         generation.refused, generation.late_marker = detector.refused, detector.late_marker
-        generation.generation_ms = (self._clock() - begin) * 1000
 
     def _shown(self, generation: _Generation, text: str) -> AnswerToken:
         if generation.ttft is None:
@@ -220,17 +356,22 @@ class ChatService:
         )
 
     def _answered(self, trace: _Trace, generation: _Generation) -> AnswerRecord:
-        if generation.refused:
+        if generation.refused or generation.provider_refused:
+            reason = (
+                RefusalReason.MODEL_REFUSED
+                if generation.refused
+                else RefusalReason.PROVIDER_REFUSED
+            )
             return self._record(
                 trace,
                 Outcome.REFUSED,
                 REFUSAL_TEXT,
-                reason=RefusalReason.MODEL_REFUSED,
+                reason=reason,
                 generation=generation,
                 flags=AnswerFlags(rewrite_fallback=trace.rewrite_fallback),
             )
         # Removing a late marker can leave whitespace at the end.
-        checked = validate_citations("".join(generation.parts).strip(), self._tags(trace))
+        checked = validate_citations(generation.shown_text, self._tags(trace))
         return self._record(
             trace,
             Outcome.COMPLETED,
@@ -257,6 +398,7 @@ class ChatService:
         citations: tuple[str, ...] = (),
         sources: tuple[Source, ...] = (),
         generation: _Generation | None = None,
+        error_code: str | None = None,
     ) -> AnswerRecord:
         """The stored record; model fields stay None when the model was not called."""
         made = generation or _Generation()
@@ -278,6 +420,7 @@ class ChatService:
             relevance=trace.retrieved.relevance,
             index_build_id=trace.build.build_id,
             rewritten_query=trace.rewrite.rewritten_query,
+            error_code=error_code,
             flags=flags,
         )
 
@@ -297,9 +440,16 @@ class ChatService:
             snippet=snippet(hit.text, self._config.snippet_chars),
         )
 
-    async def _finish(self, trace: _Trace, answer: AnswerRecord) -> AnswerDone:
-        turn = trace.turn
-        stored = await self._store.finish_answer(trace.client_id, turn.assistant.id, answer)
+    async def _finish(self, state: _State, answer: AnswerRecord) -> AnswerDone:
+        state.finishing = True
+        await self._write(state, answer)
+        return AnswerDone(state.turn, answer)
+
+    async def _write(self, state: _State, answer: AnswerRecord) -> None:
+        turn = state.turn
+        stored = await _shielded(
+            self._store.finish_answer(state.client_id, turn.assistant.id, answer)
+        )
         if stored is None:
             # The conversation was deleted while answering; the user still sees it.
             logger.warning(
@@ -310,7 +460,26 @@ class ChatService:
                 },
             )
         _log_answer(turn, answer)
-        return AnswerDone(turn, answer)
+
+
+async def _shielded[T](write: Coroutine[object, None, T]) -> T:
+    """Run a store write in its own task to the end, even if the request is cancelled
+    (again) while it runs; the caller still sees the cancellation.
+    """
+    task = asyncio.ensure_future(write)
+    _WRITES.add(task)
+    task.add_done_callback(_WRITES.discard)
+    return await asyncio.shield(task)
+
+
+def _error_code(error: Exception) -> str:
+    if isinstance(error, LLMError | ChatError):
+        return error.code
+    if isinstance(error, RetrievalUnavailableError):
+        return "retrieval_unavailable"
+    if isinstance(error, ModelsNotReadyError):
+        return "models_not_ready"
+    return INTERNAL_ERROR
 
 
 def _log_answer(turn: Turn, answer: AnswerRecord) -> None:

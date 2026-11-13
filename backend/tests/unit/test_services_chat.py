@@ -5,6 +5,7 @@ ports (store, search, models, language model, index identity), so each test chec
 what the user is shown and what is stored, not how the service is put together.
 """
 
+import asyncio
 import itertools
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -17,25 +18,37 @@ from app.domain.chat import (
     REFUSAL_MARKER,
     REFUSAL_TEXT,
     AnswerFlags,
+    AnswerRecord,
     Outcome,
     RefusalReason,
     Role,
     UnknownDocumentError,
     conversation_title,
 )
-from app.domain.chat_store import ConversationNotFoundError
+from app.domain.chat_store import ConversationNotFoundError, Turn
 from app.domain.citations import snippet
-from app.domain.llm import LLMUnavailableError, Purpose
+from app.domain.llm import (
+    LLMError,
+    LLMRequestError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+    Purpose,
+    StopReason,
+)
 from app.domain.prompt import ANSWER_SYSTEM_PROMPT, HistoryBudget
 from app.domain.retrieval import (
     IndexBuildRef,
+    ModelsNotReadyError,
     RetrievalConfig,
+    RetrievalUnavailableError,
     SearchHit,
     SearchMode,
 )
 from app.services.chat import (
+    ANSWER_WITHDRAWN,
     AnswerDone,
     AnswerEvent,
+    AnswerFailed,
     AnswerToken,
     ChatConfig,
     ChatService,
@@ -102,10 +115,13 @@ ANSWER_PIECES = ("Remove the cover [S1]. ", "Then the fan [S2][S9]. ")
 @dataclass
 class FakeIndexIdentity:
     ref: IndexBuildRef = BUILD
+    error: Exception | None = None
     calls: int = 0
 
     async def current(self) -> IndexBuildRef:
         self.calls += 1
+        if self.error is not None:
+            raise self.error
         return self.ref
 
 
@@ -123,13 +139,14 @@ class Rig:
     store: InMemoryChatStore = field(default_factory=InMemoryChatStore)
     index: FakeIndexIdentity = field(default_factory=FakeIndexIdentity)
     reranker: FakeReranker = field(default_factory=FakeReranker)
+    embedder: FakeQueryEmbedder = field(default_factory=FakeQueryEmbedder)
     search: FakeSearchStore = field(init=False)
 
     def __post_init__(self) -> None:
         self.search = FakeSearchStore(self.hits)
 
     def service(self, config: RetrievalConfig | None = None) -> ChatService:
-        retrieval = RetrievalService(FakeQueryEmbedder(), self.search, self.reranker)
+        retrieval = RetrievalService(self.embedder, self.search, self.reranker)
         return ChatService(
             store=self.store,
             retrieval=retrieval,
@@ -148,6 +165,12 @@ class Rig:
 
 async def collect(events: AsyncIterator[AnswerEvent]) -> list[AnswerEvent]:
     return [event async for event in events]
+
+
+async def collect_into(seen: list[AnswerEvent], events: AsyncIterator[AnswerEvent]) -> None:
+    """Like collect, but what arrived before a failure stays in `seen`."""
+    async for event in events:
+        seen.append(event)
 
 
 def tokens(events: list[AnswerEvent]) -> list[str]:
@@ -618,3 +641,338 @@ def test_the_service_exposes_its_provider_and_index_identity() -> None:
 
     assert service.provider is rig.answer
     assert service.index_identity is rig.index
+
+
+# --- Failures after the first token ---------------------------------------------------
+
+
+def failed(events: list[AnswerEvent]) -> AnswerFailed:
+    assert isinstance(events[-1], AnswerFailed)
+    assert not any(isinstance(event, AnswerDone) for event in events)
+    return events[-1]
+
+
+@pytest.mark.parametrize("error", [LLMUnavailableError(), LLMRequestError(), LLMTimeoutError()])
+async def test_a_model_error_after_the_first_token_ends_with_an_error_event(
+    error: LLMError,
+) -> None:
+    rig = Rig(answer=FakeProvider(("Step one [S1]. ", "never shown"), error=error, fail_at=1))
+
+    events, _ = await ask_until_failed(rig)
+
+    assert tokens(events) == ["Step one [S1]. "]
+    event = failed(events)
+    assert (event.code, event.message) == (error.code, error.message)
+
+
+async def ask_until_failed(rig: Rig) -> tuple[list[AnswerEvent], str]:
+    conversation_id = await rig.conversation()
+    events = await collect(rig.service().answer(CLIENT, conversation_id, "How do I open it?"))
+    return events, conversation_id
+
+
+async def test_a_failed_answer_stores_the_text_shown_and_the_error_code(
+    json_logs: LogReader,
+) -> None:
+    error = LLMUnavailableError()
+    rig = Rig(answer=FakeProvider(("Step one [S1]. ", "never shown"), error=error, fail_at=1))
+
+    events, _ = await ask_until_failed(rig)
+
+    event = failed(events)
+    answer = rig.store.answers[event.turn.assistant.id]
+    assert answer.outcome is Outcome.FAILED
+    assert answer.content == "Step one [S1]."
+    assert answer.error_code == "llm_unavailable"
+    assert (answer.citations, answer.sources) == ((), ())
+    assert answer.model == "fake-served"
+    assert answer.chunk_ids == RANKED
+    assert answer.ttft_ms is not None
+    assert rig.answer.closed == 1
+    (line,) = [r for r in json_logs() if r["message"] == "chat answer"]
+    assert (line["outcome"], line["error_code"]) == ("failed", "llm_unavailable")
+
+
+async def test_an_unexpected_error_after_the_first_token_is_stored_and_raised() -> None:
+    rig = Rig(answer=FakeProvider(("Shown. ", "never"), error=RuntimeError("boom"), fail_at=1))
+    conversation_id = await rig.conversation()
+    events: list[AnswerEvent] = []
+
+    with pytest.raises(RuntimeError):
+        await collect_into(events, rig.service().answer(CLIENT, conversation_id, "How?"))
+
+    assert tokens(events) == ["Shown. "]
+    (answer,) = rig.store.answers.values()
+    assert (answer.outcome, answer.content, answer.error_code) == (
+        Outcome.FAILED,
+        "Shown.",
+        "internal_error",
+    )
+
+
+# --- Failures before the first token: nothing is stored -------------------------------
+
+
+def stray_hits() -> list[SearchHit]:
+    return [make_hit("c9", text="Breadcrumb\n\nStray.", doc_id="stray-doc")]
+
+
+PRE_TOKEN_FAILURES = [
+    pytest.param(
+        {"answer": FakeProvider(("never",), error=LLMUnavailableError())},
+        LLMUnavailableError,
+        "llm_unavailable",
+        id="llm-unavailable",
+    ),
+    pytest.param(
+        {"answer": FakeProvider(("never",), error=LLMRequestError())},
+        LLMRequestError,
+        "llm_error",
+        id="llm-rejected",
+    ),
+    pytest.param(
+        {"answer": FakeProvider(("[[NOT", "never"), error=LLMTimeoutError(), fail_at=1)},
+        LLMTimeoutError,
+        "llm_timeout",
+        id="only-held-text-before-the-error",
+    ),
+    pytest.param(
+        {"index": FakeIndexIdentity(error=RetrievalUnavailableError("index", "TimeoutError"))},
+        RetrievalUnavailableError,
+        "retrieval_unavailable",
+        id="index-identity",
+    ),
+    pytest.param(
+        {"embedder": FakeQueryEmbedder(error=ModelsNotReadyError())},
+        ModelsNotReadyError,
+        "models_not_ready",
+        id="models-not-ready",
+    ),
+    pytest.param(
+        {"hits": stray_hits()},
+        UnknownDocumentError,
+        "unknown_document",
+        id="unknown-document",
+    ),
+    pytest.param(
+        {"index": FakeIndexIdentity(error=RuntimeError("bug"))},
+        RuntimeError,
+        "internal_error",
+        id="unexpected",
+    ),
+]
+
+
+@pytest.mark.parametrize(("parts", "error", "code"), PRE_TOKEN_FAILURES)
+async def test_a_failure_before_the_first_token_removes_the_turn_and_logs_one_line(
+    json_logs: LogReader, parts: dict[str, Any], error: type[Exception], code: str
+) -> None:
+    rig = Rig(**parts)
+    conversation_id = await rig.conversation()
+
+    with pytest.raises(error):
+        await collect(rig.service().answer(CLIENT, conversation_id, f"{CANARY} How?"))
+
+    thread = await rig.store.get_thread(CLIENT, conversation_id)
+    assert thread is not None
+    assert (thread.messages, thread.conversation.title) == ((), None)
+    assert rig.store.answers == {}
+    (line,) = [r for r in json_logs() if r["message"] == "turn discarded"]
+    assert line["error_code"] == code
+    assert line["conversation_id"] == conversation_id
+    assert [r for r in json_logs() if r["message"] == "chat answer"] == []
+    assert CANARY not in str(json_logs())
+
+
+async def test_a_failure_before_the_first_token_keeps_earlier_turns() -> None:
+    rig = Rig()
+    conversation_id = await rig.conversation()
+    await collect(rig.service().answer(CLIENT, conversation_id, "First?"))
+    rig.answer.error = LLMUnavailableError()
+
+    with pytest.raises(LLMUnavailableError):
+        await collect(rig.service().answer(CLIENT, conversation_id, "Second?"))
+
+    thread = await rig.store.get_thread(CLIENT, conversation_id)
+    assert thread is not None
+    assert thread.messages[0].content == "First?"
+    assert len(thread.messages) == 2
+    assert thread.conversation.title == "First?"
+
+
+# --- Cancellation ---------------------------------------------------------------------
+
+
+async def consume_until_cancelled(
+    rig: Rig, conversation_id: str, *, after_tokens: int
+) -> list[AnswerEvent]:
+    """Run the answer in a task and cancel it once `after_tokens` tokens arrived (0: as
+    soon as the stream is waiting for its first piece).
+    """
+    events: list[AnswerEvent] = []
+    ready = asyncio.Event()
+
+    async def run() -> None:
+        async for event in rig.service().answer(CLIENT, conversation_id, "How?"):
+            events.append(event)
+            if len(tokens(events)) == after_tokens:
+                ready.set()
+
+    task = asyncio.create_task(run())
+    if after_tokens:
+        await asyncio.wait_for(ready.wait(), timeout=2)
+    else:
+        await asyncio.wait_for(rig.answer.stalled.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    return events
+
+
+async def test_cancelling_after_the_first_token_stores_a_cancelled_answer(
+    json_logs: LogReader,
+) -> None:
+    rig = Rig(answer=FakeProvider(("Partial [S1]. ", "never"), stall_at=1))
+    conversation_id = await rig.conversation()
+
+    events = await consume_until_cancelled(rig, conversation_id, after_tokens=1)
+
+    assert tokens(events) == ["Partial [S1]. "]
+    (answer,) = rig.store.answers.values()
+    assert answer.outcome is Outcome.CANCELLED
+    assert answer.content == "Partial [S1]."
+    assert answer.error_code is None
+    assert answer.model == "fake-served"
+    assert answer.chunk_ids == RANKED
+    assert rig.answer.closed == 1
+    (line,) = [r for r in json_logs() if r["message"] == "chat answer"]
+    assert line["outcome"] == "cancelled"
+
+
+async def test_closing_the_events_after_the_first_token_stores_a_cancelled_answer() -> None:
+    rig = Rig(answer=FakeProvider(("Partial [S1]. ", "never shown")))
+    conversation_id = await rig.conversation()
+    events = rig.service().answer(CLIENT, conversation_id, "How?")
+
+    first = await anext(events)
+    await events.aclose()
+
+    assert first == AnswerToken("Partial [S1]. ")
+    (answer,) = rig.store.answers.values()
+    assert (answer.outcome, answer.content) == (Outcome.CANCELLED, "Partial [S1].")
+    assert rig.answer.closed == 1
+
+
+async def test_cancelling_before_the_first_token_removes_the_turn(json_logs: LogReader) -> None:
+    rig = Rig(answer=FakeProvider(("never",), stall=True))
+    conversation_id = await rig.conversation()
+
+    events = await consume_until_cancelled(rig, conversation_id, after_tokens=0)
+
+    assert events == []
+    thread = await rig.store.get_thread(CLIENT, conversation_id)
+    assert thread is not None
+    assert thread.messages == ()
+    assert rig.answer.closed == 1
+    (line,) = [r for r in json_logs() if r["message"] == "turn discarded"]
+    assert line["error_code"] == "client_disconnected"
+
+
+class GatedStore(InMemoryChatStore):
+    """Holds finish_answer and discard_turn until `gate` opens, to cancel mid-write."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = asyncio.Event()
+        self.waiting = asyncio.Event()
+
+    async def finish_answer(
+        self, client_id: str, message_id: str, answer: AnswerRecord
+    ) -> Any:  # Any: the parent's Message | None, kept as it is
+        self.waiting.set()
+        await self.gate.wait()
+        return await super().finish_answer(client_id, message_id, answer)
+
+    async def discard_turn(self, client_id: str, turn: Turn) -> None:
+        self.waiting.set()
+        await self.gate.wait()
+        await super().discard_turn(client_id, turn)
+
+
+async def cancel_twice_during_the_write(store: GatedStore, task: "asyncio.Task[None]") -> None:
+    await asyncio.wait_for(store.waiting.wait(), timeout=2)
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    store.gate.set()
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+async def test_the_final_write_survives_repeated_cancellation() -> None:
+    store = GatedStore()
+    rig = Rig(store=store)
+    conversation_id = await rig.conversation()
+    task = asyncio.create_task(drain(rig, conversation_id))
+
+    await cancel_twice_during_the_write(store, task)
+
+    (answer,) = store.answers.values()
+    assert answer.outcome is Outcome.COMPLETED
+    assert store.calls.count("finish_answer") == 1
+
+
+async def test_removing_the_turn_survives_repeated_cancellation() -> None:
+    store = GatedStore()
+    rig = Rig(store=store, answer=FakeProvider(("never",), error=LLMUnavailableError()))
+    conversation_id = await rig.conversation()
+    task = asyncio.create_task(drain(rig, conversation_id))
+
+    await cancel_twice_during_the_write(store, task)
+
+    thread = await store.get_thread(CLIENT, conversation_id)
+    assert thread is not None
+    assert thread.messages == ()
+
+
+async def drain(rig: Rig, conversation_id: str) -> None:
+    await collect(rig.service().answer(CLIENT, conversation_id, "How?"))
+
+
+# --- Provider refusals ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "pieces", [pytest.param((), id="no-text"), pytest.param(("[[NO",), id="only-held-text")]
+)
+async def test_a_provider_refusal_before_any_text_is_a_refusal(pieces: tuple[str, ...]) -> None:
+    rig = Rig(answer=FakeProvider(pieces, stop=StopReason.REFUSAL))
+
+    events, finished = await ask(rig)
+
+    assert tokens(events) == [REFUSAL_TEXT]
+    answer = finished.answer
+    assert answer.outcome is Outcome.REFUSED
+    assert answer.refusal_reason is RefusalReason.PROVIDER_REFUSED
+    assert answer.content == REFUSAL_TEXT
+    assert (answer.citations, answer.sources, answer.error_code) == ((), (), None)
+    assert answer.model == "fake-served"
+    assert rig.store.answers[finished.turn.assistant.id] == answer
+
+
+async def test_a_provider_refusal_after_text_withdraws_the_answer() -> None:
+    rig = Rig(answer=FakeProvider(("Some text [S1]. ", "more"), stop=StopReason.REFUSAL))
+
+    events, _ = await ask_until_failed(rig)
+
+    assert tokens(events) == ["Some text [S1]. ", "more"]
+    event = failed(events)
+    assert (event.code, event.message) == ANSWER_WITHDRAWN
+    answer = rig.store.answers[event.turn.assistant.id]
+    assert answer.outcome is Outcome.REFUSED
+    assert answer.refusal_reason is RefusalReason.PROVIDER_REFUSED
+    assert answer.content == REFUSAL_TEXT
+    assert answer.error_code == "answer_withdrawn"
+    assert (answer.citations, answer.sources) == ((), ())

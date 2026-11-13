@@ -15,14 +15,22 @@ class FakeStream:
     error: Exception | None
     fail_at: int
     stall: bool
+    stall_at: int | None
+    stalled: asyncio.Event
     _stop_reason: StopReason | None = None
+
+    async def _block(self) -> None:
+        self.stalled.set()
+        await asyncio.Event().wait()
 
     async def _generate(self) -> AsyncIterator[str]:
         if self.stall:
-            await asyncio.Event().wait()
+            await self._block()
         for index, piece in enumerate(self.pieces):
             if self.error is not None and index == self.fail_at:
                 raise self.error
+            if index == self.stall_at:
+                await self._block()
             yield piece
         self._stop_reason = self.stop
 
@@ -45,7 +53,8 @@ class FakeStream:
 @dataclass
 class FakeProvider:
     """Streams `pieces`; `error` is raised before piece `fail_at` (0: before any text);
-    `stall` blocks before the first piece until the caller gives up.
+    `stall` blocks before the first piece, `stall_at` before that piece, until the
+    caller gives up; `stalled` is set once it blocks.
     """
 
     pieces: tuple[str, ...] = ()
@@ -53,6 +62,8 @@ class FakeProvider:
     error: Exception | None = None
     fail_at: int = 0
     stall: bool = False
+    stall_at: int | None = None
+    stalled: asyncio.Event = field(default_factory=asyncio.Event)
     requests: list[GenerationRequest] = field(default_factory=list)
     closed: int = 0
 
@@ -67,6 +78,14 @@ class FakeProvider:
     @asynccontextmanager
     async def _open(self) -> AsyncIterator[GenerationStream]:
         try:
-            yield FakeStream(self.pieces, self.stop, self.error, self.fail_at, self.stall)
+            yield FakeStream(
+                self.pieces,
+                self.stop,
+                self.error,
+                self.fail_at,
+                self.stall,
+                self.stall_at,
+                self.stalled,
+            )
         finally:
             self.closed += 1
