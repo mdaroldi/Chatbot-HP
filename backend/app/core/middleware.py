@@ -25,13 +25,19 @@ _access_logger = logging.getLogger("app.access")
 _logger = logging.getLogger(__name__)
 
 
+def trusted_identifier(raw: str | None) -> str | None:
+    """A client-supplied identifier (request ID, client ID) if it matches the
+    allowlist, else None: an invalid value is dropped, never repaired or echoed.
+    """
+    if raw is not None and _VALID_REQUEST_ID.fullmatch(raw):
+        return raw
+    return None
+
+
 def resolve_request_id(raw: bytes | None) -> str:
     """Trust a client-supplied ID only if it matches the allowlist; else make a UUID4."""
-    if raw is not None:
-        candidate = raw.decode("latin-1")
-        if _VALID_REQUEST_ID.fullmatch(candidate):
-            return candidate
-    return str(uuid.uuid4())
+    trusted = trusted_identifier(raw.decode("latin-1")) if raw is not None else None
+    return trusted or str(uuid.uuid4())
 
 
 def _incoming_request_id(scope: Scope) -> bytes | None:

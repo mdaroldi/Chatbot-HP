@@ -470,7 +470,7 @@ def test_integration_compose_images_are_pinned_by_digest() -> None:
         assert DIGEST.search(service["image"]), name
 
 
-# The query models the API loads (ADR 0008); the retrieval knobs follow in commit 9.
+# The query models the API loads (ADR 0008).
 BACKEND_MODEL_SETTINGS = (
     "EMBEDDING_DENSE_MODEL",
     "EMBEDDING_SPARSE_MODEL",
@@ -490,3 +490,48 @@ def test_backend_gets_the_model_settings_from_env_and_reads_the_baked_store(
         assert str(environment[name]).startswith(f"${{{name}:-"), name
     assert environment["EMBEDDING_CACHE_DIR"] == MODEL_STORE
     assert {k: environment[k] for k in TELEMETRY_ENV} == TELEMETRY_ENV
+
+
+# Settings the API never reads: ingestion's corpus, chunking and index-retention knobs.
+BACKEND_UNUSED_PREFIXES = ("corpus_", "chunk_", "index_")
+BACKEND_FIXED = {
+    "POSTGRES_HOST": "postgres",
+    "POSTGRES_PORT": "5432",
+    "QDRANT_URL": "http://qdrant:6333",
+    "EMBEDDING_CACHE_DIR": MODEL_STORE,
+}
+
+
+def test_backend_gets_every_setting_it_reads(services: dict[str, Service]) -> None:
+    """Every API setting, retrieval knobs included, is passed through from .env."""
+    environment: dict[str, str] = services["backend"]["environment"]
+    fields = set(Settings.model_fields)
+    from_env = {
+        name.upper() for name in fields if not name.startswith(BACKEND_UNUSED_PREFIXES)
+    } - set(BACKEND_FIXED)
+
+    assert set(environment) == from_env | set(BACKEND_FIXED) | set(TELEMETRY_ENV)
+    assert {k: environment[k] for k in BACKEND_FIXED} == BACKEND_FIXED
+    assert [k for k in from_env if not str(environment[k]).startswith(f"${{{k}:")] == []
+    assert {"RETRIEVAL_MODE", "SEARCH_ENDPOINT_ENABLED", "QUERY_MAX_CHARS"} <= from_env
+
+
+def test_backend_compose_defaults_equal_the_settings_defaults(
+    services: dict[str, Service],
+) -> None:
+    """A default that differs from the code would change behavior only under compose."""
+    environment: dict[str, str] = services["backend"]["environment"]
+    defaults = {}
+    for key, value in environment.items():
+        match = re.fullmatch(r"\$\{(\w+):-(.*)\}", str(value))
+        if match and match.group(1) == key:
+            defaults[key.lower()] = match.group(2)
+
+    from_compose = Settings(**defaults)  # type: ignore[arg-type]  # strings, parsed by pydantic
+    reference = Settings(postgres_password=from_compose.postgres_password)
+    differing = [
+        name for name in defaults if getattr(from_compose, name) != getattr(reference, name)
+    ]
+
+    assert "retrieval_mode" in defaults
+    assert differing == []

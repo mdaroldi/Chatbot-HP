@@ -45,7 +45,10 @@ set frozen before any tuning.
   score per chunk, not per-mode dense and sparse ranks: Qdrant's fused query returns
   only the fused score, and the ranks would cost two more searches per request. H1
   (part numbers under dense-only and hybrid) is shown by the benchmark runner, which
-  runs each mode.
+  runs each mode. The router is mounted only when `SEARCH_ENDPOINT_ENABLED` is set
+  (otherwise 404; rejected in production). Failures are 503 `retrieval_unavailable` or
+  503 `models_not_ready` in the shared error shape, with fixed messages; a 422 never
+  echoes input, including the name of an unknown field.
 - **Index compatibility:** the API is ready only when the alias names a collection with
   the dense vector of the query model's size (cosine) and the IDF-weighted sparse
   vector, a succeeded build in the manifest, and the build's model files equal to the
