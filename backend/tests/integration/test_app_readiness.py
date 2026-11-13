@@ -100,6 +100,7 @@ async def test_ready_is_200_and_names_the_models_and_the_index(
                 "info": {"collection": BUILD.collection, "build_id": BUILD.build_id},
             },
         },
+        "llm": "stub",
     }
 
 
@@ -149,4 +150,5 @@ async def test_ready_is_503_with_dependencies_down(app_with_dependencies_down: F
             "models": MODELS_OK,
             "index": {"status": "down", "detail": "unreachable"},
         },
+        "llm": "stub",
     }
