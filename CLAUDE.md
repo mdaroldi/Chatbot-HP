@@ -188,7 +188,7 @@ Rules:
 |---|---|---|
 | 0 | Foundation: repo, tooling, CI, compose skeleton, health endpoints | done |
 | 1 | Ingestion: download, parse, clean, chunk, embed, upsert, manifest | done |
-| 2 | Retrieval: hybrid search, reranker, golden set, retrieval metrics | pending |
+| 2 | Retrieval: hybrid search, reranker, golden set, retrieval metrics | done |
 | 3 | Chat API: LLM gateway, prompt, citations, streaming, history | pending |
 | 4 | Frontend: Streamlit chat UI with conversations and sources | pending |
 | 5 | Benchmark: generation metrics, ablation, report | pending |

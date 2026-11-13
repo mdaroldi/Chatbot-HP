@@ -39,3 +39,15 @@ make eval-retrieval EVAL_ARGS="run --collection <kept build>" # a kept earlier b
   Docker Desktop maps ownership either way.
 
 Exit codes: 0 done, 1 the command ran and failed, 2 refused before any work.
+
+## Rules for Phase 5 (final evaluations)
+
+- **One index build.** Candidate lists are deterministic per index build, not across
+  builds (ADR 0009): Qdrant orders tied BM25 scores inside its own prefetch. Every
+  final evaluation runs on a single build, and each run records its build id
+  (`index.build_id` in `summary.json` and the summary header). Results from different
+  builds are not compared as equals.
+- **Held-out split.** It was never scored in Phase 2 and is scored only for the final
+  evaluation, once, after the configuration is fixed.
+- **Masked ablations.** The BGE prefix, RRF k, avg_len and the product filter were
+  measured behind the reranker. If reranking is turned off, re-measure them.

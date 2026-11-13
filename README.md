@@ -6,10 +6,11 @@ Retrieval-Augmented Generation (RAG):
 - HP ENVY 6000 All-in-One series User Guide
 - OMEN 17.3 inch Gaming Laptop PC Maintenance and Service Guide
 
-> **Status: Phase 1 (ingestion) built.** `docker compose up` downloads the two
+> **Status: Phase 2 (retrieval) built.** `docker compose up` downloads the two
 > manuals, verifies them against pinned checksums and builds a hybrid (dense + BM25)
-> Qdrant index of them. The API still serves only health and readiness checks, and
-> the Streamlit page is a placeholder: retrieval and chat come in Phases 2 to 4; see
+> Qdrant index of them; the API loads the query models and the reranker, and hybrid
+> search with reranking is benchmarked on a frozen golden set. There is no chat yet,
+> and the Streamlit page is a placeholder: chat comes in Phases 3 and 4; see
 > [Status](#status).
 
 ## Architecture
@@ -28,14 +29,12 @@ flowchart LR
         qdrant[("qdrant<br/>Qdrant 1.20")]
     end
     hp[["HP download hosts<br/>(the two manuals)"]]
-    hub[["Hugging Face hub<br/>(pinned models)"]]
     frontend -->|"HTTP: /health, /ready"| backend
     operator([Operator]) -->|":8000"| backend
     migrate -->|"schema"| postgres
     ingest -->|"build manifest"| postgres
     ingest -->|"collection + alias"| qdrant
     ingest -->|"HTTPS, first run only"| hp
-    ingest -->|"HTTPS, first run only"| hub
     backend --> postgres
     backend --> qdrant
 ```
@@ -53,7 +52,9 @@ both one-shot services have completed successfully.
   never migrates.
 - **ingest** builds the vector index when it is missing or stale (see
   [Ingestion](#ingestion)). It is the only service that reaches the internet, and only
-  to download the manuals and the models on its first run.
+  to download the manuals on its first run. The pinned models are downloaded once, by
+  the image build, and read offline at runtime
+  ([ADR 0008](docs/adr/0008-baked-models-and-inference.md)).
 - **postgres** and **qdrant** sit on an internal network with no route out and are
   never published.
 
@@ -79,7 +80,7 @@ are published, on `127.0.0.1` by default. On a remote VM set `BIND_ADDRESS=0.0.0
 in `.env` to reach them from outside, and restrict access with the VM's firewall.
 
 **The first `up` needs network access and takes a minute or more:** the image build
-downloads the pinned models from the Hugging Face hub (about 300 MB, verified file by
+downloads the pinned models from the Hugging Face hub (about 150 MB, verified file by
 file; ADR 0008), and `ingest` downloads the two manuals from HP, then builds the index.
 Measured on a fresh clone with empty volumes (Apple M2, Docker Desktop with 8 CPUs and
 4 GB, November 2026): image build 38 s (`--no-cache`), first `docker compose up --wait`
@@ -133,9 +134,6 @@ collection); the API keeps serving the old collection until the swap. `make
 inspect-chunks` writes every chunk to the git-ignored `ingest-review/chunks.md` for
 local review.
 
-Search over this index (hybrid dense + BM25 with reciprocal rank fusion, then a
-cross-encoder rerank) is Phase 2.
-
 ### Embedding models
 
 | Role | Model | Files from | License |
@@ -150,6 +148,56 @@ pin is never downloaded or loaded ([ADR 0006](docs/adr/0006-embedding-model-file
 `make model-pins` regenerates the pins for review. The dense vectors come from the
 quantized ONNX build, not the original weights, so published bge-small benchmark
 scores are not a direct baseline for this index.
+
+## Retrieval
+
+Each question is searched with both vectors and the two lists are fused, then a local
+cross-encoder reranks the candidates. Defaults (every one an environment variable,
+see [Configuration](#configuration)):
+
+| Setting | Default |
+|---|---|
+| `RETRIEVAL_MODE` | `hybrid` (dense + BM25, fused with reciprocal rank fusion) |
+| `RETRIEVAL_RRF_K` | 60 |
+| `RETRIEVAL_RERANK_ENABLED` | on: `RETRIEVAL_RERANK_CANDIDATES` 20 down to `RETRIEVAL_TOP_K` 5 |
+| `RERANKER_MODEL` | `Xenova/ms-marco-MiniLM-L-6-v2` (MiniLM-L6) |
+| `RETRIEVAL_RELEVANCE_THRESHOLD` | -6.54 (top rerank score; calibrated for MiniLM-L6) |
+| `RETRIEVAL_PRODUCT_FILTER_ENABLED` | off |
+| `RETRIEVAL_DENSE_QUERY_PREFIX` | empty (no BGE instruction) |
+
+The reranker runs locally on CPU, pinned in `models.toml` and baked into the image like
+the embedding models (license note in [ADR 0008](docs/adr/0008-baked-models-and-inference.md)).
+
+**Why these defaults:** on the 56 dev questions of the frozen golden set, every
+configuration ties on Recall@5 by the selection rule (overlapping intervals), and
+`hybrid-rerank` shares the top MRR (0.898) and comes first in matrix order within the
+latency margin; the threshold refuses 2 of 48 in-scope questions and catches unrelated
+ones, but not questions close to the manuals' domain. Full record:
+[the benchmark summary](eval/reports/retrieval-summary.md) and
+[ADR 0009](docs/adr/0009-retrieval-strategy-and-evaluation.md). `POST /v1/search` (off
+by default, `SEARCH_ENDPOINT_ENABLED`) exposes retrieval for debugging; chat comes in
+Phase 3.
+
+**Rerun the benchmark** (dev split; details in [eval/README.md](eval/README.md)):
+
+```bash
+make up
+make eval-retrieval EVAL_ARGS=preflight                   # resolve every golden anchor
+make eval-retrieval EVAL_ARGS=run                         # every config in the matrix
+make eval-retrieval EVAL_ARGS="run --config hybrid-rerank" # one config
+```
+
+The BM25 avg_len row is a separate index build, scored by its collection name
+(`hpdocs_chunks_<chunking version>_<build id>`):
+
+```bash
+EMBEDDING_BM25_AVG_LEN=auto make ingest
+make eval-retrieval EVAL_ARGS="run --config hybrid-rerank --collection <auto build>"
+make ingest                                               # restore the default build
+```
+
+Compare runs only on the same index build: candidate lists are deterministic per
+build, not across builds (ADR 0009).
 
 ## Configuration
 
@@ -237,19 +285,19 @@ backend/            FastAPI app (uv project, own lock file)
   app/api/          routes and FastAPI dependencies
   app/core/         settings, JSON logging, request ID middleware, errors
   app/domain/       pure types and interfaces (no I/O)
-  app/services/     orchestration (readiness)
+  app/services/     orchestration (readiness, retrieval)
   app/infra/        adapters: Postgres, Qdrant, PDF parser, downloads, fastembed
   app/ingestion/    ingestion stages and CLI (python -m app.ingestion)
   app/evaluation/   retrieval benchmark: golden set, metrics, runner, CLI (python -m app.evaluation)
-  alembic/          migrations 0001-0003 (baseline, index_builds, error_type)
+  alembic/          migrations 0001-0004 (baseline, index_builds, error_type, sparse_params)
   corpus.toml       the two allowed manuals with their pinned SHA-256
-  models.toml       the pinned embedding model revisions and file digests
+  models.toml       the pinned model revisions and file digests (embeddings, reranker)
   tests/unit/       no network, no containers; coverage gate
   tests/integration/  real Postgres and Qdrant
   tests/corpus/     the real manuals (marker `corpus`)
   tests/embeddings/ the real models (marker `model`)
 frontend/           Streamlit app (uv project, own lock file)
-eval/               retrieval matrix and benchmark reports (Phase 2), generation metrics (Phase 5)
+eval/               golden set, retrieval matrix and benchmark reports (Phase 2), generation metrics (Phase 5)
 loadtest/           placeholder for Phase 6
 docs/adr/           architecture decision records
 docker-compose.yml       full stack
@@ -320,10 +368,10 @@ integration job as a required check in the branch protection settings.
   `disable_telemetry_events()` call), the Hugging Face hub (`HF_HUB_DISABLE_TELEMETRY`),
   Qdrant (`QDRANT__TELEMETRY_DISABLED`) and Streamlit (`gatherUsageStats` off). This was
   set from the documentation, not verified by capturing traffic.
-- **Outbound traffic**: the only service that reaches the internet is `ingest`, to
-  download the two manuals from HP and the pinned models from the Hugging Face hub,
-  on its first run or after a pin changes. From Phase 3, the backend will also call
-  the Anthropic API.
+- **Outbound traffic**: at runtime, the only service that reaches the internet is
+  `ingest`, to download the two manuals from HP on its first run. The pinned models
+  come from the Hugging Face hub during the image build only. From Phase 3, the
+  backend will also call the Anthropic API.
 - **Third-party processing**: no LLM is called yet. From Phase 3, when the cloud
   provider (Anthropic) is enabled, user questions and the retrieved document
   excerpts will be sent to the Anthropic API to generate answers.
@@ -350,9 +398,16 @@ are not redistributed.
 - The Postgres pool is sized per process and has no explicit `pool_timeout` yet
   (SQLAlchemy's 30 s default applies).
 - The frontend image is about 830 MB, mostly Streamlit's own dependencies. The
-  backend image carries the ingestion stack (pdfplumber, fastembed, onnxruntime):
-  +92 MB compressed (155 MB against 63 MB) and +362 MB on disk (659 MB against
-  297 MB) over Phase 0; a separate ingest image is on the Phase 7 list.
+  backend image carries the ingestion stack (pdfplumber, fastembed, onnxruntime) and
+  the baked models (152 MB): 618 MiB unpacked and 300 MB compressed
+  ([ADR 0008](docs/adr/0008-baked-models-and-inference.md)); a separate ingest image is
+  on the Phase 7 list.
+- **Retrieval latency:** the rerank takes about 2 s p50 per query on the benchmark
+  laptop, about 97% of retrieval time. Latency decisions are left to the Phase 6 load
+  tests.
+- **Out-of-scope detection:** the relevance threshold catches unrelated questions but
+  not ones close to the manuals' domain (0 of 4 on the dev split); those must be refused
+  by the Phase 3 prompt ([ADR 0009](docs/adr/0009-retrieval-strategy-and-evaluation.md)).
 - **Button glyphs are lost:** the ENVY manual draws many buttons as inline images. No
   vision pass reads them; ingestion puts an `[icon]` placeholder where one sat inside
   a line (87 in ENVY, 3 in OMEN), so an answer can say a button is pictured but not
@@ -373,7 +428,7 @@ The full list, with the reasoning, is in [ADR 0001](docs/adr/0001-architecture-o
 |---|---|---|
 | 0 | Foundation: repo, tooling, CI, compose, health endpoints | done |
 | 1 | Ingestion: download, parse, clean, chunk, embed, upsert, manifest | done |
-| 2 | Retrieval: hybrid search, reranker, golden set, retrieval metrics | pending |
+| 2 | Retrieval: hybrid search, reranker, golden set, retrieval metrics | done |
 | 3 | Chat API: LLM gateway, prompt, citations, streaming, history | pending |
 | 4 | Frontend: Streamlit chat UI with conversations and sources | pending |
 | 5 | Benchmark: generation metrics, ablation, report | pending |
