@@ -18,7 +18,7 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 .PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int smoke-llm \
 	fetch-test-assets models \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins \
-	eval-retrieval eval load check
+	purge eval-retrieval eval load check
 
 help: ## List available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -137,6 +137,9 @@ SMOKE_ARGS ?= --runs 5
 smoke-llm: ## Manual, billed: real-model answers and one rewrite; TTFT p50, stops, rewrite outcome (needs the key)
 	docker compose run --rm --no-deps --env LLM_PROVIDER=anthropic \
 		--entrypoint python backend -m app.smoke_llm $(SMOKE_ARGS)
+
+purge: ## Delete conversations past CHAT_RETENTION_DAYS now (needs `make up`); prints counts
+	docker compose run --rm --no-deps --entrypoint python backend -m app.retention
 
 eval-retrieval: ## Retrieval benchmark via compose (needs `make up`); EVAL_ARGS=preflight|run ...
 	docker compose run --rm --no-deps --user "$$(id -u):$$(id -g)" \

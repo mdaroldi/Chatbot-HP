@@ -861,3 +861,30 @@ def test_llm_client_bounds(  # noqa: PLR0917 - one parametrized case per argumen
         monkeypatch.setenv(name, invalid)
         with pytest.raises(ValidationError):
             Settings()
+
+
+def test_retention_defaults_keep_chats_30_days_and_purge_hourly() -> None:
+    settings = Settings()
+
+    assert settings.chat_retention_days == 30
+    assert settings.retention_purge_interval_minutes == 60
+
+
+@pytest.mark.parametrize(
+    ("name", "lowest", "highest"),
+    [
+        ("CHAT_RETENTION_DAYS", 1, 3650),
+        # 0 turns the backend's purge task off; `make purge` still works.
+        ("RETENTION_PURGE_INTERVAL_MINUTES", 0, 10_080),
+    ],
+)
+def test_retention_bounds(
+    monkeypatch: pytest.MonkeyPatch, name: str, lowest: int, highest: int
+) -> None:
+    for valid in (lowest, highest):
+        monkeypatch.setenv(name, str(valid))
+        assert getattr(Settings(), name.lower()) == valid
+    for invalid in (lowest - 1, highest + 1):
+        monkeypatch.setenv(name, str(invalid))
+        with pytest.raises(ValidationError):
+            Settings()

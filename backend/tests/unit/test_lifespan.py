@@ -326,3 +326,37 @@ async def test_app_lifespan_builds_the_chat_service_over_the_anthropic_adapter_a
         assert closed == []
 
     assert closed == [provider]
+
+
+async def test_the_retention_task_is_off_when_its_interval_is_zero(
+    make_settings: SettingsFactory,
+) -> None:
+    settings = make_settings(retention_purge_interval_minutes=0)
+    application = create_app(settings, query_models_factory=Factories().models_factory)
+
+    async with application.router.lifespan_context(application):
+        assert application.state.retention_task is None
+
+
+async def test_the_retention_task_runs_with_the_app_and_is_cancelled_on_shutdown(
+    make_settings: SettingsFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Postgres is unreachable (a closed local port): the purge fails, the task lives on."""
+    settings = make_settings(
+        retention_purge_interval_minutes=60, postgres_host="127.0.0.1", postgres_port=1
+    )
+    application = create_app(settings, query_models_factory=Factories().models_factory)
+    logging.getLogger().addHandler(caplog.handler)  # create_app replaced the root handlers
+    caplog.set_level(logging.INFO)
+
+    async with application.router.lifespan_context(application):
+        task = application.state.retention_task
+        assert isinstance(task, asyncio.Task)
+        for _ in range(200):
+            if any(r.getMessage() == "retention purge failed" for r in caplog.records):
+                break
+            await asyncio.sleep(0.01)
+        assert not task.done()
+
+    assert task.cancelled()
+    assert any(r.getMessage() == "retention purge failed" for r in caplog.records)

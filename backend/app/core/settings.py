@@ -418,6 +418,20 @@ class Settings(BaseSettings):
         le=1_000,
         description="Length of the excerpt shown on each source card.",
     )
+    chat_retention_days: int = Field(
+        default=30,
+        ge=1,
+        le=3650,
+        description="Days after its last message before a conversation is deleted with "
+        "its messages.",
+    )
+    retention_purge_interval_minutes: int = Field(
+        default=60,
+        ge=0,
+        le=10_080,
+        description="Minutes between the backend's retention purges; 0 turns the task off "
+        "(`make purge` still works).",
+    )
     search_endpoint_enabled: bool = Field(
         default=False,
         description="Serve the `POST /v1/search` debug endpoint (returns chunk text); a "

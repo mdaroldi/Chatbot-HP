@@ -97,6 +97,7 @@ make security     # bandit, pip-audit, gitleaks
 make up / down    # docker compose up / down
 make ingest       # force a new index build through compose (up builds only when needed)
 make model-pins   # regenerate backend/models.toml and print the diff (manual, review before committing)
+make purge        # delete conversations past CHAT_RETENTION_DAYS now (via compose)
 make eval-retrieval  # retrieval benchmark via compose (EVAL_ARGS=preflight | run ...)
 make eval         # run the quality benchmark
 make load         # run the load test

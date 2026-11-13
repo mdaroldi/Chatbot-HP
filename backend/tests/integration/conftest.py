@@ -71,6 +71,9 @@ def make_settings(monkeypatch: pytest.MonkeyPatch) -> SettingsFactory:
             "postgres_password": SecretStr(PG_PASSWORD),
             "qdrant_url": HttpUrl(QDRANT_URL),
             "readiness_timeout_seconds": 5.0,
+            # Apps under test purge only when a test asks (tests/integration/test_retention.py
+            # runs the purge itself).
+            "retention_purge_interval_minutes": 0,
         }
         return Settings(**(values | overrides))
 

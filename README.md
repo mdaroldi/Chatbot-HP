@@ -279,6 +279,8 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `CHAT_MESSAGE_MAX_CHARS` | `1000` | Longest accepted chat question, in characters (after trimming). |
 | `SSE_HEARTBEAT_SECONDS` | `15.0` | Silence on an answer stream before a `: keepalive` comment is sent. |
 | `CHAT_SNIPPET_CHARS` | `160` | Length of the excerpt shown on each source card. |
+| `CHAT_RETENTION_DAYS` | `30` | Days after its last message before a conversation is deleted with its messages. |
+| `RETENTION_PURGE_INTERVAL_MINUTES` | `60` | Minutes between the backend's retention purges; 0 turns the task off (`make purge` still works). |
 | `SEARCH_ENDPOINT_ENABLED` | `false` | Serve the `POST /v1/search` debug endpoint (returns chunk text); a warning is logged when enabled in production. |
 <!-- settings-table:end -->
 

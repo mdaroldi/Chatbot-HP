@@ -1,10 +1,13 @@
 """Application factory. Run with: uvicorn app.main:create_app --factory --no-server-header"""
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from typing import NoReturn
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,8 +32,10 @@ from app.infra.llm_stub import StubProvider
 from app.infra.manifest_repository import SqlManifestStore
 from app.infra.qdrant_search import QdrantIndexIdentity, QdrantSearchStore
 from app.infra.query_models import QueryModels
+from app.infra.retention import PostgresPurgeLock, SqlExpiredChats
 from app.ingestion.corpus import load_corpus
 from app.services.chat import ChatService, chat_config_from_settings
+from app.services.retention import purge_expired, purge_periodically
 from app.services.retrieval import RetrievalService, config_from_settings, product_names
 from app.services.rewrite import QueryRewriter, rewrite_config_from_settings
 
@@ -77,11 +82,35 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             app.state.titles,
             provider,
         )
+        retention_task = _start_retention_task(infrastructure, app.state.settings)
+        app.state.retention_task = retention_task
         try:
             yield
         finally:
+            if retention_task is not None:
+                retention_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await retention_task
             if isinstance(provider, AnthropicProvider):
                 await provider.aclose()
+
+
+def _start_retention_task(
+    infrastructure: Infrastructure, settings: Settings
+) -> "asyncio.Task[NoReturn] | None":
+    """The periodic purge, or None when its interval is 0. Every replica runs one; the
+    advisory lock lets one of them purge at a time.
+    """
+    minutes = settings.retention_purge_interval_minutes
+    if minutes == 0:
+        return None
+    chats = SqlExpiredChats(infrastructure.session_factory)
+    lock = PostgresPurgeLock(infrastructure.engine)
+
+    async def purge() -> None:
+        await purge_expired(chats, lock, days=settings.chat_retention_days)
+
+    return asyncio.create_task(purge_periodically(purge, interval_seconds=minutes * 60))
 
 
 def _retrieval_service_factory(

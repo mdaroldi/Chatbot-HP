@@ -157,6 +157,8 @@ services:
       CHAT_MESSAGE_MAX_CHARS: ${CHAT_MESSAGE_MAX_CHARS:-1000}
       SSE_HEARTBEAT_SECONDS: ${SSE_HEARTBEAT_SECONDS:-15.0}
       CHAT_SNIPPET_CHARS: ${CHAT_SNIPPET_CHARS:-160}
+      CHAT_RETENTION_DAYS: ${CHAT_RETENTION_DAYS:-30}
+      RETENTION_PURGE_INTERVAL_MINUTES: ${RETENTION_PURGE_INTERVAL_MINUTES:-60}
       # The debug search endpoint (chunk text); a startup warning when on in production.
       SEARCH_ENDPOINT_ENABLED: ${SEARCH_ENDPOINT_ENABLED:-false}
       # Query models (ADR 0008): read offline from the store baked into the image.

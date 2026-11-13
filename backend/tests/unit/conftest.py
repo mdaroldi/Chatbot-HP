@@ -66,6 +66,9 @@ def restore_logging() -> Iterator[logging.Logger]:
 @pytest.fixture
 def make_settings() -> SettingsFactory:
     def factory(**overrides: Any) -> Settings:  # Any: arbitrary field overrides
+        # No unit-test app starts the retention task (it would reach for Postgres)
+        # unless the test asks for it.
+        overrides.setdefault("retention_purge_interval_minutes", 0)
         return Settings(postgres_password=SecretStr(TEST_PASSWORD), **overrides)
 
     return factory
