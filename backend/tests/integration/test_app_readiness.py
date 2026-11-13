@@ -1,5 +1,7 @@
 """The assembled app, booted through its lifespan, against real dependencies."""
 
+import asyncio
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -11,22 +13,35 @@ from tests.integration.conftest import SettingsFactory
 pytestmark = pytest.mark.integration
 
 
-async def get(application: FastAPI, path: str) -> httpx.Response:
+MODELS_OK = {
+    "status": "ok",
+    "info": {
+        "dense": "BAAI/bge-small-en-v1.5",
+        "sparse": "Qdrant/bm25",
+        "reranker": "Xenova/ms-marco-MiniLM-L-6-v2",
+    },
+}
+
+
+async def get(application: FastAPI, path: str, *, after_models: bool = False) -> httpx.Response:
     async with application.router.lifespan_context(application):
+        if after_models:  # the real models load in the background (ADR 0008)
+            await asyncio.wait_for(application.state.infrastructure.models_loaded, timeout=60)
         transport = httpx.ASGITransport(app=application)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
             return await http.get(path)
 
 
-async def test_ready_is_200_against_real_postgres_and_qdrant(
+@pytest.mark.model
+async def test_ready_is_200_against_real_postgres_qdrant_and_models(
     make_settings: SettingsFactory,
 ) -> None:
-    response = await get(create_app(make_settings()), "/ready")
+    response = await get(create_app(make_settings()), "/ready", after_models=True)
 
     assert response.status_code == 200
     assert response.json() == {
         "status": "ready",
-        "checks": {"postgres": {"status": "ok"}, "qdrant": {"status": "ok"}},
+        "checks": {"postgres": {"status": "ok"}, "qdrant": {"status": "ok"}, "models": MODELS_OK},
     }
 
 
@@ -49,8 +64,9 @@ async def test_app_boots_and_is_alive_with_dependencies_down(
     assert response.json() == {"status": "ok"}
 
 
+@pytest.mark.model
 async def test_ready_is_503_with_dependencies_down(app_with_dependencies_down: FastAPI) -> None:
-    response = await get(app_with_dependencies_down, "/ready")
+    response = await get(app_with_dependencies_down, "/ready", after_models=True)
 
     assert response.status_code == 503
     assert response.json() == {
@@ -58,5 +74,6 @@ async def test_ready_is_503_with_dependencies_down(app_with_dependencies_down: F
         "checks": {
             "postgres": {"status": "down", "detail": "unreachable"},
             "qdrant": {"status": "down", "detail": "unreachable"},
+            "models": MODELS_OK,
         },
     }
