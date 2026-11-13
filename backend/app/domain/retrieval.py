@@ -189,10 +189,16 @@ class RetrievalResult:
 
 
 class RetrievalUnavailableError(Exception):
-    """The vector store could not answer: down, timed out, or no live index.
+    """A retrieval stage could not answer: the store is down, timed out or has no
+    live index, or a model call failed.
 
-    The message names the stage and the error type only, never the query.
+    It names the stage and the original error type only, never its message, which can
+    hold the query, hosts or server details.
     """
+
+    def __init__(self, stage: str, error_type: str) -> None:
+        super().__init__(f"retrieval stage {stage} failed ({error_type})")
+        self.stage, self.error_type = stage, error_type
 
 
 class ModelsNotReadyError(Exception):
