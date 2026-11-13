@@ -1,5 +1,10 @@
-"""Parser stages on the real manuals: the ADR 0004 spike facts, kept true (PDF pages)."""
+"""Parser stages on the real manuals: the ADR 0004 spike facts, kept true (PDF pages).
 
+CI logs are public: every assertion compares page numbers, counts or identifiers, never
+document text, so a failure cannot print the manual (see tests/corpus/conftest.py).
+"""
+
+import re
 from collections.abc import Mapping
 
 import pytest
@@ -32,11 +37,14 @@ def tables(doc: ParsedCorpusDocument) -> tuple[Table, ...]:
 @BOTH
 def test_every_bookmark_resolves_to_a_page(corpus: Corpus, doc_id: str) -> None:
     outline = corpus[doc_id].parsed.outline
+    page_count = corpus[doc_id].parsed.page_count
     count, levels = BOOKMARKS[doc_id]
+    found = len(outline)
+    unresolved = [n for n, e in enumerate(outline, start=1) if not 1 <= e.pdf_page <= page_count]
 
-    assert len(outline) == count
+    assert found == count
     assert {entry.level for entry in outline} == levels
-    assert all(1 <= e.pdf_page <= corpus[doc_id].parsed.page_count for e in outline)
+    assert unresolved == []
 
 
 @BOTH
@@ -62,9 +70,10 @@ def test_footer_labels_leave_the_body(corpus: Corpus) -> None:
     """ENVY footers carry the "ENWW" label on every page from the first numbered one."""
     doc = corpus[ENVY]
     labelled = {page for page, footer in doc.footers.footers.items() if "ENWW" in footer.text}
+    in_body = [ln.pdf_page for ln in doc.footers.body if "ENWW" in ln.text]
 
     assert labelled == set(range(3, 136))
-    assert [ln.pdf_page for ln in doc.footers.body if "ENWW" in ln.text] == []
+    assert in_body == []
 
 
 @BOTH
@@ -72,9 +81,10 @@ def test_toc_index_and_chapter_opener_pages(corpus: Corpus, doc_id: str) -> None
     doc = corpus[doc_id]
     outline, body = doc.parsed.outline, doc.footers.body
     openers = {body[i].pdf_page for i in chapter_toc_lines(outline, body)}
+    toc, index = toc_pages(body), index_pages(outline, doc.parsed.page_count)
 
-    assert toc_pages(body) == TOC[doc_id]
-    assert index_pages(outline, doc.parsed.page_count) == INDEX[doc_id]
+    assert toc == TOC[doc_id]
+    assert index == INDEX[doc_id]
     assert openers == OPENERS[doc_id]
 
 
@@ -82,24 +92,38 @@ def test_toc_index_and_chapter_opener_pages(corpus: Corpus, doc_id: str) -> None
 def test_every_bookmark_finds_its_heading(corpus: Corpus, doc_id: str) -> None:
     doc = corpus[doc_id]
     matches = match_headings(doc.parsed.outline, doc.footers.body)
+    found = len(matches)
+    unmatched = [e.pdf_page for e, m in zip(doc.parsed.outline, matches, strict=True) if m is None]
 
-    assert len(matches) == BOOKMARKS[doc_id][0]
-    assert [e.title for e, m in zip(doc.parsed.outline, matches, strict=True) if m is None] == []
+    assert found == BOOKMARKS[doc_id][0]
+    assert unmatched == []
+
+
+ERROR_CODE = re.compile(r"E\d")
 
 
 def test_error_code_rows_stay_whole(corpus: Corpus) -> None:
     [codes] = [t for t in tables(corpus[ENVY]) if any(row[0] == "E0" for row in t.rows)]
+    first_cells = [row[0] if ERROR_CODE.fullmatch(row[0]) else "not a code" for row in codes.rows]
+    shapes = [(len(row), bool(row[-1])) for row in codes.rows]
+    page = codes.pdf_page
 
-    assert codes.pdf_page == 105
-    assert [row[0] for row in codes.rows] == ["E0", "E1", "E2", "E3", "E4", "E5", "E6", "E9"]
-    assert all(len(row) == 2 and row[1] for row in codes.rows)
+    assert page == 105
+    assert first_cells == ["E0", "E1", "E2", "E3", "E4", "E5", "E6", "E9"]
+    assert shapes == [(2, True)] * 8
 
 
 def test_spare_part_number_stays_next_to_its_component(corpus: Corpus) -> None:
-    rows = [row for t in tables(corpus[OMEN]) for row in t.rows if "N96208-001" in row]
+    rows = [
+        (t.pdf_page, any("Bottom cover" in cell for cell in row))
+        for t in tables(corpus[OMEN])
+        for row in t.rows
+        if "N96208-001" in row
+    ]
+    pages = [page for page, _ in rows]
 
-    assert rows
-    assert all(any("Bottom cover" in cell for cell in row) for row in rows)
+    assert pages
+    assert rows == [(page, True) for page in pages]
 
 
 # Three OMEN pages hold two tables of the same width with a figure between them; the
@@ -122,13 +146,15 @@ ICONS = {ENVY: 87, OMEN: 3}
 
 @BOTH
 def test_lost_icons_are_marked_and_counted(corpus: Corpus, doc_id: str) -> None:
-    assert count_icons(corpus[doc_id].lines) == ICONS[doc_id]
+    icons = count_icons(corpus[doc_id].lines)
+
+    assert icons == ICONS[doc_id]
 
 
 def test_press_and_hold_passages_keep_a_placeholder_for_the_button(corpus: Corpus) -> None:
-    lines = [ln.text for ln in corpus[ENVY].lines]
-    marked = [text for text in lines if f"press and hold {ICON}" in text]
-    unmarked_gaps = [text for text in lines if text.endswith("press and hold")]
+    lines = corpus[ENVY].lines
+    marked = len([ln for ln in lines if f"press and hold {ICON}" in ln.text])
+    unmarked_gaps = [ln.pdf_page for ln in lines if ln.text.endswith("press and hold")]
 
-    assert len(marked) == 8
+    assert marked == 8
     assert unmarked_gaps == []

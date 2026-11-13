@@ -1,4 +1,7 @@
-"""Chunking v1 with the real bge-small tokenizer on both manuals (ADR 0005)."""
+"""Chunking v1 with the real bge-small tokenizer on both manuals (ADR 0005).
+
+CI logs are public: assertions compare counts and digests only (see tests/corpus/conftest.py).
+"""
 
 import hashlib
 from collections.abc import Mapping
@@ -10,7 +13,7 @@ from app.core.settings import Settings
 from app.domain.ingestion import Chunk
 from app.infra.fastembed_tokens import FastembedTokenCounter
 from app.ingestion.chunking import StructureChunker
-from tests.corpus.conftest import ENVY, OMEN, ParsedCorpusDocument
+from tests.corpus.conftest import ENVY, OMEN, Hidden, ParsedCorpusDocument
 from tests.model_data import fetch_verified
 
 pytestmark = [pytest.mark.corpus, pytest.mark.model]
@@ -33,12 +36,14 @@ def counter() -> FastembedTokenCounter:
 
 
 @pytest.fixture(scope="module")
-def chunks(corpus: Corpus, counter: FastembedTokenCounter) -> dict[str, list[Chunk]]:
+def chunks(corpus: Corpus, counter: FastembedTokenCounter) -> Hidden[list[Chunk]]:
     chunker = StructureChunker(counter, max_tokens=MAX_TOKENS, min_tokens=MIN_TOKENS)
-    return {
-        doc_id: chunker.chunk(doc.sectioned.sections, doc.parsed.document)
-        for doc_id, doc in corpus.items()
-    }
+    return Hidden(
+        {
+            doc_id: chunker.chunk(doc.sectioned.sections, doc.parsed.document)
+            for doc_id, doc in corpus.items()
+        }
+    )
 
 
 @BOTH
@@ -46,10 +51,12 @@ def test_no_chunk_exceeds_the_limit_including_its_prefix(
     chunks: Mapping[str, list[Chunk]], counter: FastembedTokenCounter, doc_id: str
 ) -> None:
     found = chunks[doc_id]
+    count = len(found)
+    stored, recounted = [c.token_count for c in found], [counter.count(c.text) for c in found]
 
-    assert len(found) == CHUNKS[doc_id]
-    assert [c.token_count for c in found] == [counter.count(c.text) for c in found]
-    assert max(c.token_count for c in found) <= MAX_TOKENS
+    assert count == CHUNKS[doc_id]
+    assert stored == recounted
+    assert max(stored) <= MAX_TOKENS
 
 
 # Pinned at commit 10; OMEN re-pinned with chunking v2 (tables end at a heading band,
@@ -72,6 +79,7 @@ def test_the_settings_defaults_are_the_measured_limits() -> None:
 def test_chunk_ids_are_pinned_per_document(chunks: Mapping[str, list[Chunk]], doc_id: str) -> None:
     ids = sorted(c.chunk_id for c in chunks[doc_id])
     digest = hashlib.sha256("\n".join(ids).encode()).hexdigest()
+    unique, count = len(set(ids)), len(ids)
 
-    assert len(set(ids)) == len(ids) == CHUNKS[doc_id]
+    assert unique == count == CHUNKS[doc_id]
     assert digest == CHUNK_ID_DIGESTS[doc_id]

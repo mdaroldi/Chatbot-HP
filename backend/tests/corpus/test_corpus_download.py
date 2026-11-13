@@ -1,4 +1,7 @@
-"""The checksum pin rejects a tampered copy of a real manual (served bytes altered)."""
+"""The checksum pin rejects a tampered copy of a real manual (served bytes altered).
+
+CI logs are public: the bytes are compared by digest, never printed.
+"""
 
 import hashlib
 from collections.abc import Mapping
@@ -33,6 +36,9 @@ async def test_one_flipped_byte_fails_the_checksum(
     tampered = bytearray(real)
     tampered[len(real) // 2] ^= 0x01
 
-    assert (await serving(real, tmp_path / "ok").fetch(document)).read_bytes() == real
+    served = (await serving(real, tmp_path / "ok").fetch(document)).read_bytes()
+    same_bytes = hashlib.sha256(served).hexdigest() == hashlib.sha256(real).hexdigest()
+
+    assert same_bytes
     with pytest.raises(ChecksumMismatchError, match=hashlib.sha256(tampered).hexdigest()):
         await serving(bytes(tampered), tmp_path / "bad").fetch(document)

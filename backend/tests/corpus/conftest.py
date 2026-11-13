@@ -2,10 +2,17 @@
 
 A download problem fails with a CORPUS UNAVAILABLE message, so it can never be
 mistaken for a parsing regression (which fails with an assertion error).
+
+CI logs of a public repository are public, and pytest prints the values an assert
+compares, including the arguments of calls inside it. So corpus assertions compare
+page numbers, counts, chunk IDs and short identifiers only: text is reduced to those
+outside the assert, never compared, passed to a call or read as an attribute inside
+one. Long tracebacks also print a failing test's fixture arguments, so fixtures that
+hold document text are wrapped in `Hidden`, whose repr shows only its keys.
 """
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +31,25 @@ from app.ingestion.sections import SectionedDocument, build_sections
 
 ENVY = "envy-6000-user-guide"
 OMEN = "omen-17-service-guide"
+
+
+class Hidden[V](Mapping[str, V]):
+    """A per-document mapping whose repr never shows the values (document text)."""
+
+    def __init__(self, values: Mapping[str, V]) -> None:
+        self._values = dict(values)
+
+    def __getitem__(self, doc_id: str) -> V:
+        return self._values[doc_id]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __repr__(self) -> str:
+        return f"Hidden({sorted(self._values)}, contents not shown)"
 
 
 @dataclass(frozen=True)
@@ -67,4 +93,4 @@ def corpus(corpus_files: Mapping[str, Path]) -> Mapping[str, ParsedCorpusDocumen
             cleaned=cleaned,
             sectioned=build_sections(document.doc_id, cleaned, parsed.outline, parsed.rules),
         )
-    return result
+    return Hidden(result)

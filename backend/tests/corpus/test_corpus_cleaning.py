@@ -1,5 +1,8 @@
 """Cleaning on the real manuals: drop counts by reason, and the precision of the
 language rules (PDF page numbers; Phase 1 plan item 3).
+
+CI logs are public: every assertion compares page numbers, counts or identifiers, never
+document text, so a failure cannot print the manual (see tests/corpus/conftest.py).
 """
 
 import unicodedata
@@ -113,30 +116,40 @@ def test_kept_text_has_only_latin_and_greek_letters(corpus: Corpus) -> None:
 @BOTH
 def test_cleaning_keeps_every_icon_placeholder(corpus: Corpus, doc_id: str) -> None:
     cleaned = corpus[doc_id].cleaned
+    kept, icons = len(cleaned.lines), count_icons(cleaned.lines)
 
-    assert (len(cleaned.lines), count_icons(cleaned.lines)) == (KEPT[doc_id], ICONS[doc_id])
+    assert (kept, icons) == (KEPT[doc_id], ICONS[doc_id])
 
 
 @BOTH
 def test_section_mini_tocs_are_dropped_only_where_expected(corpus: Corpus, doc_id: str) -> None:
     dropped = [d.line for d in corpus[doc_id].cleaned.dropped if d.reason is DropReason.SECTION_TOC]
+    per_page = Counter(line.pdf_page for line in dropped)
+    items = sum(line.text == "●" for line in dropped)
 
-    assert Counter(line.pdf_page for line in dropped) == SECTION_TOC_LINES[doc_id]
-    assert sum(line.text == "●" for line in dropped) == SECTION_TOC_ITEMS[doc_id]
+    assert per_page == SECTION_TOC_LINES[doc_id]
+    assert items == SECTION_TOC_ITEMS[doc_id]
 
 
 @BOTH
 def test_non_latin_table_residue_and_empty_sections_by_page(corpus: Corpus, doc_id: str) -> None:
     doc = corpus[doc_id]
+    table_residue = pages(doc, DropReason.NON_LATIN_TABLE)
+    emptied = pages(doc, DropReason.EMPTY_AFTER_CLEANING)
 
-    assert pages(doc, DropReason.NON_LATIN_TABLE) == NON_LATIN_TABLE_PAGES[doc_id]
-    assert pages(doc, DropReason.EMPTY_AFTER_CLEANING) == EMPTY_PAGES[doc_id]
+    assert table_residue == NON_LATIN_TABLE_PAGES[doc_id]
+    assert emptied == EMPTY_PAGES[doc_id]
 
 
 @BOTH
 def test_no_section_is_left_with_only_urls(corpus: Corpus, doc_id: str) -> None:
     sections = corpus[doc_id].sectioned.sections
-    texts = [" ".join(block.text for block in s.blocks) for s in sections]
+    url_only = [
+        s.pages.pdf_start
+        for s in sections
+        if not any(char.isalnum() for b in s.blocks for char in URL.sub("", b.text))
+    ]
+    found = len(sections)
 
-    assert sections
-    assert all(any(char.isalnum() for char in URL.sub("", text)) for text in texts)
+    assert found
+    assert url_only == []
