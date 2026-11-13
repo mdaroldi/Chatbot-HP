@@ -245,6 +245,14 @@ class RetrievalUnavailableError(Exception):
         self.stage, self.error_type = stage, error_type
 
 
+@dataclass(frozen=True)
+class IndexBuildRef:
+    """The collection behind the live alias and the manifest build that wrote it."""
+
+    collection: str
+    build_id: str
+
+
 class ModelsNotReadyError(Exception):
     """The query models are still loading or failed to load."""
 
@@ -275,3 +283,11 @@ class Reranker(Protocol):
     async def rerank(self, query: str, texts: Sequence[str]) -> list[float]:
         """One score per text, in input order; higher is more relevant."""
         ...
+
+
+class IndexIdentity(Protocol):
+    """Names the index build a request searches, so each stored answer can be traced
+    to the exact chunks and manifest it came from. Raises RetrievalUnavailableError.
+    """
+
+    async def current(self) -> IndexBuildRef: ...

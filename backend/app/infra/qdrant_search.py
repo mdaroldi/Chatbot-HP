@@ -30,6 +30,7 @@ from app.core.settings import Settings
 from app.domain.health import DependencyUnavailableError, FailureReason
 from app.domain.ingestion import ContentType, ManifestStore, ModelFiles, PageRange
 from app.domain.retrieval import (
+    IndexBuildRef,
     ModelsNotReadyError,
     RetrievalUnavailableError,
     SearchHit,
@@ -168,6 +169,61 @@ class QdrantSearchStore:
             raise RetrievalUnavailableError("search", type(exc).__name__) from exc
 
 
+# ---------------------------------------------------------------- index identity
+
+_INDEX_STAGE = "index"
+
+
+async def _live_collection(client: AsyncQdrantClient, alias: str) -> str | None:
+    aliases = (await client.get_aliases()).aliases
+    return next((a.collection_name for a in aliases if a.alias_name == alias), None)
+
+
+class QdrantIndexIdentity:
+    """The build a request's search runs against, for the stored answer trace.
+
+    The alias is resolved on every call (one lookup per request, under a deadline);
+    the manifest is read once per collection, since a collection's build never
+    changes. The alias can still swap between this lookup and the search, but swaps
+    happen only at `make ingest`. Failures name the stage and a type or code only.
+    """
+
+    def __init__(
+        self,
+        client: AsyncQdrantClient,
+        alias: str,
+        manifest: ManifestStore,
+        *,
+        timeout_seconds: float,
+    ) -> None:
+        self._client, self._alias, self._manifest = client, alias, manifest
+        self._timeout = timeout_seconds
+        self._build_ids: dict[str, str] = {}
+
+    async def current(self) -> IndexBuildRef:
+        try:
+            async with asyncio.timeout(self._timeout):
+                collection = await _live_collection(self._client, self._alias)
+        except Exception as exc:
+            raise RetrievalUnavailableError(_INDEX_STAGE, type(exc).__name__) from exc
+        if collection is None:
+            raise RetrievalUnavailableError(_INDEX_STAGE, "no_live_index")
+        build_id = self._build_ids.get(collection)
+        if build_id is None:
+            build_id = await self._build_id(collection)
+            self._build_ids[collection] = build_id
+        return IndexBuildRef(collection, build_id)
+
+    async def _build_id(self, collection: str) -> str:
+        try:
+            build = await self._manifest.succeeded_build(collection)
+        except Exception as exc:
+            raise RetrievalUnavailableError(_INDEX_STAGE, type(exc).__name__) from exc
+        if build is None:
+            raise RetrievalUnavailableError(_INDEX_STAGE, "no_succeeded_build")
+        return build.build_id
+
+
 # ---------------------------------------------------------------- index probe
 
 
@@ -216,8 +272,7 @@ class IndexProbe:
         self._models, self._dense_size = models, dense_size
 
     async def ping(self) -> Mapping[str, str] | None:
-        aliases = (await self._client.get_aliases()).aliases
-        collection = next((a.collection_name for a in aliases if a.alias_name == self._alias), None)
+        collection = await _live_collection(self._client, self._alias)
         if collection is None:
             raise DependencyUnavailableError("no live index", reason=FailureReason.MISSING)
         _check_vectors(
