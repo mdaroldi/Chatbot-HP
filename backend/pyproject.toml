@@ -11,6 +11,8 @@ dependencies = [
     "fastembed>=0.9.1",
     "qdrant-client>=1.20.0",
     "httpx>=0.28.1",
+    # Imported directly for its telemetry switch; already locked through fastembed.
+    "onnxruntime>=1.31.1",
     # Pinned model downloads (ADR 0006); fastembed caps it below 2.0, made explicit here.
     "huggingface-hub>=1.33.0,<2.0",
     "pdfplumber>=0.11.10",
@@ -78,6 +80,12 @@ strict = true
 warn_unreachable = true
 plugins = ["pydantic.mypy"]
 files = ["app", "tests", "alembic"]
+
+# onnxruntime ships no stubs or py.typed marker; only its telemetry switch is used
+# directly (fastembed wraps everything else), so its names are Any here.
+[[tool.mypy.overrides]]
+module = ["onnxruntime"]
+ignore_missing_imports = true
 
 [tool.pydantic-mypy]
 init_forbid_extra = true

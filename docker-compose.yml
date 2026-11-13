@@ -33,6 +33,15 @@ x-logging-env: &logging-env
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   LOG_INCLUDE_EXCEPTION_MESSAGES: ${LOG_INCLUDE_EXCEPTION_MESSAGES:-false}
 
+# No third-party telemetry from the backend image. onnxruntime's Linux build carries
+# Microsoft 1DS telemetry, started when its environment is created unless this is
+# set (the embedder also calls onnxruntime's disable API). huggingface-hub otherwise
+# adds environment details to its user agent and draws progress bars on stderr.
+x-telemetry-env: &telemetry-env
+  ORT_DISABLE_TELEMETRY: "1"
+  HF_HUB_DISABLE_TELEMETRY: "1"
+  HF_HUB_DISABLE_PROGRESS_BARS: "1"
+
 x-postgres-env: &postgres-env
   POSTGRES_HOST: postgres
   POSTGRES_PORT: "5432"
@@ -49,7 +58,7 @@ services:
     entrypoint: ["alembic", "-c", "/app/alembic.ini"]
     command: ["upgrade", "head"]
     environment:
-      <<: [*logging-env, *postgres-env]
+      <<: [*logging-env, *postgres-env, *telemetry-env]
     networks: [data]
     depends_on:
       postgres: {condition: service_healthy}
@@ -60,7 +69,7 @@ services:
     entrypoint: ["python", "-m", "app.ingestion"]
     command: ["--if-needed"]
     environment:
-      <<: [*logging-env, *postgres-env]
+      <<: [*logging-env, *postgres-env, *telemetry-env]
       QDRANT_URL: http://qdrant:6333
       QDRANT_COLLECTION_ALIAS: ${QDRANT_COLLECTION_ALIAS:-hpdocs_chunks}
       INDEX_KEEP_PREVIOUS: ${INDEX_KEEP_PREVIOUS:-true}
@@ -90,7 +99,7 @@ services:
   backend:
     <<: [*hardening, *backend-image]
     environment:
-      <<: [*logging-env, *postgres-env]
+      <<: [*logging-env, *postgres-env, *telemetry-env]
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8501}
       API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
       QDRANT_URL: http://qdrant:6333
@@ -112,6 +121,8 @@ services:
     init: true
     environment:
       BACKEND_URL: http://backend:8000
+      # Also off in the image's .streamlit/config.toml; either holds alone.
+      STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-8501}:8501"
     networks: [edge]

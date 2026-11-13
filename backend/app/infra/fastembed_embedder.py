@@ -1,10 +1,11 @@
 """Dense and sparse embeddings with local fastembed models on CPU (ADR 0003)."""
 
 import asyncio
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Protocol, Self
 
+import onnxruntime
 from fastembed import SparseTextEmbedding, TextEmbedding
 from fastembed.common.types import NumpyArray
 from fastembed.sparse.sparse_embedding_base import SparseEmbedding
@@ -51,10 +52,11 @@ class FastembedEmbedder:
     The models are loaded when the embedder is built, from folders whose files were
     just hashed, and never from the network (`local_files_only`); build it only when
     an index is really built. Inference is CPU-bound and runs in a worker thread so it
-    never blocks the event loop.
+    never blocks the event loop. onnxruntime's telemetry is switched off before the
+    first session; ORT_DISABLE_TELEMETRY in compose also keeps it from starting.
     """
 
-    def __init__(  # noqa: PLR0913 - two models, two settings, two injectable model classes
+    def __init__(  # noqa: PLR0913 - two models, two settings, injectable classes and switch
         self,
         dense: VerifiedModel,
         sparse: VerifiedModel,
@@ -63,7 +65,9 @@ class FastembedEmbedder:
         *,
         dense_class: DenseModelClass = TextEmbedding,
         sparse_class: SparseModelClass = SparseTextEmbedding,
+        disable_telemetry: Callable[[], None] = onnxruntime.disable_telemetry_events,
     ) -> None:
+        disable_telemetry()
         self._dense_name, self._sparse_name = dense.files.name, sparse.files.name
         self._batch_size = batch_size
         self._dense = dense_class(

@@ -6,6 +6,7 @@ here instead of being checked only by hand.
 
 import pathlib
 import re
+import tomllib
 from typing import Any
 
 import pytest
@@ -132,6 +133,24 @@ def test_qdrant_telemetry_is_disabled(services: dict[str, Service]) -> None:
     assert services["qdrant"]["environment"]["QDRANT__TELEMETRY_DISABLED"] == "true"
 
 
+@pytest.mark.parametrize("name", sorted(BACKEND_IMAGE_SERVICES))
+def test_backend_image_services_disable_library_telemetry(
+    services: dict[str, Service], name: str
+) -> None:
+    environment: dict[str, str] = services[name]["environment"]
+
+    assert {k: environment.get(k) for k in TELEMETRY_ENV} == TELEMETRY_ENV
+
+
+def test_streamlit_usage_statistics_are_off_in_compose_and_in_the_image() -> None:
+    """The image's config.toml and the compose variable both say no, so either holds alone."""
+    environment = load(COMPOSE)["services"]["frontend"]["environment"]
+    config = tomllib.loads((REPO / "frontend" / ".streamlit" / "config.toml").read_text())
+
+    assert environment["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] == "false"
+    assert config["browser"]["gatherUsageStats"] is False
+
+
 def test_app_and_one_shot_services_use_an_init_process(services: dict[str, Service]) -> None:
     for name in APP_SERVICES | ONE_SHOT_SERVICES:
         assert services[name]["init"] is True
@@ -208,7 +227,19 @@ INGEST_FIXED = {
 }
 # Not a setting: huggingface-hub and hf-xet keep their own cache and logs under
 # HF_HOME (default ~/.cache), which the read-only root and the home-less user block.
-INGEST_LIBRARY_ENV = {"HF_HOME": "/tmp/huggingface"}  # noqa: S108 - a tmpfs path in compose
+# Telemetry off by configuration on every container of the backend image: onnxruntime's
+# Linux build carries Microsoft 1DS telemetry, started when its environment is created
+# unless ORT_DISABLE_TELEMETRY is set; huggingface-hub adds environment details to its
+# user agent and draws progress bars on stderr unless told not to.
+TELEMETRY_ENV = {
+    "ORT_DISABLE_TELEMETRY": "1",
+    "HF_HUB_DISABLE_TELEMETRY": "1",
+    "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+}
+INGEST_LIBRARY_ENV = {
+    "HF_HOME": "/tmp/huggingface",  # noqa: S108 - a tmpfs path in compose
+    **TELEMETRY_ENV,
+}
 
 
 def test_ingest_gets_every_setting_it_reads(services: dict[str, Service]) -> None:
@@ -236,7 +267,7 @@ def test_migrate_gets_the_database_and_logging_settings(services: dict[str, Serv
         "LOG_INCLUDE_EXCEPTION_MESSAGES",
     }
 
-    assert set(environment) == expected
+    assert set(environment) == expected | set(TELEMETRY_ENV)
     assert {k: environment[k] for k in expected} == {k: ingest[k] for k in expected}
 
 

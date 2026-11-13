@@ -1,11 +1,13 @@
 """The fastembed adapters with fake model classes: no download, no ONNX session."""
 
+import inspect
 import threading
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
+import onnxruntime
 from fastembed.common.types import NumpyArray
 from fastembed.sparse.sparse_embedding_base import SparseEmbedding
 from pydantic import SecretStr
@@ -159,6 +161,34 @@ async def test_embedder_from_settings_uses_the_embedding_settings() -> None:
     assert (dense.path, dense.cache_dir) == ("/cache/dense-snapshot", "/var/cache/models")
     assert (sparse.path, sparse.cache_dir) == ("/cache/sparse-snapshot", "/var/cache/models")
     assert dense.batch_sizes == [16]
+
+
+def test_onnxruntime_telemetry_is_disabled_before_any_model_is_built() -> None:
+    """onnxruntime's Linux build carries Microsoft 1DS telemetry; turn it off first."""
+    FakeDense.built, FakeSparse.built = [], []
+    models_at_disable: list[int] = []
+
+    def disable() -> None:
+        models_at_disable.append(len(FakeDense.built) + len(FakeSparse.built))
+
+    FastembedEmbedder(
+        DENSE,
+        SPARSE,
+        Path("cache"),
+        8,
+        dense_class=FakeDense,
+        sparse_class=FakeSparse,
+        disable_telemetry=disable,
+    )
+
+    assert models_at_disable == [0]
+    assert (len(FakeDense.built), len(FakeSparse.built)) == (1, 1)
+
+
+def test_the_default_telemetry_switch_is_onnxruntimes_own() -> None:
+    default = inspect.signature(FastembedEmbedder).parameters["disable_telemetry"].default
+
+    assert default is onnxruntime.disable_telemetry_events
 
 
 # ------------------------------------------------------------------ token counter
