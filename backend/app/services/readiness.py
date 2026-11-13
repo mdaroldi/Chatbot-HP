@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 from app.domain.health import (
     DependencyProbe,
+    DependencyUnavailableError,
     FailureReason,
     ProbeResult,
     ProbeStatus,
@@ -28,12 +29,15 @@ async def check_readiness(
 async def _run_probe(probe: DependencyProbe, timeout_seconds: float) -> ProbeResult:
     try:
         async with asyncio.timeout(timeout_seconds):
-            await probe.ping()
+            info = await probe.ping()
     except TimeoutError as exc:
         return _down(probe, FailureReason.TIMEOUT, exc)
+    except DependencyUnavailableError as exc:
+        # A probe may know why (models still loading); otherwise it is unreachable.
+        return _down(probe, exc.reason or FailureReason.UNREACHABLE, exc)
     except Exception as exc:
         return _down(probe, FailureReason.UNREACHABLE, exc)
-    return ProbeResult(probe.name, ProbeStatus.OK)
+    return ProbeResult(probe.name, ProbeStatus.OK, info=info)
 
 
 def _down(probe: DependencyProbe, reason: FailureReason, exc: Exception) -> ProbeResult:

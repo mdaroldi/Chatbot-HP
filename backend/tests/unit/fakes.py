@@ -12,9 +12,10 @@ class FakeProbe:
     error: BaseException | None = None
     delay_seconds: float = 0.0
     hang: bool = False
+    info: dict[str, str] | None = None
     calls: int = 0
 
-    async def ping(self) -> None:
+    async def ping(self) -> dict[str, str] | None:
         self.calls += 1
         if self.hang:
             await asyncio.Event().wait()
@@ -22,6 +23,7 @@ class FakeProbe:
             await asyncio.sleep(self.delay_seconds)
         if self.error is not None:
             raise self.error
+        return self.info
 
 
 class WordTokenCounter:

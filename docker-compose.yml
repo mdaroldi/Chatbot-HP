@@ -111,6 +111,14 @@ services:
       API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
       QDRANT_URL: http://qdrant:6333
       READINESS_TIMEOUT_SECONDS: ${READINESS_TIMEOUT_SECONDS:-2.0}
+      # Query models (ADR 0008): read offline from the store baked into the image.
+      EMBEDDING_DENSE_MODEL: ${EMBEDDING_DENSE_MODEL:-BAAI/bge-small-en-v1.5}
+      EMBEDDING_SPARSE_MODEL: ${EMBEDDING_SPARSE_MODEL:-Qdrant/bm25}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
+      EMBEDDING_CACHE_DIR: /opt/hpdocs/models
+      RERANKER_MODEL: ${RERANKER_MODEL:-Xenova/ms-marco-MiniLM-L-6-v2}
+      INFERENCE_WORKERS: ${INFERENCE_WORKERS:-2}
+      INFERENCE_ONNX_THREADS: ${INFERENCE_ONNX_THREADS:-2}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
     networks: [edge, data]

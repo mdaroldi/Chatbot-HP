@@ -1,6 +1,6 @@
 # ADR 0008: Models baked into the image; inference threading
 
-- **Status:** accepted (Phase 2, commit 6; threading completed in commit 7)
+- **Status:** accepted (Phase 2, commits 6 and 7)
 - **Date:** 2026-11-13
 
 ## Context
@@ -41,6 +41,20 @@ falls back to the OS temp directory when no cache directory is given.
 5. **Both reranker candidates stay pinned** until the reranker ablation (ADR 0009)
    picks one. A separate commit then removes the losing model from `models.toml` and
    from the image, and this ADR records the size change.
+
+6. **Inference threading (commit 7).** The API builds one instance per model (dense,
+   BM25 and the configured reranker) in a background task started by the lifespan:
+   verify the pins, build each model on the inference pool, warm each with one call.
+   `/health` is green at once; `/ready` reports `models: loading` until warm-up ends,
+   then the model names, or `models: failed`, with the exception type in the log only.
+   The pool is a `ThreadPoolExecutor` with `INFERENCE_WORKERS` threads, and each model
+   gets `INFERENCE_ONNX_THREADS` as its ONNX intra-op thread count; fastembed's
+   `parallel` option is never used. Defaults until Phase 6: 2 workers × 2 threads.
+   At startup, workers × threads is compared with the container's cgroup CPU quota
+   (`/sys/fs/cgroup/cpu.max`), or with the CPU count when no quota is readable, and a
+   warning names which one was used. A reranker other than the configured one is
+   loaded only when asked for by name (the benchmark's ablation). Ingestion keeps
+   leaving the thread count to onnxruntime.
 
 ## Model licenses
 

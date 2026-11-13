@@ -1,5 +1,6 @@
 """Dependency health: the probe interface and the readiness result types (no I/O)."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -14,11 +15,15 @@ class DependencyProbe(Protocol):
     @property
     def name(self) -> str: ...
 
-    async def ping(self) -> None: ...
+    async def ping(self) -> Mapping[str, str] | None: ...
 
 
 class DependencyUnavailableError(Exception):
     """A dependency answered, but not in a way that means it can serve requests."""
+
+    def __init__(self, message: str, *, reason: "FailureReason | None" = None) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class ProbeStatus(StrEnum):
@@ -31,6 +36,8 @@ class FailureReason(StrEnum):
 
     TIMEOUT = "timeout"
     UNREACHABLE = "unreachable"
+    LOADING = "loading"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True)
@@ -38,6 +45,7 @@ class ProbeResult:
     name: str
     status: ProbeStatus
     detail: FailureReason | None = None
+    info: Mapping[str, str] | None = None
 
 
 @dataclass(frozen=True)

@@ -5,7 +5,12 @@ import time
 
 import pytest
 
-from app.domain.health import FailureReason, ProbeResult, ProbeStatus
+from app.domain.health import (
+    DependencyUnavailableError,
+    FailureReason,
+    ProbeResult,
+    ProbeStatus,
+)
 from app.services.readiness import check_readiness
 from tests.unit.conftest import LogReader
 from tests.unit.fakes import FakeProbe
@@ -113,3 +118,30 @@ async def test_timeout_is_logged_with_reason(json_logs: LogReader) -> None:
 async def test_non_positive_timeout_is_rejected(bad_timeout: float) -> None:
     with pytest.raises(ValueError, match="timeout_seconds"):
         await check_readiness([FakeProbe("qdrant")], bad_timeout)
+
+
+@pytest.mark.parametrize("reason", [FailureReason.LOADING, FailureReason.FAILED])
+async def test_a_probe_can_say_why_it_is_down(reason: FailureReason) -> None:
+    probe = FakeProbe("models", error=DependencyUnavailableError("detail", reason=reason))
+
+    report = await check_readiness([probe], TIMEOUT)
+
+    assert report.results == (ProbeResult("models", ProbeStatus.DOWN, reason),)
+
+
+async def test_an_unavailable_dependency_without_a_reason_is_unreachable() -> None:
+    probe = FakeProbe("qdrant", error=DependencyUnavailableError("503"))
+
+    report = await check_readiness([probe], TIMEOUT)
+
+    assert report.results == (ProbeResult("qdrant", ProbeStatus.DOWN, FailureReason.UNREACHABLE),)
+
+
+async def test_a_ready_probe_can_describe_what_it_serves() -> None:
+    probe = FakeProbe("models", info={"dense": "BAAI/bge-small-en-v1.5"})
+
+    report = await check_readiness([probe], TIMEOUT)
+
+    assert report.results == (
+        ProbeResult("models", ProbeStatus.OK, info={"dense": "BAAI/bge-small-en-v1.5"}),
+    )

@@ -23,6 +23,7 @@ class HealthResponse(BaseModel):
 class CheckResponse(BaseModel):
     status: ProbeStatus
     detail: FailureReason | None = None
+    info: dict[str, str] | None = None  # what a ready dependency serves (models, index)
 
 
 class ReadinessResponse(BaseModel):
@@ -34,7 +35,11 @@ class ReadinessResponse(BaseModel):
         return cls(
             status="ready" if report.ready else "not_ready",
             checks={
-                result.name: CheckResponse(status=result.status, detail=result.detail)
+                result.name: CheckResponse(
+                    status=result.status,
+                    detail=result.detail,
+                    info=dict(result.info) if result.info is not None else None,
+                )
                 for result in report.results
             },
         )

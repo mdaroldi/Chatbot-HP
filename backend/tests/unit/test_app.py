@@ -16,6 +16,7 @@ from app.core.errors import AppError
 from app.core.logging import JsonFormatter
 from app.core.middleware import REQUEST_ID_HEADER
 from app.core.settings import LogLevel
+from app.domain.health import DependencyUnavailableError, FailureReason
 from app.main import create_app
 from tests.unit.conftest import LogReader, SettingsFactory
 from tests.unit.fakes import FakeProbe
@@ -406,3 +407,23 @@ def test_create_app_configures_logging_level(make_settings: SettingsFactory) -> 
     create_app(make_settings(log_level=LogLevel.DEBUG))
 
     assert logging.getLogger().level == logging.DEBUG
+
+
+async def test_ready_shows_what_probes_describe_and_why_one_is_down(
+    make_settings: SettingsFactory,
+) -> None:
+    probes = [
+        FakeProbe("models", info={"dense": "BAAI/bge-small-en-v1.5"}),
+        FakeProbe(
+            "index", error=DependencyUnavailableError("SECRET detail", reason=FailureReason.LOADING)
+        ),
+    ]
+    async with ready_client(make_settings, probes) as http:
+        response = await http.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["checks"] == {
+        "models": {"status": "ok", "info": {"dense": "BAAI/bge-small-en-v1.5"}},
+        "index": {"status": "down", "detail": "loading"},
+    }
+    assert "SECRET" not in response.text

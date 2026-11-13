@@ -468,3 +468,25 @@ def test_app_services_run_as_numeric_non_root_user(services: dict[str, Service],
 def test_integration_compose_images_are_pinned_by_digest() -> None:
     for name, service in load(TEST_COMPOSE)["services"].items():
         assert DIGEST.search(service["image"]), name
+
+
+# The query models the API loads (ADR 0008); the retrieval knobs follow in commit 9.
+BACKEND_MODEL_SETTINGS = (
+    "EMBEDDING_DENSE_MODEL",
+    "EMBEDDING_SPARSE_MODEL",
+    "EMBEDDING_BATCH_SIZE",
+    "RERANKER_MODEL",
+    "INFERENCE_WORKERS",
+    "INFERENCE_ONNX_THREADS",
+)
+
+
+def test_backend_gets_the_model_settings_from_env_and_reads_the_baked_store(
+    services: dict[str, Service],
+) -> None:
+    environment: dict[str, str] = services["backend"]["environment"]
+
+    for name in BACKEND_MODEL_SETTINGS:
+        assert str(environment[name]).startswith(f"${{{name}:-"), name
+    assert environment["EMBEDDING_CACHE_DIR"] == MODEL_STORE
+    assert {k: environment[k] for k in TELEMETRY_ENV} == TELEMETRY_ENV

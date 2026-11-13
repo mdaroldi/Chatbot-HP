@@ -3,6 +3,7 @@
 import inspect
 import threading
 from collections.abc import Iterable, Iterator
+from concurrent.futures import Executor
 from pathlib import Path
 from typing import ClassVar
 
@@ -16,6 +17,7 @@ from app.core.settings import Settings
 from app.domain.ingestion import SparseVector, VerifiedModel
 from app.infra.fastembed_embedder import FastembedEmbedder
 from app.infra.fastembed_tokens import FastembedTokenCounter
+from app.infra.inference import create_inference_executor
 from tests.model_data import pin
 
 
@@ -30,11 +32,16 @@ class FakeModel:
         lazy_load: bool,
         specific_model_path: str,
         local_files_only: bool,
+        threads: int | str | None = "not passed",
     ) -> None:
         self.model_name, self.cache_dir, self.lazy_load = model_name, cache_dir, lazy_load
         self.path, self.local_only = specific_model_path, local_files_only
+        # "not passed" tells an omitted argument from an explicit None.
+        self.onnx_threads = threads
         self.batch_sizes: list[int] = []
         self.threads: list[int] = []
+        self.thread_names: list[str] = []
+        self.queries: list[str] = []
         self.built.append(self)
 
     built: ClassVar[list["FakeModel"]]
@@ -42,6 +49,10 @@ class FakeModel:
     def _record(self, batch_size: int) -> None:
         self.batch_sizes.append(batch_size)
         self.threads.append(threading.get_ident())
+
+    def _record_query(self, query: str) -> None:
+        self.queries.append(query)
+        self.thread_names.append(threading.current_thread().name)
 
 
 class FakeDense(FakeModel):
@@ -51,6 +62,11 @@ class FakeDense(FakeModel):
         self._record(batch_size)
         for text in documents:
             yield np.array([len(text), 0.5], dtype=np.float32)
+
+    def query_embed(self, query: str) -> Iterator[NumpyArray]:
+        # Different values from embed(), so a test sees which path ran.
+        self._record_query(query)
+        yield np.array([-float(len(query)), 1.0], dtype=np.float32)
 
     def token_count(self, texts: str) -> int:
         return len(texts.split()) + 2  # like bge-small: [CLS] and [SEP] count
@@ -66,6 +82,11 @@ class FakeSparse(FakeModel):
                 values=np.array([1.5, float(len(text))]), indices=np.array([7, 3], dtype=np.int64)
             )
 
+    def query_embed(self, query: str) -> Iterator[SparseEmbedding]:
+        # BM25 queries carry unit weights, one per unique stemmed token.
+        self._record_query(query)
+        yield SparseEmbedding(values=np.ones(2), indices=np.array([len(query), 11], dtype=np.int64))
+
 
 def verified(name: str, folder: str) -> VerifiedModel:
     return VerifiedModel(files=pin(name=name, source=f"{name}-repo"), path=Path(folder))
@@ -75,13 +96,21 @@ DENSE = verified("dense-model", "/cache/dense-snapshot")
 SPARSE = verified("sparse-model", "/cache/sparse-snapshot")
 
 
-def embedder(cache_dir: Path = Path("cache"), batch_size: int = 4) -> FastembedEmbedder:
+def embedder(
+    cache_dir: Path = Path("cache"),
+    batch_size: int = 4,
+    *,
+    threads: int | None = None,
+    executor: Executor | None = None,
+) -> FastembedEmbedder:
     FakeDense.built, FakeSparse.built = [], []
     return FastembedEmbedder(
         DENSE,
         SPARSE,
         cache_dir,
         batch_size,
+        threads=threads,
+        executor=executor,
         dense_class=FakeDense,
         sparse_class=FakeSparse,
     )
@@ -161,6 +190,86 @@ async def test_embedder_from_settings_uses_the_embedding_settings() -> None:
     assert (dense.path, dense.cache_dir) == ("/cache/dense-snapshot", "/var/cache/models")
     assert (sparse.path, sparse.cache_dir) == ("/cache/sparse-snapshot", "/var/cache/models")
     assert dense.batch_sizes == [16]
+
+
+# ------------------------------------------------------------------ query side (Phase 2)
+
+
+async def test_queries_use_the_query_paths_not_the_document_paths() -> None:
+    subject = embedder()
+
+    dense = await subject.embed_query_dense("abc")
+    sparse = await subject.embed_query_sparse("abcd")
+
+    [dense_model], [sparse_model] = FakeDense.built, FakeSparse.built
+    assert dense == [-3.0, 1.0]
+    assert all(type(value) is float for value in dense)
+    assert sparse == SparseVector(indices=(4, 11), values=(1.0, 1.0))
+    assert (dense_model.queries, sparse_model.queries) == (["abc"], ["abcd"])
+    assert (dense_model.batch_sizes, sparse_model.batch_sizes) == ([], [])
+
+
+async def test_the_query_text_reaches_the_model_unchanged() -> None:
+    """The BGE instruction is a retrieval setting, added by the service if at all."""
+    subject = embedder()
+
+    await subject.embed_query_dense("Represent this: q")
+
+    assert FakeDense.built[0].queries == ["Represent this: q"]
+
+
+def test_onnx_threads_reach_both_models() -> None:
+    embedder(threads=2)
+
+    assert (FakeDense.built[0].onnx_threads, FakeSparse.built[0].onnx_threads) == (2, 2)
+
+
+def test_ingestion_leaves_the_thread_count_to_onnxruntime() -> None:
+    embedder()
+
+    assert (FakeDense.built[0].onnx_threads, FakeSparse.built[0].onnx_threads) == (None, None)
+
+
+async def test_query_embedding_runs_on_the_given_executor() -> None:
+    executor = create_inference_executor(1)
+    try:
+        subject = embedder(executor=executor)
+        await subject.embed_query_dense("a")
+        await subject.embed_query_sparse("a")
+        await subject.embed_dense(["a"])
+    finally:
+        executor.shutdown()
+
+    names = FakeDense.built[0].thread_names + FakeSparse.built[0].thread_names
+    assert names
+    assert all(name.startswith("inference") for name in names)
+    assert threading.get_ident() not in FakeDense.built[0].threads
+
+
+def test_the_query_embedder_from_settings_uses_the_inference_threads() -> None:
+    FakeDense.built, FakeSparse.built = [], []
+    executor = create_inference_executor(1)
+    try:
+        subject = FastembedEmbedder.for_queries(
+            Settings(
+                postgres_password=SecretStr("unused"),
+                embedding_cache_dir=Path("/opt/models"),
+                inference_onnx_threads=3,
+            ),
+            DENSE,
+            SPARSE,
+            executor,
+            dense_class=FakeDense,
+            sparse_class=FakeSparse,
+        )
+    finally:
+        executor.shutdown()
+
+    [dense], [sparse] = FakeDense.built, FakeSparse.built
+    assert (dense.onnx_threads, sparse.onnx_threads) == (3, 3)
+    assert {dense.cache_dir, sparse.cache_dir} == {"/opt/models"}
+    assert (dense.local_only, sparse.local_only) == (True, True)
+    assert subject.dense_model == "dense-model"
 
 
 def test_onnxruntime_telemetry_is_disabled_before_any_model_is_built() -> None:

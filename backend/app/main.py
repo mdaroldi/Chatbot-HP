@@ -1,6 +1,7 @@
 """Application factory. Run with: uvicorn app.main:create_app --factory --no-server-header"""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from concurrent.futures import Executor
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -12,6 +13,9 @@ from app.core.logging import configure_logging
 from app.core.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.core.settings import Settings, get_settings
 from app.infra.lifecycle import open_infrastructure
+from app.infra.query_models import QueryModels
+
+ModelsFactory = Callable[[Settings, Executor], QueryModels]
 
 _CORS_METHODS = ["GET", "POST", "DELETE"]
 _CORS_HEADERS = ["Content-Type", "X-Request-ID", "X-Client-ID"]
@@ -19,13 +23,18 @@ _CORS_HEADERS = ["Content-Type", "X-Request-ID", "X-Client-ID"]
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    async with open_infrastructure(app.state.settings) as infrastructure:
+    models_factory: ModelsFactory = app.state.query_models_factory
+    async with open_infrastructure(
+        app.state.settings, models_factory=models_factory
+    ) as infrastructure:
         app.state.infrastructure = infrastructure
         app.state.readiness_probes = infrastructure.probes
         yield
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None, *, query_models_factory: ModelsFactory | None = None
+) -> FastAPI:
     """Build the app from explicit settings; nothing is read from the environment at import.
 
     Middleware order (outermost first): request ID, then CORS, then routes, so CORS
@@ -47,6 +56,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=_lifespan,
     )
     app.state.settings = settings
+    # Injectable so tests never load real models; the default reads the baked store.
+    app.state.query_models_factory = query_models_factory or QueryModels.from_settings
     # Real probes are registered by the lifespan; none exist before startup.
     app.state.readiness_probes = ()
     register_exception_handlers(app)
