@@ -12,6 +12,7 @@ from app.domain.ingestion import (
     ModelIntegrityError,
 )
 from app.infra.model_files import load_pins
+from tests import downloads
 from tests.downloads import (
     CORPUS_CHANGED,
     CORPUS_UNAVAILABLE,
@@ -207,3 +208,19 @@ def test_the_plan_covers_the_corpus_and_every_pinned_model() -> None:
 
 def test_models_only_leaves_the_corpus_out() -> None:
     assert planned_downloads(corpus=False) == list(load_pins())
+
+
+def test_the_models_only_flag_leaves_the_corpus_out_of_the_default_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked: list[bool] = []
+
+    def default_fetchers(*, corpus: bool) -> list[Callable[[], Awaitable[object]]]:
+        asked.append(corpus)
+        return []
+
+    monkeypatch.setattr(downloads, "_default_fetchers", default_fetchers)
+
+    assert main(["--models-only"]) == 0
+    assert main([]) == 0
+    assert asked == [False, True]
