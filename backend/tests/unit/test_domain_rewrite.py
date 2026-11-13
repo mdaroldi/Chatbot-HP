@@ -8,6 +8,7 @@ from app.domain.chat import REFUSAL_MARKER, Message, Outcome, RefusalReason, Rol
 from app.domain.prompt import HistoryBudget, PastTurn
 from app.domain.rewrite import (
     REWRITE_MAX_CHARS,
+    REWRITE_MAX_WORDS,
     accept_rewrite,
     rewrite_system_prompt,
     rewrite_turns,
@@ -135,6 +136,24 @@ def test_a_one_line_query_is_accepted_without_surrounding_whitespace() -> None:
 
 def test_a_query_of_the_maximum_length_is_accepted() -> None:
     assert accept_rewrite("a" * REWRITE_MAX_CHARS) == "a" * REWRITE_MAX_CHARS
+
+
+def test_a_query_of_the_maximum_word_count_is_accepted() -> None:
+    query = " ".join(["word"] * REWRITE_MAX_WORDS)
+
+    assert accept_rewrite(query) == query
+
+
+def test_a_query_over_the_word_limit_is_rejected_even_when_short() -> None:
+    query = " ".join(["w"] * (REWRITE_MAX_WORDS + 1))
+
+    assert len(query) < REWRITE_MAX_CHARS
+    assert accept_rewrite(query) is None
+
+
+def test_the_limits_match_the_rules_the_model_is_given() -> None:
+    assert (REWRITE_MAX_WORDS, REWRITE_MAX_CHARS) == (30, 300)
+    assert f"at most {REWRITE_MAX_WORDS} words" in rewrite_system_prompt([])
 
 
 @pytest.mark.parametrize(
