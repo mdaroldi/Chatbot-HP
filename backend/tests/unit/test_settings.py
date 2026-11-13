@@ -437,7 +437,7 @@ def test_chunk_merge_floor_must_be_below_the_limit(monkeypatch: pytest.MonkeyPat
 # ------------------------------------------------------------------ retrieval (Phase 2)
 
 
-def test_retrieval_defaults_are_hybrid_with_rerank_and_no_calibrated_threshold() -> None:
+def test_retrieval_defaults_are_hybrid_with_rerank_and_the_calibrated_threshold() -> None:
     settings = Settings()
 
     assert settings.retrieval_mode is SearchMode.HYBRID
@@ -448,7 +448,8 @@ def test_retrieval_defaults_are_hybrid_with_rerank_and_no_calibrated_threshold()
     assert settings.retrieval_prefetch_sparse_limit == 20
     assert settings.retrieval_rrf_k == 60
     assert settings.retrieval_product_filter_enabled is False
-    assert settings.retrieval_relevance_threshold is None
+    # Calibrated on the dev split for the default reranker (ADR 0009).
+    assert settings.retrieval_relevance_threshold == -6.54
     assert settings.retrieval_dense_query_prefix == ""
     assert settings.reranker_model == "Xenova/ms-marco-MiniLM-L-6-v2"
     assert settings.inference_workers == 2

@@ -70,6 +70,12 @@ set frozen before any tuning.
 - **Failures:** every Qdrant failure (down, timeout, missing alias, unexpected payload)
   is `RetrievalUnavailableError`, logged with the stage and the exception type only.
 
+## Relevance threshold (calibration record)
+
+Calibrated on `Xenova/ms-marco-MiniLM-L-6-v2` @ `a09144355adeed5f58c8ed011d209bf8ee5a1fec`, threshold `-6.54`
+(run `20261113t153722z-06bf4c0280ab`, dev split, build `20261113t153253z`). A unit test
+fails when the reranker pin moves without this record. Results follow below.
+
 ## Evaluation method
 
 **Frozen golden set (commit 11b):** `eval/golden/retrieval-v1.toml`, version **1.0.1**,

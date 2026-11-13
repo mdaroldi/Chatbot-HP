@@ -212,12 +212,15 @@ class Settings(BaseSettings):
         description="Restrict the search to one manual when the question names its product.",
     )
     retrieval_relevance_threshold: float | None = Field(
-        default=None,
+        default=-6.54,
         ge=-100,
         le=100,
         allow_inf_nan=False,
-        description="Lowest top reranker score that counts as relevant; unset until "
-        "calibrated (ADR 0009). Belongs to one reranker model.",
+        description="Lowest top reranker score that counts as relevant. Calibrated for "
+        "Xenova/ms-marco-MiniLM-L-6-v2 @ a09144355ade on the dev split (ADR 0009): 2 of "
+        "48 in-scope questions refused, 4 of 4 unrelated and 0 of 4 near-domain "
+        "out-of-scope questions caught. Fragile (8 out-of-scope questions); recalibrate "
+        "when the reranker changes.",
     )
     retrieval_dense_query_prefix: str = Field(
         default="",
@@ -269,7 +272,7 @@ class Settings(BaseSettings):
     @field_validator("retrieval_relevance_threshold", mode="before")
     @classmethod
     def _blank_threshold_is_unset(cls, value: object) -> object:
-        """`.env.example` leaves the threshold empty until it is calibrated."""
+        """An empty value unsets the threshold, e.g. for a reranker not yet calibrated."""
         return None if isinstance(value, str) and not value.strip() else value
 
     @model_validator(mode="after")

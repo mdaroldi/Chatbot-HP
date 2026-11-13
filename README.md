@@ -195,7 +195,7 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `RETRIEVAL_PREFETCH_SPARSE_LIMIT` | `20` | BM25 candidates before fusion; at least `RETRIEVAL_RERANK_CANDIDATES`. |
 | `RETRIEVAL_RRF_K` | `60` | Reciprocal rank fusion constant k (Qdrant's default is 2). |
 | `RETRIEVAL_PRODUCT_FILTER_ENABLED` | `false` | Restrict the search to one manual when the question names its product. |
-| `RETRIEVAL_RELEVANCE_THRESHOLD` | *unset* | Lowest top reranker score that counts as relevant; unset until calibrated (ADR 0009). Belongs to one reranker model. |
+| `RETRIEVAL_RELEVANCE_THRESHOLD` | `-6.54` | Lowest top reranker score that counts as relevant. Calibrated for Xenova/ms-marco-MiniLM-L-6-v2 @ a09144355ade on the dev split (ADR 0009): 2 of 48 in-scope questions refused, 4 of 4 unrelated and 0 of 4 near-domain out-of-scope questions caught. Fragile (8 out-of-scope questions); recalibrate when the reranker changes. |
 | `RETRIEVAL_DENSE_QUERY_PREFIX` | *empty* | Text put before the question for the dense query only (BGE instruction). |
 | `RERANKER_MODEL` | `Xenova/ms-marco-MiniLM-L-6-v2` | fastembed cross-encoder; must be pinned in `models.toml`. |
 | `INFERENCE_WORKERS` | `2` | Threads that run embedding and reranking for requests. |

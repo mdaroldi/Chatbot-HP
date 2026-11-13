@@ -164,7 +164,7 @@ async def test_results_are_ranked_with_scores_sections_pages_and_timings(
         "scores": {"fused": pytest.approx(0.8), "rerank": 3.0},
         "text": "xxx",
     }
-    assert body["relevance"] == {"signal": 3.0, "threshold": None, "flag": None}
+    assert body["relevance"] == {"signal": 3.0, "threshold": -6.54, "flag": True}
     assert body["filter"] is None
     assert body["config"] == {"mode": "hybrid", "rerank": True, "rrf_k": 60, "candidates": 20}
     timings = body["timings_ms"]
@@ -214,7 +214,7 @@ async def test_without_rerank_the_store_order_and_score_are_returned(
     assert [r["chunk_id"] for r in body["results"]] == ["chunk-0", "chunk-1"]
     assert body["results"][0]["score"] == 1.0
     assert body["results"][0]["scores"] == {"fused": 1.0, "rerank": None}
-    assert body["relevance"] == {"signal": None, "threshold": None, "flag": None}
+    assert body["relevance"] == {"signal": None, "threshold": -6.54, "flag": None}
     assert body["config"] == {"mode": "dense", "rerank": False, "rrf_k": 60, "candidates": 2}
     assert body["timings_ms"]["rerank"] is None
     assert body["timings_ms"]["sparse_embed"] is None

@@ -4,8 +4,11 @@ import pathlib
 
 from app.core.settings import Settings
 from app.core.settings_docs import README_END, README_START, settings_markdown_table
+from app.infra.model_files import load_pins
 
-README = pathlib.Path(__file__).resolve().parents[3] / "README.md"
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+README = ROOT / "README.md"
+ADR_0009 = ROOT / "docs" / "adr" / "0009-retrieval-strategy-and-evaluation.md"
 
 
 def table_rows() -> list[list[str]]:
@@ -41,11 +44,22 @@ def test_defaults_are_rendered_as_env_values() -> None:
     assert defaults["`READINESS_TIMEOUT_SECONDS`"] == "`2.0`"
 
 
-def test_unset_and_empty_defaults_are_named_not_rendered_as_code() -> None:
+def test_empty_defaults_are_named_not_rendered_as_code() -> None:
     defaults = {row[0]: row[1] for row in table_rows()}
 
-    assert defaults["`RETRIEVAL_RELEVANCE_THRESHOLD`"] == "*unset*"
+    assert defaults["`RETRIEVAL_RELEVANCE_THRESHOLD`"] == "`-6.54`"
     assert defaults["`RETRIEVAL_DENSE_QUERY_PREFIX`"] == "*empty*"
+
+
+def test_the_threshold_names_the_reranker_pin_it_was_calibrated_on() -> None:
+    """The threshold belongs to one reranker revision: moving the pin must fail here
+    until the calibration is redone and its record moved with it (ADR 0009)."""
+    model = Settings().reranker_model
+    revision = load_pins()[model].revision
+    rows = {row[0]: row[2] for row in table_rows()}
+
+    assert f"{model} @ {revision[:12]}" in rows["`RETRIEVAL_RELEVANCE_THRESHOLD`"]
+    assert f"`{model}` @ `{revision}`, threshold `-6.54`" in ADR_0009.read_text(encoding="utf-8")
 
 
 def test_required_secret_has_no_default_shown() -> None:
