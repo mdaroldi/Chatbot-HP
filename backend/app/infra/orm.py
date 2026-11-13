@@ -3,7 +3,23 @@
 from datetime import datetime
 from typing import TypedDict
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, Integer, MetaData, String
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Double,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # Deterministic constraint names: Postgres would otherwise invent them, and
@@ -76,3 +92,168 @@ class IndexBuildRow(Base):
     error_type: Mapped[str | None] = mapped_column(String(255))  # type name only, never a message
     # NULL (not JSON null) before migration 0004: fastembed's BM25 defaults (ADR 0009).
     sparse_params: Mapped[Bm25ParamsJson | None] = mapped_column(JSON(none_as_null=True))
+
+
+# Chat tables (migration 0005). JSONB on Postgres, generic JSON on SQLite (unit tests).
+_JSON_DOCUMENT = JSON().with_variant(JSONB(), "postgresql")
+_UUID = Uuid(as_uuid=False)
+_EMPTY_ANSWER = "citations = '[]' AND sources = '[]'"
+# Every assistant-only column; a user row leaves all of them empty.
+_ANSWER_TRACE_NULLABLE = (
+    "error_code",
+    "model",
+    "input_tokens",
+    "output_tokens",
+    "dense_embed_ms",
+    "sparse_embed_ms",
+    "search_ms",
+    "rerank_ms",
+    "retrieval_ms",
+    "rewrite_ms",
+    "ttft_ms",
+    "generation_ms",
+    "total_ms",
+    "relevance_signal",
+    "relevance_threshold",
+    "index_build_id",
+    "rewritten_query",
+)
+_NO_ANSWER_TRACE = " AND ".join(
+    (
+        "chunk_ids = '[]'",
+        "flags = '{}'",
+        *(f"{column} IS NULL" for column in _ANSWER_TRACE_NULLABLE),
+    )
+)
+
+
+class PagesJson(TypedDict):
+    pdf_start: int
+    pdf_end: int
+    printed_start: int | None
+    printed_end: int | None
+
+
+class SourceJson(TypedDict):
+    tag: str
+    doc_id: str
+    document_title: str
+    section_path: list[str]
+    pages: PagesJson
+    has_warning: bool
+    snippet: str
+
+
+class FlagsJson(TypedDict, total=False):
+    late_refusal_marker: bool
+    uncited: bool
+    invalid_citations: int
+
+
+class ConversationRow(Base):
+    """A conversation, owned by one anonymous client ID.
+
+    (id, client_id) is unique so that messages can reference both: a message can then
+    only belong to a conversation of the same client, enforced by the database.
+    """
+
+    __tablename__ = "conversations"
+    __table_args__ = (
+        UniqueConstraint("id", "client_id", name="uq_conversations_id_client_id"),
+        # Newest-first keyset list per client; a backward scan serves the DESC order.
+        Index("ix_conversations_client_id_updated_at_id", "client_id", "updated_at", "id"),
+        Index("ix_conversations_updated_at", "updated_at"),  # the retention purge
+        CheckConstraint("title IS NULL OR length(title) >= 1", name="title_not_empty"),
+        CheckConstraint("updated_at >= created_at", name="updated_not_before_created"),
+    )
+
+    id: Mapped[str] = mapped_column(_UUID, primary_key=True)
+    client_id: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str | None] = mapped_column(String(80))  # personal data, never logged
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MessageRow(Base):
+    """One user or assistant message, plus the trace of how an answer was produced.
+
+    The checks repeat the rules of app.domain.chat.Message, so a row written around the
+    domain types (a bug, a manual fix) still cannot contradict them.
+    """
+
+    __tablename__ = "messages"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["conversation_id", "client_id"],
+            ["conversations.id", "conversations.client_id"],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("conversation_id", "seq", name="uq_messages_conversation_id_seq"),
+        # One answer in progress per conversation: a concurrent second message fails here.
+        Index(
+            "ix_messages_one_pending",
+            "conversation_id",
+            unique=True,
+            postgresql_where=text("outcome = 'pending'"),
+            sqlite_where=text("outcome = 'pending'"),
+        ),
+        CheckConstraint("seq >= 1", name="seq_positive"),
+        CheckConstraint("role IN ('user', 'assistant')", name="role"),
+        CheckConstraint(
+            "outcome IN ('pending', 'completed', 'refused', 'failed', 'cancelled')",
+            name="outcome",
+        ),
+        CheckConstraint(
+            "refusal_reason IN ('below_threshold', 'model_refused', 'provider_refused')",
+            name="refusal_reason",
+        ),
+        # A user message has no outcome; an assistant message always has one.
+        CheckConstraint("(role = 'assistant') = (outcome IS NOT NULL)", name="outcome_role"),
+        # A refusal needs a reason, and only a refusal has one.
+        CheckConstraint(
+            "(refusal_reason IS NOT NULL) = (outcome IS NOT NULL AND outcome = 'refused')",
+            name="refusal_reason_outcome",
+        ),
+        # The stored flag is Message.refusal: true exactly when there is a reason.
+        CheckConstraint("refusal = (refusal_reason IS NOT NULL)", name="refusal_flag"),
+        CheckConstraint(f"role = 'assistant' OR ({_EMPTY_ANSWER})", name="user_has_no_citations"),
+        CheckConstraint(
+            f"outcome IS NULL OR outcome <> 'refused' OR ({_EMPTY_ANSWER})",
+            name="refusal_has_no_citations",
+        ),
+        CheckConstraint(
+            f"role = 'assistant' OR ({_NO_ANSWER_TRACE})", name="user_has_no_answer_trace"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(_UUID, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(_UUID)
+    client_id: Mapped[str] = mapped_column(String(64))
+    seq: Mapped[int] = mapped_column(Integer)
+    role: Mapped[str] = mapped_column(String(16))
+    content: Mapped[str] = mapped_column(Text)  # personal data, never logged
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    outcome: Mapped[str | None] = mapped_column(String(16))
+    refusal: Mapped[bool] = mapped_column(Boolean)
+    refusal_reason: Mapped[str | None] = mapped_column(String(32))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    flags: Mapped[FlagsJson] = mapped_column(_JSON_DOCUMENT)
+    citations: Mapped[list[str]] = mapped_column(_JSON_DOCUMENT)
+    sources: Mapped[list[SourceJson]] = mapped_column(_JSON_DOCUMENT)  # snapshot for reloads
+    chunk_ids: Mapped[list[str]] = mapped_column(_JSON_DOCUMENT)  # rank order
+    model: Mapped[str | None] = mapped_column(String(255))  # the model that served it
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    dense_embed_ms: Mapped[float | None] = mapped_column(Double)
+    sparse_embed_ms: Mapped[float | None] = mapped_column(Double)
+    search_ms: Mapped[float | None] = mapped_column(Double)
+    rerank_ms: Mapped[float | None] = mapped_column(Double)
+    retrieval_ms: Mapped[float | None] = mapped_column(Double)  # StageTimings.total_ms
+    rewrite_ms: Mapped[float | None] = mapped_column(Double)
+    ttft_ms: Mapped[float | None] = mapped_column(Double)
+    generation_ms: Mapped[float | None] = mapped_column(Double)
+    total_ms: Mapped[float | None] = mapped_column(Double)  # the whole request
+    relevance_signal: Mapped[float | None] = mapped_column(Double)
+    relevance_threshold: Mapped[float | None] = mapped_column(Double)
+    index_build_id: Mapped[str | None] = mapped_column(String(32))
+    rewritten_query: Mapped[str | None] = mapped_column(Text)  # personal data, never logged

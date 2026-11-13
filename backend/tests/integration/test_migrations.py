@@ -13,7 +13,7 @@ from tests.integration.conftest import PG_PASSWORD, SettingsFactory, run_alembic
 
 pytestmark = pytest.mark.integration
 
-HEAD_REVISION = "0004"
+HEAD_REVISION = "0005"
 
 
 async def versions(settings: Settings) -> list[str]:
@@ -261,3 +261,19 @@ async def sparse_params(settings: Settings) -> list[tuple[str, object]]:
             return [(build_id, params) for build_id, params in rows]
     finally:
         await engine.dispose()
+
+
+async def test_downgrade_to_0004_drops_the_chat_tables(
+    scratch_db: str, make_settings: SettingsFactory, tmp_path: pathlib.Path
+) -> None:
+    settings = make_settings(postgres_db=scratch_db)
+    run_alembic(scratch_db, "upgrade", "head", cwd=tmp_path)
+    assert await columns(settings, "conversations"), "head must create conversations"
+    assert await columns(settings, "messages"), "head must create messages"
+
+    run_alembic(scratch_db, "downgrade", "0004", cwd=tmp_path)
+
+    assert await versions(settings) == ["0004"]
+    assert await columns(settings, "conversations") == {}
+    assert await columns(settings, "messages") == {}
+    assert "sparse_params" in await columns(settings, "index_builds")

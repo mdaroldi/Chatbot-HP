@@ -11,6 +11,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from app.domain.ingestion import PageRange
+from app.domain.retrieval import Relevance, StageTimings
 
 # The system prompt tells the model to reply with exactly this when the excerpts do not
 # hold the answer; the stream detector hides it from the user (layer 2 refusal).
@@ -43,6 +44,21 @@ class RefusalReason(StrEnum):
     BELOW_THRESHOLD = "below_threshold"
     MODEL_REFUSED = "model_refused"
     PROVIDER_REFUSED = "provider_refused"
+
+
+def _check_answer(
+    outcome: Outcome | None,
+    reason: RefusalReason | None,
+    citations: tuple[str, ...],
+    sources: tuple["Source", ...],
+) -> None:
+    """The refusal rules every answer obeys; migration 0005 repeats them as checks."""
+    refused = outcome is Outcome.REFUSED
+    _require(not refused or reason is not None, "a refusal needs a reason")
+    _require(refused or reason is None, "only a refusal has a reason")
+    _require(
+        not refused or (not citations and not sources), "a refusal has no citations or sources"
+    )
 
 
 @dataclass(frozen=True)
@@ -98,13 +114,7 @@ class Message:
             )
             return
         _require(self.outcome is not None, "assistant message needs an outcome")
-        refused = self.outcome is Outcome.REFUSED
-        _require(not refused or self.refusal_reason is not None, "a refusal needs a reason")
-        _require(refused or self.refusal_reason is None, "only a refusal has a reason")
-        _require(
-            not refused or (not self.citations and not self.sources),
-            "a refusal has no citations or sources",
-        )
+        _check_answer(self.outcome, self.refusal_reason, self.citations, self.sources)
 
     @property
     def refusal(self) -> bool:
@@ -116,3 +126,49 @@ class Message:
         partial (failed, cancelled) or unfinished answers would mislead the model.
         """
         return self.role is Role.USER or self.outcome in (Outcome.COMPLETED, Outcome.REFUSED)
+
+
+@dataclass(frozen=True)
+class AnswerFlags:
+    """Quality signals about a finished answer, stored for review and evaluation."""
+
+    late_refusal_marker: bool = False
+    uncited: bool = False
+    invalid_citations: int = 0
+
+    def __post_init__(self) -> None:
+        _require(self.invalid_citations >= 0, "invalid_citations must not be negative")
+
+
+@dataclass(frozen=True)
+class AnswerRecord:
+    """Everything stored when an answer ends, so each answer can be traced afterwards.
+
+    The message view (Message) shows the content, outcome and citations; the rest is
+    internal trace: what was retrieved, which model served it, what it cost, how long
+    each stage took. Fields the outcome never reached stay None.
+    """
+
+    outcome: Outcome
+    content: str
+    refusal_reason: RefusalReason | None = None
+    citations: tuple[str, ...] = ()
+    sources: tuple[Source, ...] = ()
+    chunk_ids: tuple[str, ...] = ()  # rank order
+    model: str | None = None  # the model that actually served the answer
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    timings: StageTimings | None = None
+    rewrite_ms: float | None = None
+    ttft_ms: float | None = None
+    generation_ms: float | None = None
+    total_ms: float | None = None
+    relevance: Relevance | None = None
+    index_build_id: str | None = None
+    rewritten_query: str | None = None
+    error_code: str | None = None
+    flags: AnswerFlags = AnswerFlags()
+
+    def __post_init__(self) -> None:
+        _require(self.outcome is not Outcome.PENDING, "a finished answer cannot be pending")
+        _check_answer(self.outcome, self.refusal_reason, self.citations, self.sources)

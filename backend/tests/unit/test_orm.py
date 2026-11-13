@@ -47,5 +47,6 @@ def test_convention_produces_deterministic_constraint_names() -> None:
 
 
 def test_mapped_tables_are_exactly_the_migrated_ones() -> None:
-    """Every mapped table has a migration (0002: index_builds); `alembic check` proves it."""
-    assert set(Base.metadata.tables) == {"index_builds"}
+    """Every mapped table has a migration (0002: index_builds, 0005: conversations and
+    messages); `alembic check` proves it."""
+    assert set(Base.metadata.tables) == {"index_builds", "conversations", "messages"}
