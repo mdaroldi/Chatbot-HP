@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 import app.main
 from app.api.dependencies import get_readiness_probes
@@ -31,6 +31,12 @@ class Question(BaseModel):
     count: int
 
 
+class StrictQuestion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+
+
 class TeapotError(AppError):
     status_code = 418
     code = "teapot"
@@ -40,6 +46,10 @@ def add_test_routes(application: FastAPI) -> None:
     @application.post("/test/validate")
     async def validate(question: Question) -> dict[str, int]:
         return {"count": question.count}
+
+    @application.post("/test/strict")
+    async def strict(question: StrictQuestion) -> dict[str, str]:
+        return {"text": question.text}
 
     @application.get("/test/app-error")
     async def app_error() -> None:
@@ -127,6 +137,17 @@ async def test_validation_error_never_echoes_input_or_ctx(client: httpx.AsyncCli
     assert '"input"' not in response.text
     assert '"ctx"' not in response.text
     assert '"url"' not in response.text
+
+
+async def test_an_unknown_field_name_is_never_echoed(client: httpx.AsyncClient) -> None:
+    """The key of a forbidden extra field is client input too, so loc stops at its parent."""
+    response = await client.post("/test/strict", json={"text": "ok", PERSONAL_TEXT: 1})
+
+    details = assert_error(response, 422, "validation_error", "Request validation failed.")
+    assert details == [
+        {"loc": ["body"], "msg": "Extra inputs are not permitted", "type": "extra_forbidden"}
+    ]
+    assert PERSONAL_TEXT not in response.text
 
 
 async def test_malformed_json_body_uses_validation_error_shape(

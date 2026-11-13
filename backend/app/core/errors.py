@@ -13,6 +13,7 @@ from app.core.request_context import get_request_id
 
 # Validation details expose only where and why; `input` and `ctx` can carry user text.
 _SAFE_VALIDATION_KEYS = ("loc", "msg", "type")
+_EXTRA_FORBIDDEN = "extra_forbidden"
 
 ErrorDetail = Mapping[str, object]
 
@@ -86,11 +87,18 @@ async def _handle_http_exception(_: Request, raised: Exception) -> JSONResponse:
     )
 
 
+def _safe_detail(error: Mapping[str, object]) -> ErrorDetail:
+    detail = {key: error[key] for key in _SAFE_VALIDATION_KEYS if key in error}
+    loc = detail.get("loc")
+    # The last element of a forbidden extra field's loc is the client's own key.
+    if error.get("type") == _EXTRA_FORBIDDEN and isinstance(loc, tuple | list) and loc:
+        detail["loc"] = list(loc[:-1])
+    return detail
+
+
 async def _handle_validation_error(_: Request, raised: Exception) -> JSONResponse:
     exc = cast(RequestValidationError, raised)
-    details: list[ErrorDetail] = [
-        {key: error[key] for key in _SAFE_VALIDATION_KEYS if key in error} for error in exc.errors()
-    ]
+    details = [_safe_detail(error) for error in exc.errors()]
     return _json_error(
         HTTPStatus.UNPROCESSABLE_ENTITY, "validation_error", "Request validation failed.", details
     )
