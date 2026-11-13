@@ -14,6 +14,12 @@
 seed = 20261113
 resamples = 2000
 
+# Selection rule (ADR 0009): Recall@5, then MRR, then p95 latency, then matrix order.
+# A p95 gap up to this margin is a tie. 1302 ms is the spread of the reference's p95
+# (hybrid-rerank) over its three Phase 2 runs: 2275, 3577 and 2392 ms.
+[selection]
+p95_tie_margin_ms = 1302
+
 [[configs]]
 name = "dense"
 mode = "dense"

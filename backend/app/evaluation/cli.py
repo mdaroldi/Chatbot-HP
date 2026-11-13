@@ -40,7 +40,7 @@ from app.core.settings import Settings, get_settings
 from app.domain.evaluation import GoldenQuestion, GoldenSet, GoldenSetError, IndexedChunk, Split
 from app.domain.ingestion import FASTEMBED_BM25, IndexBuild, ManifestStore, ModelFiles
 from app.evaluation.golden import load_golden
-from app.evaluation.matrix import MatrixError, NamedConfig, load_matrix
+from app.evaluation.matrix import Matrix, MatrixError, NamedConfig, load_matrix
 from app.evaluation.report import RunHeader, RunOutcome, write_run
 from app.evaluation.runner import (
     WARM_UP_RETRIEVALS,
@@ -283,13 +283,13 @@ def _git_sha(environ: Mapping[str, str]) -> str:
 
 def _configs(
     path: Path, settings: Settings, names: Sequence[str]
-) -> tuple[int, int, tuple[NamedConfig, ...]]:
+) -> tuple[Matrix, tuple[NamedConfig, ...]]:
     matrix = load_matrix(path, settings)
     try:
         selected = matrix.select(names)
     except MatrixError as exc:
         raise _RefusedError("unknown config name; see retrieval-matrix.toml") from exc
-    return matrix.seed, matrix.resamples, selected
+    return matrix, selected
 
 
 async def _run_all(
@@ -333,7 +333,8 @@ async def _run(
     except HeldoutRefusedError as exc:
         raise _RefusedError("held-out split refused; pass --allow-heldout") from exc
     git_sha = _git_sha(ctx.environ)
-    seed, resamples, configs = _configs(args.eval_dir / MATRIX_FILE, settings, args.config)
+    matrix, configs = _configs(args.eval_dir / MATRIX_FILE, settings, args.config)
+    seed, resamples = matrix.seed, matrix.resamples
     created_at = ctx.clock()
     async with ctx.runtime(settings, args.collection) as runtime:
         report = await _preflight(golden, runtime)
@@ -362,7 +363,7 @@ async def _run(
     outcome = RunOutcome(
         configs=configs,
         summaries=summaries,
-        selection=select_best(summaries),
+        selection=select_best(summaries, p95_tie_margin_ms=matrix.p95_tie_margin_ms),
         preflight=report,
         runs=tuple(run for c in configs for run in runs[c.name]),
     )

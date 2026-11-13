@@ -38,6 +38,7 @@ class Matrix:
     seed: int
     resamples: int
     configs: tuple[NamedConfig, ...]
+    p95_tie_margin_ms: float  # p95 gaps up to this are a tie in the selection rule
 
     def select(self, names: Sequence[str]) -> tuple[NamedConfig, ...]:
         """The named configurations in matrix order; no names means all of them."""
@@ -57,6 +58,10 @@ class _Bootstrap(_Strict):
     resamples: int = Field(ge=1)
 
 
+class _Selection(_Strict):
+    p95_tie_margin_ms: float = Field(ge=0)
+
+
 class _Entry(_Strict):
     name: str = Field(pattern=_NAME)
     # TOML gives a string; strict mode would accept only an enum member.
@@ -70,6 +75,7 @@ class _Entry(_Strict):
 
 class _File(_Strict):
     bootstrap: _Bootstrap
+    selection: _Selection
     configs: list[_Entry] = Field(min_length=1)
 
 
@@ -106,6 +112,7 @@ def parse_matrix(text: str, settings: Settings) -> Matrix:
     return Matrix(
         seed=parsed.bootstrap.seed,
         resamples=parsed.bootstrap.resamples,
+        p95_tie_margin_ms=parsed.selection.p95_tie_margin_ms,
         configs=tuple(_named(entry, base, settings.reranker_model) for entry in parsed.configs),
     )
 

@@ -127,7 +127,7 @@ async def outcome() -> RunOutcome:
     return RunOutcome(
         configs=CONFIGS,
         summaries=summaries,
-        selection=select_best(summaries),
+        selection=select_best(summaries, p95_tie_margin_ms=250),
         preflight=preflight(GOLDEN, [chunk("c1", CHUNK_TEXT)]),
         runs=tuple(r for c in CONFIGS for r in by_config[c.name]),
     )
@@ -175,7 +175,11 @@ async def test_the_summary_records_golden_index_git_and_every_resolved_config() 
     assert configs[1]["calibration"] is None
     assert configs[1]["latency_ms"]["rerank"] is None
     # Equal on every criterion: the first in matrix order wins.
-    assert record["selection"] == {"best": "hybrid-rerank", "tied": ["hybrid-rerank", "sparse"]}
+    assert record["selection"] == {
+        "best": "hybrid-rerank",
+        "tied": ["hybrid-rerank", "sparse"],
+        "p95_tie_margin_ms": 250,
+    }
     assert record["preflight"] == {"chunks": 1, "anchors": 1, "problems": []}
     assert "CANARY" not in json.dumps(record)
 
@@ -192,6 +196,7 @@ async def test_the_markdown_summary_shows_the_header_and_each_config() -> None:
         "sparse",
         "| factual |",
         "Selected: `hybrid-rerank`",
+        "p95 within 250 ms counts as a tie",
         "rev-rerank",
         "BM25 avg_len 107.25 (auto)",
         "Warm-up: each reranker on load with 20 pairs at its 512-token limit, then 1 "

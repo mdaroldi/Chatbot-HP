@@ -18,6 +18,9 @@ VALID = """
 seed = 11
 resamples = 2000
 
+[selection]
+p95_tie_margin_ms = 1302.5
+
 [[configs]]
 name = "dense"
 mode = "dense"
@@ -43,6 +46,7 @@ def test_entries_override_the_settings_and_are_scored_over_all_candidates(
     matrix = parse_matrix(VALID, settings)
 
     assert (matrix.seed, matrix.resamples) == (11, 2000)
+    assert matrix.p95_tie_margin_ms == 1302.5
     dense, tuned = matrix.configs
     assert dense.name == "dense"
     assert dense.config.mode is SearchMode.DENSE
@@ -60,6 +64,9 @@ def test_entries_override_the_settings_and_are_scored_over_all_candidates(
     ("text", "fragment"),
     [
         ("[bootstrap]\nseed = 1\nresamples = 10\n", "configs"),
+        (VALID.replace("[selection]\np95_tie_margin_ms = 1302.5\n", ""), "selection"),
+        (VALID.replace("= 1302.5", "= -1"), r"selection\.p95_tie_margin_ms"),
+        (VALID.replace("= 1302.5", '= "1302"'), r"selection\.p95_tie_margin_ms"),
         ('[[configs]]\nname = "a"\n', "bootstrap"),
         (VALID.replace("rrf_k = 2", "rrf_k = 2\ntop_k = 3"), r"configs\.1\.top_k"),
         (VALID.replace("rerank = false", 'rerank = "no"'), "rerank"),
@@ -110,6 +117,8 @@ def test_the_committed_matrix_has_the_approved_bootstrap_and_the_four_way_baseli
     matrix = load_matrix(REPO_MATRIX, settings)
 
     assert matrix.resamples == 2000
+    # The spread of the reference's p95 over its three Phase 2 runs (ADR 0009).
+    assert matrix.p95_tie_margin_ms == 1302
     names = [c.name for c in matrix.configs]
     assert tuple(names[:4]) == BASELINE
     by_name = {c.name: c.config for c in matrix.configs}

@@ -191,6 +191,7 @@ class ConfigSummary:
 class Selection:
     best: str
     tied: tuple[str, ...]
+    p95_tie_margin_ms: float
 
 
 # ---------------------------------------------------------------- gates
@@ -350,9 +351,17 @@ def _overlaps(a: MetricSummary, b: MetricSummary) -> bool:
     return a.low <= b.high and b.low <= a.high
 
 
-def select_best(summaries: Sequence[ConfigSummary]) -> Selection:
+def select_best(summaries: Sequence[ConfigSummary], *, p95_tie_margin_ms: float) -> Selection:
+    """Recall@5 first, then MRR, then p95 latency, then matrix order.
+
+    A p95 gap within the margin is a tie: run-to-run noise on one machine (the
+    reference moved by about 1.3 s between identical runs in Phase 2) must not change
+    a default. The earliest config within the margin of the fastest wins (ADR 0009).
+    """
     if not summaries:
         raise ValueError("selection needs at least one config")
+    if p95_tie_margin_ms < 0:
+        raise ValueError("the p95 tie margin cannot be negative")
     leader = max(summaries, key=lambda s: _or_worst(s.metrics[Metric.RECALL_AT_5].mean))
     lead = leader.metrics[Metric.RECALL_AT_5]
     tied = [s for s in summaries if s is leader or _overlaps(s.metrics[Metric.RECALL_AT_5], lead)]
@@ -361,5 +370,8 @@ def select_best(summaries: Sequence[ConfigSummary]) -> Selection:
         total = summary.latency.get("total")
         return total.p95 if total is not None else math.inf
 
-    best = min(tied, key=lambda s: (-_or_worst(s.metrics[Metric.MRR].mean), p95(s)))
-    return Selection(best.name, tuple(s.name for s in tied))
+    top_mrr = max(_or_worst(s.metrics[Metric.MRR].mean) for s in tied)
+    finalists = [s for s in tied if _or_worst(s.metrics[Metric.MRR].mean) == top_mrr]
+    fastest = min(p95(s) for s in finalists)
+    best = next(s for s in finalists if p95(s) <= fastest + p95_tie_margin_ms)
+    return Selection(best.name, tuple(s.name for s in tied), p95_tie_margin_ms)

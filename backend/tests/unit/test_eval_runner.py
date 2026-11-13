@@ -1,5 +1,7 @@
 """The benchmark runner: held-out guard, preflight, runs, summaries, calibration, selection."""
 
+import dataclasses
+
 import pytest
 
 from app.domain.evaluation import Category, IndexedChunk, Metric, OosKind, Split
@@ -318,7 +320,8 @@ def summary(name: str, recall: tuple[float, float, float], mrr: float, p95: floa
 
 def test_the_highest_recall_wins_when_no_interval_overlaps_it() -> None:
     picked = select_best(
-        [summary("a", (0.6, 0.5, 0.7), 0.9, 10), summary("b", (0.9, 0.8, 1.0), 0.1, 999)]
+        [summary("a", (0.6, 0.5, 0.7), 0.9, 10), summary("b", (0.9, 0.8, 1.0), 0.1, 999)],
+        p95_tie_margin_ms=0,
     )
 
     assert (picked.best, picked.tied) == ("b", ("b",))
@@ -330,18 +333,75 @@ def test_overlapping_intervals_are_tied_and_go_to_the_higher_mrr() -> None:
             summary("a", (0.80, 0.70, 0.90), 0.5, 10),
             summary("b", (0.85, 0.75, 0.95), 0.4, 10),
             summary("c", (0.40, 0.30, 0.50), 0.99, 1),
-        ]
+        ],
+        p95_tie_margin_ms=0,
     )
 
     assert (picked.best, picked.tied) == ("a", ("a", "b"))
 
 
-def test_equal_mrr_goes_to_the_lower_p95_latency() -> None:
+def test_equal_mrr_goes_to_the_lower_p95_latency_beyond_the_margin() -> None:
     picked = select_best(
-        [summary("slow", (0.8, 0.7, 0.9), 0.5, 2000), summary("fast", (0.8, 0.7, 0.9), 0.5, 30)]
+        [summary("slow", (0.8, 0.7, 0.9), 0.5, 2000), summary("fast", (0.8, 0.7, 0.9), 0.5, 30)],
+        p95_tie_margin_ms=100,
     )
 
-    assert picked.best == "fast"
+    assert (picked.best, picked.p95_tie_margin_ms) == ("fast", 100)
+
+
+def test_a_p95_gap_within_the_margin_is_a_tie_and_goes_to_matrix_order() -> None:
+    # The Phase 2 case: the reference 4 ms slower than an ablation with equal scores.
+    picked = select_best(
+        [summary("ref", (0.8, 0.7, 0.9), 0.5, 2392), summary("prefix", (0.8, 0.7, 0.9), 0.5, 2388)],
+        p95_tie_margin_ms=1302,
+    )
+
+    assert picked.best == "ref"
+
+
+def test_a_gap_equal_to_the_margin_is_still_a_tie() -> None:
+    picked = select_best(
+        [summary("a", (0.8, 0.7, 0.9), 0.5, 1500), summary("b", (0.8, 0.7, 0.9), 0.5, 1000)],
+        p95_tie_margin_ms=500,
+    )
+
+    assert picked.best == "a"
+
+
+def test_the_earliest_config_within_the_margin_of_the_fastest_wins() -> None:
+    picked = select_best(
+        [
+            summary("a", (0.8, 0.7, 0.9), 0.5, 5000),
+            summary("b", (0.8, 0.7, 0.9), 0.5, 3000),
+            summary("c", (0.8, 0.7, 0.9), 0.5, 2000),
+        ],
+        p95_tie_margin_ms=1500,
+    )
+
+    assert picked.best == "b"
+
+
+def test_the_margin_never_outweighs_a_higher_mrr() -> None:
+    picked = select_best(
+        [summary("a", (0.8, 0.7, 0.9), 0.5, 10), summary("b", (0.8, 0.7, 0.9), 0.6, 900)],
+        p95_tie_margin_ms=10_000,
+    )
+
+    assert picked.best == "b"
+
+
+def test_configs_without_latency_tie_on_p95() -> None:
+    def no_latency(name: str) -> ConfigSummary:
+        return dataclasses.replace(summary(name, (0.8, 0.7, 0.9), 0.5, 1), latency={"total": None})
+
+    picked = select_best([no_latency("a"), no_latency("b")], p95_tie_margin_ms=0)
+
+    assert picked.best == "a"
+
+
+def test_a_negative_margin_is_refused() -> None:
+    with pytest.raises(ValueError, match="margin"):
+        select_best([summary("a", (0.8, 0.7, 0.9), 0.5, 10)], p95_tie_margin_ms=-1)
 
 
 def test_a_config_without_scored_questions_never_wins() -> None:
@@ -356,11 +416,11 @@ def test_a_config_without_scored_questions_never_wins() -> None:
         calibration=None,
     )
 
-    picked = select_best([empty, summary("a", (0.1, 0.0, 0.2), 0.1, 10)])
+    picked = select_best([empty, summary("a", (0.1, 0.0, 0.2), 0.1, 10)], p95_tie_margin_ms=0)
 
     assert (picked.best, picked.tied) == ("a", ("a",))
 
 
 def test_selection_needs_at_least_one_config() -> None:
     with pytest.raises(ValueError, match="at least one"):
-        select_best([])
+        select_best([], p95_tie_margin_ms=0)

@@ -157,7 +157,11 @@ def summary_record(header: RunHeader, outcome: RunOutcome) -> Record:
             _config(named, summary)
             for named, summary in zip(outcome.configs, outcome.summaries, strict=True)
         ],
-        "selection": {"best": outcome.selection.best, "tied": list(outcome.selection.tied)},
+        "selection": {
+            "best": outcome.selection.best,
+            "tied": list(outcome.selection.tied),
+            "p95_tie_margin_ms": outcome.selection.p95_tie_margin_ms,
+        },
         "preflight": {
             "chunks": report.chunks,
             "anchors": len(report.resolutions),
@@ -267,7 +271,8 @@ def render_markdown(header: RunHeader, outcome: RunOutcome) -> str:
         "## Selection",
         "",
         f"Selected: `{outcome.selection.best}` (tied on Recall@5: "
-        f"{', '.join(f'`{name}`' for name in outcome.selection.tied)})",
+        f"{', '.join(f'`{name}`' for name in outcome.selection.tied)}; "
+        f"p95 within {outcome.selection.p95_tie_margin_ms:g} ms counts as a tie)",
         "",
         "## Relevance threshold",
         "",

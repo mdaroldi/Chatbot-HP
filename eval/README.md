@@ -7,7 +7,7 @@ follow in Phase 5.
 | Path | What it is |
 |---|---|
 | `golden/retrieval-v1.toml` | The retrieval golden set: questions, splits and anchors (short facts, never HP text) |
-| `retrieval-matrix.toml` | Named retrieval configurations, the bootstrap seed and resamples |
+| `retrieval-matrix.toml` | Named retrieval configurations, the bootstrap seed and resamples, and the selection rule's p95 tie margin |
 | `reports/runs/<utc>-<sha>/` | Raw output of one run (git-ignored): `results.jsonl`, `summary.json`, `summary.md` |
 | `reports/retrieval-summary.md` | The committed summary of the Phase 2 benchmark |
 

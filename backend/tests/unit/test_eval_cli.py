@@ -50,6 +50,9 @@ MATRIX = """
 seed = 5
 resamples = 20
 
+[selection]
+p95_tie_margin_ms = 7
+
 [[configs]]
 name = "sparse"
 mode = "sparse"
@@ -344,6 +347,7 @@ def test_a_run_reports_golden_index_git_hardware_and_every_config(
     assert summary["index"]["collection"] == INDEX.collection
     assert summary["git_sha"] == SHA
     assert summary["bootstrap"] == {"seed": 5, "resamples": 20}
+    assert summary["selection"]["p95_tie_margin_ms"] == 7  # from the matrix
     assert summary["warm_up_retrievals"] == 1
     assert summary["hardware"]["cpus"] == 8.0
     assert summary["hardware"]["cpu_source"] == "cgroup"
