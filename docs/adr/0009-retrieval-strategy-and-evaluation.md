@@ -1,8 +1,8 @@
 # ADR 0009: Retrieval strategy and evaluation method
 
-- **Status:** in progress (Phase 2). Commits 3 to 8 set the strategy below; the frozen
-  golden set, the baseline, the ablations and the chosen defaults are added at commits
-  11 to 14.
+- **Status:** in progress (Phase 2). Commits 3 to 8 set the strategy below; the golden
+  set is frozen at commit 11b; the baseline, the ablations and the chosen defaults
+  follow at commit 12.
 - **Date:** 2026-11-13
 
 ## Context
@@ -70,10 +70,16 @@ set frozen before any tuning.
 - **Failures:** every Qdrant failure (down, timeout, missing alias, unexpected payload)
   is `RetrievalUnavailableError`, logged with the stage and the exception type only.
 
-## Evaluation method (to be completed at commit 11b)
+## Evaluation method
 
-Golden set file `eval/golden/retrieval-v1.toml`; version, SHA-256, metrics,
-selection rule, hypotheses H1 to H3 and their results follow with the freeze.
+**Frozen golden set (commit 11b):** `eval/golden/retrieval-v1.toml`, version **1.0.1**,
+SHA-256 `91e754f19cbafb80ea0e1a120f386e5ce654c97daf1e5b5f0d8102f549e70416`. A unit test
+pins the hash and the version; changing the file needs a new version, a new record
+here and the pin moved with it. 70 questions: 56 dev (48 in scope, 8 out of scope: 4
+unrelated, 4 near-domain) and 14 held-out. Preflight on build `20261113t134027z` (287
+chunks): 74 anchors, match counts {1: 58, 2: 13, 3: 3}, 16 anchors with two or more
+matches, none unresolved or over five. Metrics, selection rule and the results of H1
+to H3 follow with the baseline (commit 12).
 
 **Before the freeze (record):**
 
@@ -85,6 +91,13 @@ selection rule, hypotheses H1 to H3 and their results follow with the freeze.
 - **One pre-freeze smoke run.** In commit 10, `hybrid-rerank` ran once on the 56 dev
   questions to prove the Docker path of the benchmark. Its metrics were not read and
   its output was deleted. No other configuration ran on dev before the freeze.
+- **v1.0.0 replaced by v1.0.1.** After the multi-match review, the planner judged 15
+  of the 18 multi-match anchors legitimate and tightened three false positives
+  (omen-prereq-005 anchor 0, both-ambiguous-003 anchor 0, both-ambiguous-005 anchor 1;
+  match counts 2 to 1, 2 to 1 and 3 to 2). v1.0.0 (`fa0526d`, SHA-256
+  `d4caaefff162f689055ccfb1ffc14d7bb5ec29885110235b890104551c4fd588`) was replaced
+  unchanged by the delivered v1.0.1 at commit `69cb00b`. No metric was read for either
+  version.
 - **Multi-match review (commit 11a).** The preflight also lists every anchor that
   matches two or more chunks, with its question id, anchor index, match count and the
   section path of each matching chunk (no chunk text), so false positive coverage can
