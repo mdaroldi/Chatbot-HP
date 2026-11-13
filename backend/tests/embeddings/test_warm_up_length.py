@@ -16,8 +16,8 @@ from tests.model_data import fetch_verified
 
 pytestmark = pytest.mark.model
 
-TOKEN_LIMIT = 512  # bge-small and both rerankers; fastembed truncates there (ADR 0008)
-RERANKERS = ["Xenova/ms-marco-MiniLM-L-6-v2", "jinaai/jina-reranker-v1-turbo-en"]
+TOKEN_LIMIT = 512  # bge-small and the reranker; fastembed truncates there (ADR 0008)
+RERANKERS = ["Xenova/ms-marco-MiniLM-L-6-v2"]
 
 
 def test_every_pinned_reranker_is_covered() -> None:

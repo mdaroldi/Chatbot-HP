@@ -41,12 +41,6 @@ mode = "hybrid"
 rerank = true
 
 [[configs]]
-name = "hybrid-rerank-jina-turbo"
-mode = "hybrid"
-rerank = true
-reranker = "jinaai/jina-reranker-v1-turbo-en"
-
-[[configs]]
 name = "hybrid-rerank-product-filter"
 mode = "hybrid"
 rerank = true

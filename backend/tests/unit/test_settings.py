@@ -471,7 +471,7 @@ def test_retrieval_settings_are_read_from_environment(monkeypatch: pytest.Monkey
         "RETRIEVAL_PRODUCT_FILTER_ENABLED": "true",
         "RETRIEVAL_RELEVANCE_THRESHOLD": "-1.5",
         "RETRIEVAL_DENSE_QUERY_PREFIX": "Represent this sentence: ",
-        "RERANKER_MODEL": "jinaai/jina-reranker-v1-turbo-en",
+        "RERANKER_MODEL": "BAAI/bge-reranker-base",
         "INFERENCE_WORKERS": "4",
         "INFERENCE_ONNX_THREADS": "1",
         "QDRANT_SEARCH_TIMEOUT_SECONDS": "0.5",
@@ -494,7 +494,7 @@ def test_retrieval_settings_are_read_from_environment(monkeypatch: pytest.Monkey
     assert settings.retrieval_product_filter_enabled is True
     assert settings.retrieval_relevance_threshold == -1.5
     assert settings.retrieval_dense_query_prefix == "Represent this sentence: "
-    assert settings.reranker_model == "jinaai/jina-reranker-v1-turbo-en"
+    assert settings.reranker_model == "BAAI/bge-reranker-base"
     assert (settings.inference_workers, settings.inference_onnx_threads) == (4, 1)
     assert settings.qdrant_search_timeout_seconds == 0.5
     assert settings.query_max_chars == 500

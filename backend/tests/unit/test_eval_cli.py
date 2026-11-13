@@ -42,7 +42,6 @@ REVISIONS = {
     "BAAI/bge-small-en-v1.5": "rev-d",
     "Qdrant/bm25": "rev-s",
     "Xenova/ms-marco-MiniLM-L-6-v2": "rev-r",
-    "jinaai/jina-reranker-v1-turbo-en": "rev-j",
 }
 
 MATRIX = """

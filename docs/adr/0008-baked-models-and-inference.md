@@ -1,6 +1,6 @@
 # ADR 0008: Models baked into the image; inference threading
 
-- **Status:** accepted (Phase 2, commits 6 and 7)
+- **Status:** accepted (Phase 2, commits 6 and 7; the losing reranker removed at commit 13)
 - **Date:** 2026-11-13
 
 ## Context
@@ -38,9 +38,17 @@ falls back to the OS temp directory when no cache directory is given.
    file and leaves the other pins untouched, so adding a model cannot move another
    model's revision. The two rerankers were added this way, and the dense and BM25 pins
    did not change.
-5. **Both reranker candidates stay pinned** until the reranker ablation (ADR 0009)
-   picks one. A separate commit then removes the losing model from `models.toml` and
-   from the image, and this ADR records the size change.
+5. **Only the ablation's reranker stays pinned (commit 13).** Both candidates were
+   pinned until the reranker ablation (ADR 0009). `jinaai/jina-reranker-v1-turbo-en`
+   had the higher Recall@5 point estimate (0.948 [0.899, 0.990] against 0.941
+   [0.889, 0.986], run `20261113t170151z`), but the intervals overlap, so under the
+   rule fixed before the results it is a tie, and the tie goes to MRR, where MiniLM-L6
+   wins (0.898 against 0.854). jina-turbo lost by that rule. Latency (p50 / p95 2703 /
+   3338 ms against 2039 / 2644 ms) and image size are secondary reasons. It was removed
+   from `models.toml` and the benchmark matrix, so the image no longer bakes it; the
+   size change is in the image table below. The on-demand loading of another pinned
+   reranker by name stays: the benchmark's `reranker` override and the warm-up use it,
+   and a later candidate can be added through a pin.
 
 6. **Inference threading (commit 7).** The API builds one instance per model (dense,
    BM25 and the configured reranker) in a background task started by the lifespan:
@@ -74,7 +82,7 @@ revisions.
 | Model (setting value) | Files come from | Revision | License |
 |---|---|---|---|
 | `Xenova/ms-marco-MiniLM-L-6-v2` | same repository (ONNX export) | `a09144355adeed5f58c8ed011d209bf8ee5a1fec` | **The export's own card declares no license.** Its card names `base_model: cross-encoder/ms-marco-MiniLM-L-6-v2` and describes itself as that model with ONNX weights; that base model's card declares Apache-2.0 (checked 2026-11-13, base revision `233902d25c440f23af6f7d6e94d2946bac0bee0a`). The Apache-2.0 call rests on the base model's card. fastembed's metadata also lists Apache-2.0. |
-| `jinaai/jina-reranker-v1-turbo-en` | same repository | `b8c14f4e723d9e0aab4732a7b7b93741eeeb77c2` | Apache-2.0, as declared on its card |
+| `jinaai/jina-reranker-v1-turbo-en` (removed at commit 13) | same repository | `b8c14f4e723d9e0aab4732a7b7b93741eeeb77c2` | Apache-2.0, as declared on its card |
 
 `jinaai/jina-reranker-v2-base-multilingual` is excluded, because its license is
 CC-BY-NC-4.0. `BAAI/bge-reranker-base` (MIT, 1.04 GB) was not measured: on this CPU it
@@ -89,6 +97,14 @@ would cost about ten times MiniLM-L6.
 | Phase 1 image | about 467 MB | 155 MB |
 | With the store (4 models) | 765 MB | 369 MB |
 | The store alone | 298 MB (dense 65, BM25 0.1, MiniLM-L6 88, jina-turbo 147) | +214 MB |
+| Without jina-turbo (commit 13) | 618 MB (store 152 MB) | 300 MB |
+
+**Commit 13 measurement:** the unpacked size is `du -sxk /` in a container of the
+image, in MiB (782,928 KiB before the removal, 633,164 KiB after: minus 149,764 KiB,
+exactly jina-turbo's store directory). The compressed size is `docker save | gzip -c`
+in bytes (368,454,683 before, 299,786,287 after: minus 68.7 MB). Docker Desktop's size
+column went from 1.19 GB to 963 MB. The rows above use the same units: 765 MB is MiB
+from `du` (782,928 KiB), 369 MB is the compressed byte count.
 
 ONNX weights barely compress. Correction to ADR 0004: its "659 MB unpacked" is Docker
 Desktop's image size column, which with the containerd store adds compressed and
@@ -159,8 +175,9 @@ at 1,000 for now; **Phase 3 takes this as an input for the chat message length l
 
 - No container downloads a model at runtime; a stack with no route to the hub still
   starts, provided the corpus is cached.
-- The image grows by 298 MB unpacked (214 MB compressed) while both rerankers are in
-  it; about 147 MB unpacked goes away if MiniLM-L6 wins.
+- The image grew by 298 MB unpacked (214 MB compressed) while both rerankers were in
+  it. With MiniLM-L6 alone (commit 13), the store is 152 MB unpacked and the image
+  618 MB unpacked, 300 MB compressed.
 - The image build needs the hub; the PDFs are still downloaded at runtime by
   `ingest` (ADR 0007).
 - **CI cost, accepted:** the CI `docker` job builds with a plain `docker build` and

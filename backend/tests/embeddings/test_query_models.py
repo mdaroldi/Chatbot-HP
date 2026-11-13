@@ -18,7 +18,7 @@ from tests.model_data import fetch_verified
 
 pytestmark = pytest.mark.model
 
-RERANKERS = ["Xenova/ms-marco-MiniLM-L-6-v2", "jinaai/jina-reranker-v1-turbo-en"]
+RERANKERS = ["Xenova/ms-marco-MiniLM-L-6-v2"]
 QUESTION = "How do I replace the ink cartridge?"
 RELEVANT = "Replace the cartridges: open the cartridge access door and remove the old cartridge."
 UNRELATED = "The laptop fan speed is controlled by the BIOS thermal policy."
@@ -94,6 +94,7 @@ async def test_the_api_loads_its_models_from_the_verified_store_without_the_hub(
     await models.load()
 
     assert models.state is ModelsState.READY, models.error_type
-    assert (await models.reranker()).model == "Xenova/ms-marco-MiniLM-L-6-v2"
-    second = await models.reranker("jinaai/jina-reranker-v1-turbo-en")
-    assert second.model == "jinaai/jina-reranker-v1-turbo-en"
+    configured = await models.reranker()
+    assert configured.model == "Xenova/ms-marco-MiniLM-L-6-v2"
+    # By name, through the on-demand path the benchmark uses for a reranker override.
+    assert await models.reranker(model_settings.reranker_model) is configured

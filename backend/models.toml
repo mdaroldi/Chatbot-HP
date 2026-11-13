@@ -51,15 +51,3 @@ revision = "a09144355adeed5f58c8ed011d209bf8ee5a1fec"
 "special_tokens_map.json" = "b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3"
 "tokenizer.json" = "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66"
 "tokenizer_config.json" = "0b29c7bfc889e53b36d9dd3e686dd4300f6525110eaa98c76a5dafceb2029f53"
-
-[[models]]
-name = "jinaai/jina-reranker-v1-turbo-en"
-source = "jinaai/jina-reranker-v1-turbo-en"
-revision = "b8c14f4e723d9e0aab4732a7b7b93741eeeb77c2"
-
-[models.files]
-"config.json" = "e050ff6a15ae9295e84882fa0e98051bd8754856cd5201395ebf00ce9f2d609b"
-"onnx/model.onnx" = "c1296c66c119de645fa9cdee536d8637740efe85224cfa270281e50f213aa565"
-"special_tokens_map.json" = "06e405a36dfe4b9604f484f6a1e619af1a7f7d09e34a8555eb0b77b66318067f"
-"tokenizer.json" = "0046da43cc8c424b317f56b092b0512aaaa65c4f925d2f16af9d9eeb4d0ef902"
-"tokenizer_config.json" = "d291c6652d96d56ffdbcf1ea19d9bae5ed79003f7648c627e725a619227ce8fa"
