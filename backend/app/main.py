@@ -1,7 +1,7 @@
 """Application factory. Run with: uvicorn app.main:create_app --factory --no-server-header"""
 
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -18,13 +18,18 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.core.settings import Environment, Settings, get_settings
+from app.domain.chat_store import ChatStore
 from app.domain.retrieval import ProductName
 from app.infra.chat_store import SqlChatStore
 from app.infra.lifecycle import Infrastructure, open_infrastructure
-from app.infra.qdrant_search import QdrantSearchStore
+from app.infra.llm_stub import StubProvider
+from app.infra.manifest_repository import SqlManifestStore
+from app.infra.qdrant_search import QdrantIndexIdentity, QdrantSearchStore
 from app.infra.query_models import QueryModels
 from app.ingestion.corpus import load_corpus
-from app.services.retrieval import RetrievalService, product_names
+from app.services.chat import ChatService, chat_config_from_settings
+from app.services.retrieval import RetrievalService, config_from_settings, product_names
+from app.services.rewrite import QueryRewriter, rewrite_config_from_settings
 
 ModelsFactory = Callable[[Settings, Executor], QueryModels]
 
@@ -32,9 +37,16 @@ _logger = logging.getLogger(__name__)
 
 _CORS_METHODS = ["GET", "POST", "DELETE"]
 _CORS_HEADERS = ["Content-Type", "X-Request-ID", "X-Client-ID"]
-# A pending answer older than this is left over from a crash. It must outlast any live
-# request: the LLM total timeout (120 s) plus rewrite, retrieval and a margin.
-PENDING_ANSWER_ABANDON_AFTER = timedelta(minutes=5)
+# Covers retrieval (search deadline, embedding, reranking) and the store writes.
+_ABANDON_MARGIN = timedelta(minutes=1)
+
+
+def pending_answer_abandon_after(settings: Settings) -> timedelta:
+    """How old a pending answer must be to count as left over from a crash: longer than
+    any live request can take, i.e. the rewrite and answer deadlines plus a margin.
+    """
+    deadlines = settings.llm_rewrite_timeout_seconds + settings.llm_total_timeout_seconds
+    return timedelta(seconds=deadlines) + _ABANDON_MARGIN
 
 
 @asynccontextmanager
@@ -48,8 +60,17 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.retrieval_service_factory = _retrieval_service_factory(
             infrastructure, app.state.settings, app.state.products
         )
-        app.state.chat_store = SqlChatStore(
-            infrastructure.session_factory, abandon_after=PENDING_ANSWER_ABANDON_AFTER
+        store = SqlChatStore(
+            infrastructure.session_factory,
+            abandon_after=pending_answer_abandon_after(app.state.settings),
+        )
+        app.state.chat_store = store
+        app.state.chat_service_factory = _chat_service_factory(
+            infrastructure,
+            app.state.settings,
+            store,
+            app.state.retrieval_service_factory,
+            app.state.titles,
         )
         yield
 
@@ -71,6 +92,45 @@ def _retrieval_service_factory(
         embedder = models.query_embedder()  # ModelsNotReadyError until they load
         reranker = await models.reranker()
         return RetrievalService(embedder, store, reranker, products=products)
+
+    return build
+
+
+def _chat_service_factory(
+    infrastructure: Infrastructure,
+    settings: Settings,
+    store: ChatStore,
+    retrieval_factory: Callable[[], Awaitable[RetrievalService]],
+    titles: Mapping[str, str],
+) -> Callable[[], Awaitable[ChatService]]:
+    """Build the service per request over the per-request retrieval service; the
+    provider, rewriter and index identity are shared (they hold no request state).
+    """
+    provider = StubProvider(
+        honour_directives=settings.app_env is not Environment.PRODUCTION,
+        token_delay_ms=settings.llm_stub_token_delay_ms,
+    )
+    rewriter = QueryRewriter(provider, rewrite_config_from_settings(settings))
+    index = QdrantIndexIdentity(
+        infrastructure.qdrant,
+        settings.qdrant_collection_alias,
+        SqlManifestStore(infrastructure.session_factory),
+        timeout_seconds=settings.qdrant_search_timeout_seconds,
+    )
+    retrieval_config = config_from_settings(settings)
+    chat_config = chat_config_from_settings(settings)
+
+    async def build() -> ChatService:
+        return ChatService(
+            store=store,
+            retrieval=await retrieval_factory(),
+            retrieval_config=retrieval_config,
+            rewriter=rewriter,
+            provider=provider,
+            index=index,
+            titles=titles,
+            config=chat_config,
+        )
 
     return build
 
@@ -106,6 +166,8 @@ def create_app(
     # The corpus allowlist names the searchable documents and the product rule's names.
     corpus = load_corpus()
     app.state.products = product_names(corpus)
+    # Excerpt and source titles, by document ID.
+    app.state.titles = {doc.doc_id: doc.title for doc in corpus}
     # In memory and per replica; built here, not in the lifespan, as it opens nothing.
     app.state.rate_limiters = RateLimiters.from_settings(settings)
     register_exception_handlers(app)

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from concurrent.futures import Executor, ThreadPoolExecutor
+from datetime import timedelta
 from typing import cast
 
 import httpx
@@ -10,14 +11,16 @@ import pytest
 from qdrant_client import AsyncQdrantClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.core.settings import Settings
+from app.core.settings import Environment, Settings
 from app.infra.chat_store import SqlChatStore
 from app.infra.inference import CpuAllowance, CpuSource
 from app.infra.lifecycle import open_infrastructure
+from app.infra.llm_stub import StubProvider
 from app.infra.probes import PostgresProbe, QdrantProbe
-from app.infra.qdrant_search import IndexProbe
+from app.infra.qdrant_search import IndexProbe, QdrantIndexIdentity
 from app.infra.query_models import ModelNames, ModelsProbe, ModelsState, QueryModels
-from app.main import create_app
+from app.main import create_app, pending_answer_abandon_after
+from app.services.chat import ChatService
 from tests.unit.conftest import SettingsFactory
 from tests.unit.model_fakes import BlockingSource, Builds, FakeSource
 
@@ -253,3 +256,46 @@ async def test_app_lifespan_provides_the_sql_chat_store(make_settings: SettingsF
         store = application.state.chat_store
         assert isinstance(store, SqlChatStore)
         assert store.sessions is application.state.infrastructure.session_factory
+
+
+def test_a_pending_answer_is_abandoned_only_after_the_longest_live_request(
+    make_settings: SettingsFactory,
+) -> None:
+    """Rewrite deadline plus the answer's total deadline plus a minute for retrieval."""
+    defaults = make_settings()
+    longer = make_settings(llm_rewrite_timeout_seconds=10, llm_total_timeout_seconds=300)
+
+    assert pending_answer_abandon_after(defaults) == timedelta(seconds=185)
+    assert pending_answer_abandon_after(longer) == timedelta(seconds=370)
+
+
+async def test_the_chat_store_abandons_pending_answers_after_the_derived_window(
+    make_settings: SettingsFactory,
+) -> None:
+    settings = make_settings(llm_total_timeout_seconds=200)
+    application = create_app(settings, query_models_factory=Factories().models_factory)
+
+    async with application.router.lifespan_context(application):
+        store = application.state.chat_store
+        assert store.abandon_after == pending_answer_abandon_after(settings)
+
+
+@pytest.mark.parametrize(
+    ("env", "honoured"), [(Environment.DEVELOPMENT, True), (Environment.PRODUCTION, False)]
+)
+async def test_app_lifespan_builds_the_chat_service_over_the_stub_and_the_live_index(
+    make_settings: SettingsFactory, env: Environment, honoured: bool
+) -> None:
+    factories = Factories()
+    settings = make_settings(app_env=env, llm_stub_token_delay_ms=7)
+    application = create_app(settings, query_models_factory=factories.models_factory)
+
+    async with application.router.lifespan_context(application):
+        await asyncio.wait_for(application.state.infrastructure.models_loaded, timeout=2)
+        service = await application.state.chat_service_factory()
+        assert isinstance(service, ChatService)
+        assert isinstance(service.index_identity, QdrantIndexIdentity)
+        provider = service.provider
+        assert isinstance(provider, StubProvider)
+        assert provider.honours_directives is honoured
+        assert provider.token_delay_ms == 7

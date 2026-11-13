@@ -111,11 +111,19 @@ class StubProvider:
         self, *, honour_directives: bool, token_delay_ms: float = 0, sleep: Sleep = asyncio.sleep
     ) -> None:
         self._honour = honour_directives
-        self._delay, self._sleep = token_delay_ms / 1000, sleep
+        self._delay_ms, self._sleep = token_delay_ms, sleep
 
     @property
     def name(self) -> str:
         return SERVED_MODEL
+
+    @property
+    def honours_directives(self) -> bool:
+        return self._honour
+
+    @property
+    def token_delay_ms(self) -> float:
+        return self._delay_ms
 
     def stream(self, request: GenerationRequest) -> AbstractAsyncContextManager[GenerationStream]:
         return self._open(request)
@@ -128,7 +136,7 @@ class StubProvider:
             pieces,
             input_tokens=_tokens(prompt_chars),
             fail_at=fail_at,
-            delay_seconds=self._delay,
+            delay_seconds=self._delay_ms / 1000,
             sleep=self._sleep,
         )
         try:

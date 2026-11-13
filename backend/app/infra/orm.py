@@ -148,6 +148,7 @@ class FlagsJson(TypedDict, total=False):
     late_refusal_marker: bool
     uncited: bool
     invalid_citations: int
+    rewrite_fallback: str | None
 
 
 class ConversationRow(Base):

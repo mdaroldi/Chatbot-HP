@@ -6,12 +6,16 @@ import pytest
 
 from app.domain.chat import (
     REFUSAL_MARKER,
+    REFUSAL_TEXT,
+    TITLE_MAX_CHARS,
     Conversation,
     Message,
     Outcome,
     RefusalReason,
     Role,
     Source,
+    UnknownDocumentError,
+    conversation_title,
 )
 from app.domain.ingestion import PageRange
 
@@ -143,3 +147,43 @@ def test_a_conversation_title_is_one_to_eighty_characters(title: str) -> None:
 def test_a_conversation_is_never_updated_before_it_was_created() -> None:
     with pytest.raises(ValueError, match="updated_at must not precede created_at"):
         Conversation("c-1", "Title", T0, T0 - timedelta(seconds=1))
+
+
+# --- Titles, the refusal text and fixed-message errors --------------------------------
+
+
+def test_a_short_first_message_is_the_title_with_whitespace_collapsed() -> None:
+    assert conversation_title("  How do I\n remove\tthe   cover?  ") == "How do I remove the cover?"
+
+
+def test_a_long_first_message_is_cut_at_a_word_boundary_with_an_ellipsis() -> None:
+    question = "Which screws hold the bottom cover of the laptop and how long is each of them"
+
+    title = conversation_title(question)
+
+    assert title == "Which screws hold the bottom cover of the laptop and how…"
+    assert len(title) <= 61 <= TITLE_MAX_CHARS
+
+
+def test_a_title_of_exactly_sixty_characters_is_kept_whole() -> None:
+    question = "x" * 55 + " abcd"
+
+    assert conversation_title(question) == question
+
+
+def test_one_long_word_is_cut_at_sixty_characters() -> None:
+    assert conversation_title("y" * 70) == "y" * 60 + "…"
+
+
+def test_the_refusal_text_is_plain_and_never_the_marker() -> None:
+    assert REFUSAL_TEXT
+    assert REFUSAL_MARKER not in REFUSAL_TEXT
+    assert "[S" not in REFUSAL_TEXT
+
+
+def test_an_unknown_document_error_has_a_fixed_code_and_message() -> None:
+    error = UnknownDocumentError()
+
+    assert error.code == "unknown_document"
+    assert str(error) == error.message
+    assert "document" in error.message

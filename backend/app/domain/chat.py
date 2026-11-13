@@ -12,14 +12,53 @@ from enum import StrEnum
 
 from app.domain.ingestion import PageRange
 from app.domain.retrieval import Relevance, StageTimings
+from app.domain.text import shorten
 
 # The system prompt tells the model to reply with exactly this when the excerpts do not
 # hold the answer; the stream detector hides it from the user (layer 2 refusal).
 REFUSAL_MARKER = "[[NOT_IN_DOCUMENTS]]"
 
+# What the user sees for every refusal, whichever layer refused.
+REFUSAL_TEXT = (
+    "I could not find the answer in the HP manuals I can search: the HP ENVY 6000 "
+    "All-in-One series User Guide and the OMEN 17.3 inch Gaming Laptop PC Maintenance "
+    "and Service Guide. Try rephrasing the question, or ask about one of these products."
+)
+
 TITLE_MAX_CHARS = 80
+# Titles come from the first message, cut short; no model call names a conversation.
+TITLE_CUT_CHARS = 60
 
 _SOURCE_TAG = re.compile(r"S[1-9][0-9]*")
+_FLAG_CODE = re.compile(r"[a-z][a-z_]*")
+
+
+def conversation_title(question: str) -> str:
+    """The first message on one line, at most 60 characters plus an ellipsis (the API
+    rejects blank messages). It is personal data like the message itself: never logged.
+    """
+    return shorten(question, TITLE_CUT_CHARS)
+
+
+class ChatError(Exception):
+    """Base of the chat service's own failures; code and message are fixed and safe to
+    send, so no chunk or upstream text can reach a client or a log through them.
+    """
+
+    code = "chat_error"
+    message = "The chat service failed."
+
+    def __init__(self) -> None:
+        super().__init__(self.message)
+
+
+class UnknownDocumentError(ChatError):
+    """Retrieval returned an excerpt of a document the corpus manifest does not name:
+    the index and this service were built from different manifests.
+    """
+
+    code = "unknown_document"
+    message = "The index holds a document this service does not know."
 
 
 def _require(condition: bool, message: str) -> None:
@@ -135,9 +174,15 @@ class AnswerFlags:
     late_refusal_marker: bool = False
     uncited: bool = False
     invalid_citations: int = 0
+    # Why the follow-up rewrite fell back to the raw message (a code, never text).
+    rewrite_fallback: str | None = None
 
     def __post_init__(self) -> None:
         _require(self.invalid_citations >= 0, "invalid_citations must not be negative")
+        _require(
+            self.rewrite_fallback is None or bool(_FLAG_CODE.fullmatch(self.rewrite_fallback)),
+            "rewrite_fallback must be a code",
+        )
 
 
 @dataclass(frozen=True)

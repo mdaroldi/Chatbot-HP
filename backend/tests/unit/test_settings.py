@@ -608,3 +608,110 @@ def test_a_blank_relevance_threshold_means_not_calibrated(
     monkeypatch.setenv("RETRIEVAL_RELEVANCE_THRESHOLD", raw)
 
     assert Settings().retrieval_relevance_threshold is None
+
+
+def test_llm_defaults_are_the_approved_models_and_budgets() -> None:
+    settings = Settings()
+
+    assert (settings.llm_answer_model, settings.llm_answer_effort) == ("claude-opus-5-5", "low")
+    assert settings.llm_answer_max_tokens == 2048
+    assert (settings.llm_rewrite_model, settings.llm_rewrite_effort) == ("claude-haiku-5-5", "low")
+    assert settings.llm_rewrite_max_tokens == 100
+    assert settings.llm_total_timeout_seconds == 120.0
+    assert settings.llm_rewrite_timeout_seconds == 5.0
+    assert settings.llm_stub_token_delay_ms == 0
+
+
+def test_chat_budget_defaults() -> None:
+    settings = Settings()
+
+    assert (settings.chat_history_max_turns, settings.chat_history_max_tokens) == (6, 3000)
+    assert (settings.chat_rewrite_history_turns, settings.chat_rewrite_history_tokens) == (3, 1000)
+    assert settings.chat_snippet_chars == 160
+
+
+@pytest.mark.parametrize("name", ["LLM_ANSWER_EFFORT", "LLM_REWRITE_EFFORT"])
+@pytest.mark.parametrize("raw", ["", "  "])
+def test_a_blank_effort_is_not_sent(monkeypatch: pytest.MonkeyPatch, name: str, raw: str) -> None:
+    monkeypatch.setenv(name, raw)
+
+    assert getattr(Settings(), name.lower()) is None
+
+
+@pytest.mark.parametrize("name", ["LLM_ANSWER_EFFORT", "LLM_REWRITE_EFFORT"])
+@pytest.mark.parametrize("raw", ["Low", "very high", "low;", "x" * 21])
+def test_an_effort_is_one_lowercase_word(
+    monkeypatch: pytest.MonkeyPatch, name: str, raw: str
+) -> None:
+    monkeypatch.setenv(name, raw)
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+@pytest.mark.parametrize("name", ["LLM_ANSWER_MODEL", "LLM_REWRITE_MODEL"])
+def test_a_model_name_is_required(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    monkeypatch.setenv(name, "")
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_llm_and_chat_settings_are_read_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name, value in {
+        "LLM_ANSWER_MODEL": "answer-model",
+        "LLM_ANSWER_EFFORT": "medium",
+        "LLM_REWRITE_MODEL": "rewrite-model",
+        "LLM_STUB_TOKEN_DELAY_MS": "25",
+        "CHAT_REWRITE_HISTORY_TURNS": "0",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    settings = Settings()
+
+    assert (settings.llm_answer_model, settings.llm_answer_effort) == ("answer-model", "medium")
+    assert settings.llm_rewrite_model == "rewrite-model"
+    assert settings.llm_stub_token_delay_ms == 25
+    assert settings.chat_rewrite_history_turns == 0
+
+
+@pytest.mark.parametrize(
+    ("name", "lowest", "highest"),
+    [
+        ("LLM_ANSWER_MAX_TOKENS", 256, 32_000),
+        ("LLM_REWRITE_MAX_TOKENS", 16, 1_000),
+        ("LLM_STUB_TOKEN_DELAY_MS", 0, 1_000),
+        ("CHAT_HISTORY_MAX_TURNS", 0, 50),
+        ("CHAT_HISTORY_MAX_TOKENS", 0, 100_000),
+        ("CHAT_REWRITE_HISTORY_TURNS", 0, 20),
+        ("CHAT_REWRITE_HISTORY_TOKENS", 0, 20_000),
+        ("CHAT_SNIPPET_CHARS", 20, 1_000),
+    ],
+)
+def test_llm_and_chat_integer_bounds(
+    monkeypatch: pytest.MonkeyPatch, name: str, lowest: int, highest: int
+) -> None:
+    for valid in (lowest, highest):
+        monkeypatch.setenv(name, str(valid))
+        assert getattr(Settings(), name.lower()) == valid
+    for invalid in (lowest - 1, highest + 1):
+        monkeypatch.setenv(name, str(invalid))
+        with pytest.raises(ValidationError):
+            Settings()
+
+
+@pytest.mark.parametrize(
+    ("name", "highest"),
+    [("LLM_TOTAL_TIMEOUT_SECONDS", 600), ("LLM_REWRITE_TIMEOUT_SECONDS", 60)],
+)
+def test_llm_timeouts_are_positive_and_bounded(
+    monkeypatch: pytest.MonkeyPatch, name: str, highest: int
+) -> None:
+    monkeypatch.setenv(name, str(highest))
+    assert getattr(Settings(), name.lower()) == highest
+    for invalid in ("0", str(highest + 1)):
+        monkeypatch.setenv(name, invalid)
+        with pytest.raises(ValidationError):
+            Settings()

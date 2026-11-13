@@ -13,6 +13,8 @@ from app.domain.ingestion import BM25_DEFAULT_AVG_LEN
 from app.domain.retrieval import DEFAULT_RRF_K, SearchMode
 
 _ALLOWED_ORIGIN_SCHEMES = frozenset({"http", "https"})
+# One lowercase word, such as `low`; the provider adapter checks the accepted values.
+_EFFORT_PATTERN = r"^[a-z]{1,20}$"
 
 
 class Environment(StrEnum):
@@ -279,6 +281,81 @@ class Settings(BaseSettings):
         description="Client IDs or IPs tracked per limiter and replica; the least recent "
         "is forgotten.",
     )
+    llm_answer_model: str = Field(
+        default="claude-opus-5-5",
+        min_length=1,
+        description="Model that writes the answers (Anthropic model ID).",
+    )
+    llm_answer_effort: str | None = Field(
+        default="low",
+        pattern=_EFFORT_PATTERN,
+        description="Effort sent with each answer request; empty sends none.",
+    )
+    llm_answer_max_tokens: int = Field(
+        default=2048,
+        ge=256,
+        le=32_000,
+        description="Output cap per answer, thinking included; a long cited procedure "
+        "needs about 600.",
+    )
+    llm_rewrite_model: str = Field(
+        default="claude-haiku-5-5",
+        min_length=1,
+        description="Model that rewrites follow-ups into standalone search queries.",
+    )
+    llm_rewrite_effort: str | None = Field(
+        default="low",
+        pattern=_EFFORT_PATTERN,
+        description="Effort sent with each rewrite request; empty sends none.",
+    )
+    llm_rewrite_max_tokens: int = Field(
+        default=100,
+        ge=16,
+        le=1_000,
+        description="Output cap per rewrite; a query is at most 30 words.",
+    )
+    llm_total_timeout_seconds: float = Field(
+        default=120.0, gt=0, le=600, description="Deadline for one whole answer."
+    )
+    llm_rewrite_timeout_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        le=60,
+        description="Deadline for one rewrite; past it, retrieval uses the raw message.",
+    )
+    llm_stub_token_delay_ms: int = Field(
+        default=0,
+        ge=0,
+        le=1_000,
+        description="Pause before each piece of a stub answer, to simulate streaming.",
+    )
+    chat_history_max_turns: int = Field(
+        default=6, ge=0, le=50, description="Earlier turns the answer prompt carries at most."
+    )
+    chat_history_max_tokens: int = Field(
+        default=3000,
+        ge=0,
+        le=100_000,
+        description="Estimated tokens of history the answer prompt carries at most.",
+    )
+    chat_rewrite_history_turns: int = Field(
+        default=3,
+        ge=0,
+        le=20,
+        description="Earlier turns the rewrite prompt sees at most; 0 disables rewriting.",
+    )
+    chat_rewrite_history_tokens: int = Field(
+        default=1000,
+        ge=0,
+        le=20_000,
+        description="Estimated tokens of history the rewrite prompt sees at most.",
+    )
+    chat_snippet_chars: int = Field(
+        default=160,
+        ge=20,
+        le=1_000,
+        description="Length of the excerpt shown on each source card.",
+    )
     search_endpoint_enabled: bool = Field(
         default=False,
         description="Serve the `POST /v1/search` debug endpoint (returns chunk text); a "
@@ -302,6 +379,12 @@ class Settings(BaseSettings):
     @classmethod
     def _blank_threshold_is_unset(cls, value: object) -> object:
         """An empty value unsets the threshold, e.g. for a reranker not yet calibrated."""
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("llm_answer_effort", "llm_rewrite_effort", mode="before")
+    @classmethod
+    def _blank_effort_is_unset(cls, value: object) -> object:
+        """An empty value sends no effort, for a model that does not take one."""
         return None if isinstance(value, str) and not value.strip() else value
 
     @model_validator(mode="after")

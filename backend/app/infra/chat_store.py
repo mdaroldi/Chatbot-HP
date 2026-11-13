@@ -114,6 +114,7 @@ def _flags_json(flags: AnswerFlags) -> FlagsJson:
         "late_refusal_marker": flags.late_refusal_marker,
         "uncited": flags.uncited,
         "invalid_citations": flags.invalid_citations,
+        "rewrite_fallback": flags.rewrite_fallback,
     }
 
 
@@ -215,6 +216,10 @@ class SqlChatStore:
         self._sessions = sessions
         self._abandon_after = abandon_after
         self._clock = clock
+
+    @property
+    def abandon_after(self) -> timedelta:
+        return self._abandon_after
 
     @property
     def sessions(self) -> async_sessionmaker[AsyncSession]:

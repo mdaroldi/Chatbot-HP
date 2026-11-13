@@ -180,3 +180,10 @@ async def test_no_delay_means_no_sleep() -> None:
 
     provider = StubProvider(honour_directives=True, sleep=forbidden)
     assert await collect(provider, answer_request(ONE_EXCERPT))
+
+
+@pytest.mark.parametrize("honour", [True, False])
+def test_the_stub_reports_how_it_was_configured(honour: bool) -> None:
+    provider = StubProvider(honour_directives=honour, token_delay_ms=12)
+
+    assert (provider.honours_directives, provider.token_delay_ms) == (honour, 12)

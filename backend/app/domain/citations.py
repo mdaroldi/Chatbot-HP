@@ -10,13 +10,14 @@ import re
 from collections.abc import Collection
 from dataclasses import dataclass
 
+from app.domain.text import shorten
+
 # The horizontal whitespace before a tag goes with it, so "Do it [S9]." becomes
 # "Do it." when the tag is removed; a line break before a tag is kept.
 CITATION = re.compile(r"(?P<lead>[ \t]*)\[\s*(?P<tags>S\d+(?:\s*,\s*S\d+)*)\s*\]")
 
 _TAG_SEPARATOR = re.compile(r"\s*,\s*")
 _BREADCRUMB_END = "\n\n"
-_ELLIPSIS = "…"
 
 
 @dataclass(frozen=True)
@@ -63,10 +64,4 @@ def snippet(text: str, max_chars: int) -> str:
     (the card shows the section already), and a cut falls on a word boundary.
     """
     _, separator, body = text.partition(_BREADCRUMB_END)
-    words = " ".join((body if separator else text).split())
-    if len(words) <= max_chars:
-        return words
-    head = words[:max_chars]
-    if words[max_chars] != " " and " " in head:
-        head = head.rsplit(" ", 1)[0]
-    return head + _ELLIPSIS
+    return shorten(body if separator else text, max_chars)

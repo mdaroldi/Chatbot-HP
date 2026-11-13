@@ -255,6 +255,20 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `RATE_LIMIT_SEARCH_PER_MINUTE` | `30` | `POST /v1/search` calls per client ID (else per IP) per minute. |
 | `RATE_LIMIT_SEARCH_BURST` | `10` | Search calls allowed at once. |
 | `RATE_LIMIT_MAX_KEYS` | `10000` | Client IDs or IPs tracked per limiter and replica; the least recent is forgotten. |
+| `LLM_ANSWER_MODEL` | `claude-opus-5-5` | Model that writes the answers (Anthropic model ID). |
+| `LLM_ANSWER_EFFORT` | `low` | Effort sent with each answer request; empty sends none. |
+| `LLM_ANSWER_MAX_TOKENS` | `2048` | Output cap per answer, thinking included; a long cited procedure needs about 600. |
+| `LLM_REWRITE_MODEL` | `claude-haiku-5-5` | Model that rewrites follow-ups into standalone search queries. |
+| `LLM_REWRITE_EFFORT` | `low` | Effort sent with each rewrite request; empty sends none. |
+| `LLM_REWRITE_MAX_TOKENS` | `100` | Output cap per rewrite; a query is at most 30 words. |
+| `LLM_TOTAL_TIMEOUT_SECONDS` | `120.0` | Deadline for one whole answer. |
+| `LLM_REWRITE_TIMEOUT_SECONDS` | `5.0` | Deadline for one rewrite; past it, retrieval uses the raw message. |
+| `LLM_STUB_TOKEN_DELAY_MS` | `0` | Pause before each piece of a stub answer, to simulate streaming. |
+| `CHAT_HISTORY_MAX_TURNS` | `6` | Earlier turns the answer prompt carries at most. |
+| `CHAT_HISTORY_MAX_TOKENS` | `3000` | Estimated tokens of history the answer prompt carries at most. |
+| `CHAT_REWRITE_HISTORY_TURNS` | `3` | Earlier turns the rewrite prompt sees at most; 0 disables rewriting. |
+| `CHAT_REWRITE_HISTORY_TOKENS` | `1000` | Estimated tokens of history the rewrite prompt sees at most. |
+| `CHAT_SNIPPET_CHARS` | `160` | Length of the excerpt shown on each source card. |
 | `SEARCH_ENDPOINT_ENABLED` | `false` | Serve the `POST /v1/search` debug endpoint (returns chunk text); a warning is logged when enabled in production. |
 <!-- settings-table:end -->
 

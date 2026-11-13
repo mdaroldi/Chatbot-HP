@@ -82,6 +82,14 @@ def test_a_refusal_record_with_its_reason_is_valid() -> None:
     assert refused.refusal_reason is RefusalReason.PROVIDER_REFUSED
 
 
+def test_the_rewrite_fallback_flag_holds_a_code_or_nothing() -> None:
+    assert AnswerFlags().rewrite_fallback is None
+    assert AnswerFlags(rewrite_fallback="timeout").rewrite_fallback == "timeout"
+    for bad in ("", "Timed out!", "two words"):
+        with pytest.raises(ValueError, match="rewrite_fallback must be a code"):
+            AnswerFlags(rewrite_fallback=bad)
+
+
 def test_invalid_citation_count_is_never_negative() -> None:
     assert AnswerFlags(invalid_citations=2).invalid_citations == 2
     with pytest.raises(ValueError, match="invalid_citations must not be negative"):

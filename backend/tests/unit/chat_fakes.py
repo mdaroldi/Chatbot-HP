@@ -29,6 +29,7 @@ class InMemoryChatStore:
         self._conversations: dict[str, Conversation] = {}
         self._messages: dict[str, list[Message]] = {}
         self.calls: list[str] = []
+        self.answers: dict[str, AnswerRecord] = {}  # what finish_answer stored, by message
 
     def _owned(self, client_id: str, conversation_id: str) -> Conversation | None:
         if self._owners.get(conversation_id) != client_id:
@@ -137,6 +138,7 @@ class InMemoryChatStore:
                     sources=answer.sources,
                 )
                 messages[index] = finished
+                self.answers[message_id] = answer
                 self._touch(conversation_id)
                 return finished
         return None

@@ -117,6 +117,10 @@ def test_the_sql_store_implements_the_port(store: SqlChatStore) -> None:
     assert port is store
 
 
+def test_the_store_reports_its_abandon_window(store: SqlChatStore) -> None:
+    assert store.abandon_after == ABANDON_AFTER
+
+
 def completed(**overrides: object) -> AnswerRecord:
     fields: dict[str, object] = {
         "outcome": Outcome.COMPLETED,
@@ -480,8 +484,27 @@ async def test_the_full_answer_trace_is_stored(
         "20261113t173108z",
         "synthetic standalone query",
     )
-    assert row.flags == {"late_refusal_marker": False, "uncited": False, "invalid_citations": 1}
+    assert row.flags == {
+        "late_refusal_marker": False,
+        "uncited": False,
+        "invalid_citations": 1,
+        "rewrite_fallback": None,
+    }
     assert (row.refusal, row.refusal_reason, row.error_code) == (False, None, None)
+
+
+async def test_a_rewrite_fallback_is_stored_as_its_code(
+    store: SqlChatStore, sessions: async_sessionmaker[AsyncSession]
+) -> None:
+    created = await store.create_conversation(CLIENT)
+    turn = await store.start_turn(CLIENT, created.id, "Question?", title="Question")
+
+    await store.finish_answer(
+        CLIENT, turn.assistant.id, completed(flags=AnswerFlags(rewrite_fallback="timeout"))
+    )
+
+    row = await message_row(sessions, turn.assistant.id)
+    assert row.flags["rewrite_fallback"] == "timeout"
 
 
 async def test_a_refusal_before_the_model_stores_retrieval_but_no_model_data(

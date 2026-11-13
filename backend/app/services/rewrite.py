@@ -13,6 +13,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
+from app.core.settings import Settings
 from app.domain.chat import Message, Role
 from app.domain.llm import (
     GenerationRequest,
@@ -118,3 +119,16 @@ class QueryRewriter:
             return None, RewriteFallback.INCOMPLETE
         query = accept_rewrite(text)
         return query, None if query is not None else RewriteFallback.INVALID_OUTPUT
+
+
+def rewrite_config_from_settings(settings: Settings) -> RewriteConfig:
+    return RewriteConfig(
+        model=settings.llm_rewrite_model,
+        max_tokens=settings.llm_rewrite_max_tokens,
+        effort=settings.llm_rewrite_effort,
+        timeout_seconds=settings.llm_rewrite_timeout_seconds,
+        budget=HistoryBudget(
+            max_turns=settings.chat_rewrite_history_turns,
+            max_tokens=settings.chat_rewrite_history_tokens,
+        ),
+    )
