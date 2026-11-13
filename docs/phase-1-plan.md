@@ -346,6 +346,16 @@ to "Bottom cover"; the 8 error-code rows (E0 to E6 and E9) on PDF page 105 keep 
 SNPRC-1807-01 present; the Wi-Fi Direct five-device limit present; a tampered file
 fails the checksum check.
 
+## Phase 7 hardening list (deferred from Phase 1)
+
+- **Triple image build:** `backend`, `migrate` and `ingest` each declare `build:
+  ./backend` with the same image tag, so compose runs three parallel builds of one
+  image (cheap with the shared layer cache, but redundant). Build once, for example
+  by keeping `build` on one service only, without breaking `make ingest`
+  (`docker compose run --build`).
+- **Separate ingest image** (ADR 0004 way out): the API image carries the ingestion
+  stack, about 92 MB compressed.
+
 ## Open points to report
 
 - Qdrant local mode: aliases and the IDF modifier work (commit 8). Payload indexes have no

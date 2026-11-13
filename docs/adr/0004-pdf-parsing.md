@@ -58,7 +58,10 @@ strategy, and a single column for OMEN's parts table.
   new corpus tests.
 - **Single image trade-off:** the API image carries pdfplumber, pdfminer.six,
   pypdfium2 and Pillow, which it never imports: a larger image and attack surface for
-  one build and one dependency set. Way out: a uv dependency group `ingest` for
+  one build and one dependency set. Measured at Phase 1 commit 10b, the whole
+  ingestion stack (these plus fastembed, onnxruntime, numpy and qdrant-client) grows
+  the backend image from the Phase 0 baseline by about 92 MB compressed (63.6 to
+  155.4 MB) and 362 MB unpacked (297 to 659 MB). Way out: a uv dependency group `ingest` for
   pdfplumber and a second Dockerfile target (`--target ingest`) that syncs it, while
   the API target syncs without the group.
 

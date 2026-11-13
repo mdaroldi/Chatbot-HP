@@ -161,3 +161,18 @@ OMEN PDF 3-4), which v1 first left out of the index. PDF page numbers.
   Corpus tests pin that each table row lands in one section and each kept `[icon]` in
   one chunk.
 - Measured with 450 and 65: ENVY 149 chunks (digest unchanged), OMEN 138.
+
+### Known residue (Phase 1, commit 10b review)
+
+Seen in the chunk review after the table fix; each stays inside one section, so
+citations are unaffected. Not fixed in v2.
+
+- **Caption as a row:** two tables of the same width separated only by the second
+  table's caption (all at table size) stay one table, and the caption becomes a row
+  with an empty cell (ENVY, the edge-lighting tables on PDF 17). The row rule cannot
+  tell a caption-only band from a row without a caption pattern.
+- **Note split over two lines:** a WARNING whose first line holds an `[icon]` can end
+  that line early, so the note's text continues on a second line in the chunk (ENVY,
+  PDF 109). The text stays together and in order.
+- **Lone bullet:** a bullet marker whose text did not join it is kept as a line with
+  only `●` (ENVY specifications, PDF 119).
