@@ -18,11 +18,13 @@ from app.api.search import build_search_router
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
-from app.core.settings import Environment, Settings, get_settings
+from app.core.settings import Environment, LLMProviderName, Settings, get_settings
 from app.domain.chat_store import ChatStore
+from app.domain.llm import LLMProvider
 from app.domain.retrieval import ProductName
 from app.infra.chat_store import SqlChatStore
 from app.infra.lifecycle import Infrastructure, open_infrastructure
+from app.infra.llm_anthropic import AnthropicProvider, anthropic_config_from_settings
 from app.infra.llm_stub import StubProvider
 from app.infra.manifest_repository import SqlManifestStore
 from app.infra.qdrant_search import QdrantIndexIdentity, QdrantSearchStore
@@ -66,14 +68,20 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             abandon_after=pending_answer_abandon_after(app.state.settings),
         )
         app.state.chat_store = store
+        provider = build_provider(app.state.settings)
         app.state.chat_service_factory = _chat_service_factory(
             infrastructure,
             app.state.settings,
             store,
             app.state.retrieval_service_factory,
             app.state.titles,
+            provider,
         )
-        yield
+        try:
+            yield
+        finally:
+            if isinstance(provider, AnthropicProvider):
+                await provider.aclose()
 
 
 def _retrieval_service_factory(
@@ -97,20 +105,17 @@ def _retrieval_service_factory(
     return build
 
 
-def _chat_service_factory(
+def _chat_service_factory(  # noqa: PLR0913, PLR0917 - the parts the composition root owns
     infrastructure: Infrastructure,
     settings: Settings,
     store: ChatStore,
     retrieval_factory: Callable[[], Awaitable[RetrievalService]],
     titles: Mapping[str, str],
+    provider: LLMProvider,
 ) -> Callable[[], Awaitable[ChatService]]:
     """Build the service per request over the per-request retrieval service; the
     provider, rewriter and index identity are shared (they hold no request state).
     """
-    provider = StubProvider(
-        honour_directives=settings.app_env is not Environment.PRODUCTION,
-        token_delay_ms=settings.llm_stub_token_delay_ms,
-    )
     rewriter = QueryRewriter(provider, rewrite_config_from_settings(settings))
     index = QdrantIndexIdentity(
         infrastructure.qdrant,
@@ -134,6 +139,18 @@ def _chat_service_factory(
         )
 
     return build
+
+
+def build_provider(settings: Settings) -> LLMProvider:
+    """One provider for rewrites and answers; the Anthropic client keeps its connection
+    pool for the app's lifetime and is closed with it.
+    """
+    if settings.llm_provider is LLMProviderName.ANTHROPIC:
+        return AnthropicProvider(anthropic_config_from_settings(settings))
+    return StubProvider(
+        honour_directives=settings.app_env is not Environment.PRODUCTION,
+        token_delay_ms=settings.llm_stub_token_delay_ms,
+    )
 
 
 def create_app(

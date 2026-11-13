@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.api.dependencies import get_app_settings, get_readiness_probes
-from app.core.settings import Settings
+from app.core.settings import LLMProviderName, Settings
 from app.domain.health import DependencyProbe, FailureReason, ProbeStatus, ReadinessReport
 from app.services.readiness import check_readiness
 
@@ -29,11 +29,13 @@ class CheckResponse(BaseModel):
 class ReadinessResponse(BaseModel):
     status: Literal["ready", "not_ready"]
     checks: dict[str, CheckResponse]
+    llm: LLMProviderName  # which model answers; the key is never shown
 
     @classmethod
-    def from_report(cls, report: ReadinessReport) -> "ReadinessResponse":
+    def from_report(cls, report: ReadinessReport, llm: LLMProviderName) -> "ReadinessResponse":
         return cls(
             status="ready" if report.ready else "not_ready",
+            llm=llm,
             checks={
                 result.name: CheckResponse(
                     status=result.status,
@@ -68,6 +70,6 @@ async def ready(
     operators read it as data; it still gets X-Request-ID from the middleware.
     """
     report = await check_readiness(probes, settings.readiness_timeout_seconds)
-    body = ReadinessResponse.from_report(report)
+    body = ReadinessResponse.from_report(report, settings.llm_provider)
     status = HTTPStatus.OK if report.ready else HTTPStatus.SERVICE_UNAVAILABLE
     return JSONResponse(status_code=status, content=body.model_dump(mode="json", exclude_none=True))

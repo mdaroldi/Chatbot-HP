@@ -49,6 +49,7 @@ def test_empty_defaults_are_named_not_rendered_as_code() -> None:
 
     assert defaults["`RETRIEVAL_RELEVANCE_THRESHOLD`"] == "`-6.54`"
     assert defaults["`RETRIEVAL_DENSE_QUERY_PREFIX`"] == "*empty*"
+    assert defaults["`ANTHROPIC_API_KEY`"] == "*unset*"
 
 
 def test_the_threshold_names_the_reranker_pin_it_was_calibrated_on() -> None:

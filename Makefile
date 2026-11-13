@@ -15,7 +15,7 @@ IMAGES := hpdocs-backend:local hpdocs-frontend:local
 TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURDIR)":/src:ro \
 	-v trivy-cache:/root/.cache $(TRIVY_IMAGE)
 
-.PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int \
+.PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int smoke-llm \
 	fetch-test-assets models \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins \
 	eval-retrieval eval load check
@@ -132,6 +132,11 @@ ingest: ## Rebuild the vector index now (forced) through compose
 # It runs as the caller's user so a Linux bind mount of eval/ stays writable (the image
 # user is 10001); GIT_SHA ends in -dirty when tracked files have uncommitted changes.
 EVAL_ARGS ?= run
+SMOKE_ARGS ?= --runs 5
+
+smoke-llm: ## Manual, billed: real-model answers, prints TTFT p50 and stop reasons (needs the key)
+	docker compose run --rm --no-deps --env LLM_PROVIDER=anthropic \
+		--entrypoint python backend -m app.smoke_llm $(SMOKE_ARGS)
 
 eval-retrieval: ## Retrieval benchmark via compose (needs `make up`); EVAL_ARGS=preflight|run ...
 	docker compose run --rm --no-deps --user "$$(id -u):$$(id -g)" \

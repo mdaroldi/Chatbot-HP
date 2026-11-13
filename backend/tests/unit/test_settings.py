@@ -5,7 +5,7 @@ import pathlib
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from app.core.settings import Environment, LogLevel, Settings, get_settings
+from app.core.settings import Environment, LLMProviderName, LogLevel, Settings, get_settings
 from app.domain.retrieval import SearchMode
 
 
@@ -768,3 +768,96 @@ def test_heartbeat_interval_rejects_values_out_of_bounds(
 
     with pytest.raises(ValidationError):
         Settings()
+
+
+# --- Language model provider -----------------------------------------------------------
+
+API_KEY = "placeholder-not-a-key"  # not a real key
+
+
+def test_llm_provider_defaults_to_the_stub_with_fallbacks_on_and_the_approved_timeouts() -> None:
+    settings = Settings()
+
+    assert settings.llm_provider is LLMProviderName.STUB
+    assert settings.anthropic_api_key is None
+    assert settings.llm_refusal_fallback_enabled is True
+    assert settings.llm_connect_timeout_seconds == 5.0
+    assert settings.llm_first_token_timeout_seconds == 30.0
+    assert settings.llm_max_retries == 2
+
+
+def test_the_anthropic_provider_without_a_key_names_both_fixes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+
+    with pytest.raises(ValidationError) as raised:
+        Settings()
+
+    message = str(raised.value)
+    assert "ANTHROPIC_API_KEY" in message
+    assert "LLM_PROVIDER=stub" in message
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_key_counts_as_unset(monkeypatch: pytest.MonkeyPatch, blank: str) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", blank)
+
+    assert Settings().anthropic_api_key is None
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_the_key_is_secret_and_never_rendered(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", API_KEY)
+
+    settings = Settings()
+
+    assert settings.anthropic_api_key is not None
+    assert settings.anthropic_api_key.get_secret_value() == API_KEY
+    assert API_KEY not in repr(settings)
+    assert API_KEY not in str(settings.model_dump())
+
+
+def test_an_unknown_provider_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_the_first_token_deadline_must_fit_in_the_total(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_TOTAL_TIMEOUT_SECONDS", "20")
+    monkeypatch.setenv("LLM_FIRST_TOKEN_TIMEOUT_SECONDS", "20")
+    assert Settings().llm_first_token_timeout_seconds == 20.0
+
+    monkeypatch.setenv("LLM_FIRST_TOKEN_TIMEOUT_SECONDS", "21")
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+@pytest.mark.parametrize(
+    ("name", "lowest_valid", "below", "highest_valid", "above"),
+    [
+        ("LLM_CONNECT_TIMEOUT_SECONDS", "0.1", "0", "60", "61"),
+        ("LLM_FIRST_TOKEN_TIMEOUT_SECONDS", "0.1", "0", "120", "121"),
+        ("LLM_MAX_RETRIES", "0", "-1", "10", "11"),
+    ],
+)
+def test_llm_client_bounds(  # noqa: PLR0917 - one parametrized case per argument
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    lowest_valid: str,
+    below: str,
+    highest_valid: str,
+    above: str,
+) -> None:
+    for valid in (lowest_valid, highest_valid):
+        monkeypatch.setenv(name, valid)
+        assert getattr(Settings(), name.lower()) == float(valid)
+    for invalid in (below, above):
+        monkeypatch.setenv(name, invalid)
+        with pytest.raises(ValidationError):
+            Settings()

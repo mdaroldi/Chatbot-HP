@@ -257,6 +257,12 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `RATE_LIMIT_MESSAGES_PER_MINUTE` | `10` | Chat questions per client ID per minute (each one may call the model). |
 | `RATE_LIMIT_MESSAGES_BURST` | `5` | Chat questions a client may send at once. |
 | `RATE_LIMIT_MAX_KEYS` | `10000` | Client IDs or IPs tracked per limiter and replica; the least recent is forgotten. |
+| `LLM_PROVIDER` | `stub` | `stub` (deterministic, no network) or `anthropic` (needs the API key). |
+| `ANTHROPIC_API_KEY` | *unset* | Anthropic API key; required with `LLM_PROVIDER=anthropic`, passed to the client explicitly so no ambient credential is used. |
+| `LLM_REFUSAL_FALLBACK_ENABLED` | `true` | Let the API rerun a safety-refused answer on its fallback model (beta `server-side-fallback-2026-07-01`); the model that served is stored. |
+| `LLM_CONNECT_TIMEOUT_SECONDS` | `5.0` | Deadline to connect to the model API. |
+| `LLM_FIRST_TOKEN_TIMEOUT_SECONDS` | `30.0` | Deadline from the request to the first answer text (thinking included). |
+| `LLM_MAX_RETRIES` | `2` | Client retries of 408, 409, 429, 5xx and connection errors, only before a stream opens. |
 | `LLM_ANSWER_MODEL` | `claude-opus-5-5` | Model that writes the answers (Anthropic model ID). |
 | `LLM_ANSWER_EFFORT` | `low` | Effort sent with each answer request: `low`, `medium`, `high`, `xhigh` or `max`; empty sends none. |
 | `LLM_ANSWER_MAX_TOKENS` | `2048` | Output cap per answer, thinking included; a long cited procedure needs about 600. |

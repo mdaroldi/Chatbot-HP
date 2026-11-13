@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 import app.main
 from app.api.dependencies import get_readiness_probes
@@ -325,6 +325,7 @@ async def test_ready_returns_200_when_all_dependencies_are_ok(
     assert response.json() == {
         "status": "ready",
         "checks": {"postgres": {"status": "ok"}, "qdrant": {"status": "ok"}},
+        "llm": "stub",
     }
     assert response.headers[REQUEST_ID_HEADER] == REQUEST_ID
 
@@ -348,6 +349,7 @@ async def test_ready_returns_503_status_document_with_request_id(
             "postgres": {"status": "down", "detail": "unreachable"},
             "qdrant": {"status": "ok"},
         },
+        "llm": "stub",
     }
     assert "error" not in response.json()
     assert "10.0.0.5" not in response.text
@@ -365,7 +367,23 @@ async def test_ready_without_registered_probes_is_ready(client: httpx.AsyncClien
     response = await client.get("/ready")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ready", "checks": {}}
+    assert response.json() == {"status": "ready", "checks": {}, "llm": "stub"}
+
+
+async def test_ready_names_the_anthropic_provider_but_never_the_key(
+    make_settings: SettingsFactory,
+) -> None:
+    key = "placeholder-not-a-key"  # not a real key
+    application = create_app(
+        make_settings(llm_provider="anthropic", anthropic_api_key=SecretStr(key))
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application), base_url="http://test"
+    ) as http:
+        response = await http.get("/ready")
+
+    assert response.json()["llm"] == "anthropic"
+    assert key not in response.text
 
 
 async def test_ready_documents_the_503_status_document(client: httpx.AsyncClient) -> None:

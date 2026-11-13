@@ -48,6 +48,13 @@ def _normalize_origin(origin: str) -> str:
     return f"{parts.scheme}://{parts.netloc}"
 
 
+class LLMProviderName(StrEnum):
+    """Which language model answers: the stub runs the whole path without a key."""
+
+    STUB = "stub"
+    ANTHROPIC = "anthropic"
+
+
 class Settings(BaseSettings):
     """Typed configuration with safe defaults for everything except secrets.
 
@@ -291,6 +298,36 @@ class Settings(BaseSettings):
         description="Client IDs or IPs tracked per limiter and replica; the least recent "
         "is forgotten.",
     )
+    llm_provider: LLMProviderName = Field(
+        default=LLMProviderName.STUB,
+        description="`stub` (deterministic, no network) or `anthropic` (needs the API key).",
+    )
+    anthropic_api_key: SecretStr | None = Field(
+        default=None,
+        description="Anthropic API key; required with `LLM_PROVIDER=anthropic`, passed to the "
+        "client explicitly so no ambient credential is used.",
+    )
+    llm_refusal_fallback_enabled: bool = Field(
+        default=True,
+        description="Let the API rerun a safety-refused answer on its fallback model (beta "
+        "`server-side-fallback-2026-07-01`); the model that served is stored.",
+    )
+    llm_connect_timeout_seconds: float = Field(
+        default=5.0, gt=0, le=60, description="Deadline to connect to the model API."
+    )
+    llm_first_token_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        le=120,
+        description="Deadline from the request to the first answer text (thinking included).",
+    )
+    llm_max_retries: int = Field(
+        default=2,
+        ge=0,
+        le=10,
+        description="Client retries of 408, 409, 429, 5xx and connection errors, only "
+        "before a stream opens.",
+    )
     llm_answer_model: str = Field(
         default="claude-opus-5-5",
         min_length=1,
@@ -411,6 +448,29 @@ class Settings(BaseSettings):
     def _blank_effort_is_unset(cls, value: object) -> object:
         """An empty value sends no effort, for a model that does not take one."""
         return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("anthropic_api_key", mode="before")
+    @classmethod
+    def _blank_key_is_unset(cls, value: object) -> object:
+        """`.env.example` leaves the key empty; empty means not configured."""
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @model_validator(mode="after")
+    def _anthropic_needs_a_key(self) -> "Settings":
+        if self.llm_provider is LLMProviderName.ANTHROPIC and self.anthropic_api_key is None:
+            raise ValueError(
+                "LLM_PROVIDER=anthropic needs ANTHROPIC_API_KEY: set ANTHROPIC_API_KEY, "
+                "or set LLM_PROVIDER=stub to run without a model"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _first_token_within_the_total(self) -> "Settings":
+        if self.llm_first_token_timeout_seconds > self.llm_total_timeout_seconds:
+            raise ValueError(
+                "llm_first_token_timeout_seconds must not exceed llm_total_timeout_seconds"
+            )
+        return self
 
     @model_validator(mode="after")
     def _no_exception_messages_in_production(self) -> "Settings":

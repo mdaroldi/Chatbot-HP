@@ -8,6 +8,7 @@ from typing import cast
 
 import httpx
 import pytest
+from pydantic import SecretStr
 from qdrant_client import AsyncQdrantClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -15,6 +16,7 @@ from app.core.settings import Environment, Settings
 from app.infra.chat_store import SqlChatStore
 from app.infra.inference import CpuAllowance, CpuSource
 from app.infra.lifecycle import open_infrastructure
+from app.infra.llm_anthropic import AnthropicProvider
 from app.infra.llm_stub import StubProvider
 from app.infra.probes import PostgresProbe, QdrantProbe
 from app.infra.qdrant_search import IndexProbe, QdrantIndexIdentity
@@ -299,3 +301,28 @@ async def test_app_lifespan_builds_the_chat_service_over_the_stub_and_the_live_i
         assert isinstance(provider, StubProvider)
         assert provider.honours_directives is honoured
         assert provider.token_delay_ms == 7
+
+
+async def test_app_lifespan_builds_the_chat_service_over_the_anthropic_adapter_and_closes_it(
+    make_settings: SettingsFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closed: list[AnthropicProvider] = []
+
+    async def record_close(self: AnthropicProvider) -> None:
+        closed.append(self)
+
+    monkeypatch.setattr(AnthropicProvider, "aclose", record_close)
+    factories = Factories()
+    settings = make_settings(
+        llm_provider="anthropic", anthropic_api_key=SecretStr("placeholder-not-a-key")
+    )
+    application = create_app(settings, query_models_factory=factories.models_factory)
+
+    async with application.router.lifespan_context(application):
+        await asyncio.wait_for(application.state.infrastructure.models_loaded, timeout=2)
+        service = await application.state.chat_service_factory()
+        provider = service.provider
+        assert isinstance(provider, AnthropicProvider)
+        assert closed == []
+
+    assert closed == [provider]

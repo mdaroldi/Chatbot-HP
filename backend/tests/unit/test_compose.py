@@ -272,6 +272,20 @@ def test_make_eval_retrieval_runs_the_benchmark_in_the_backend_image() -> None:
     assert re.search(r"^EVAL_ARGS \?= run$", MAKEFILE.read_text(), re.MULTILINE)
 
 
+def test_make_smoke_llm_calls_the_real_model_from_the_backend_image() -> None:
+    """Manual and billed: never part of `make check` or CI. The provider is forced to
+    Anthropic, so a stub .env cannot make it pass vacuously.
+    """
+    command = " ".join(line.removesuffix("\\").strip() for line in recipe("smoke-llm"))
+
+    assert command.startswith("docker compose run --rm --no-deps ")
+    assert "--env LLM_PROVIDER=anthropic" in command
+    assert command.endswith("--entrypoint python backend -m app.smoke_llm $(SMOKE_ARGS)")
+    assert re.search(r"^SMOKE_ARGS \?= --runs 5$", MAKEFILE.read_text(), re.MULTILINE)
+    for target in ("check", "test", "test-int"):
+        assert "smoke-llm" not in " ".join(recipe(target))
+
+
 def test_migrate_applies_migrations_and_ingest_builds_only_when_needed(
     services: dict[str, Service],
 ) -> None:
