@@ -16,6 +16,7 @@ Logs name documents, sizes, counts and outcomes, never document or chunk text.
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -172,6 +173,15 @@ async def process_documents(
     return [(await _process(document, ports, processor))[0] for document in documents]
 
 
+def _seconds(start: float) -> float:
+    return round(time.perf_counter() - start, 3)
+
+
+def _stage_done(stage: str, items: int, start: float) -> None:
+    """One line per stage, so a slow build shows where the time went (ADR 0008)."""
+    logger.info("stage done", extra={"stage": stage, "items": items, "seconds": _seconds(start)})
+
+
 async def _chunk_all(
     documents: Sequence[CorpusDocument],
     ports: IngestPorts,
@@ -180,6 +190,7 @@ async def _chunk_all(
 ) -> list[Chunk]:
     chunks: list[Chunk] = []
     for document in documents:
+        start = time.perf_counter()
         processed, size = await _process(document, ports, processor)
         chunks.extend(processed.chunks)
         progress.chunk_counts[document.doc_id] = len(processed.chunks)
@@ -191,6 +202,7 @@ async def _chunk_all(
                 "bytes": size,
                 "pages": processed.pages,
                 "chunks": len(processed.chunks),
+                "seconds": _seconds(start),  # fetch, parse, clean and chunk
             },
         )
     return chunks
@@ -198,8 +210,12 @@ async def _chunk_all(
 
 async def _embed(chunks: Sequence[Chunk], embedder: Embedder) -> EmbeddedChunks:
     texts = [chunk.text for chunk in chunks]
+    start = time.perf_counter()
     dense = await embedder.embed_dense(texts)
+    _stage_done("embed_dense", len(texts), start)
+    start = time.perf_counter()
     sparse = await embedder.embed_sparse(texts)
+    _stage_done("embed_sparse", len(texts), start)
     return EmbeddedChunks(chunks=chunks, dense=dense, sparse=sparse)
 
 
@@ -242,9 +258,11 @@ async def _build(
         processor = ports.processor(dense)
         chunks = await _chunk_all(documents, ports, processor, progress)
         embedded = await _embed(chunks, ports.embedder(dense, sparse))
+        start = time.perf_counter()
         published = await publish(
             ports.index, config.alias, build_id, embedded, keep_previous=config.keep_previous
         )
+        _stage_done("publish", len(chunks), start)
     except Exception as exc:
         await ports.manifest.record(manifest_row(BuildStatus.FAILED, error_type=type(exc).__name__))
         raise

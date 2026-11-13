@@ -386,6 +386,9 @@ async def test_logs_name_documents_sizes_and_outcomes_never_content(
         "index build started",
         "document chunked",
         "document chunked",
+        "stage done",
+        "stage done",
+        "stage done",
         "index build published",
         "index is current; build skipped",
     ]
@@ -399,3 +402,19 @@ async def test_logs_name_documents_sizes_and_outcomes_never_content(
     logged = " ".join(str(value) for r in caplog.records for value in r.__dict__.values())
     assert "demo button" not in logged
     assert "Step 0" not in logged
+
+
+async def test_each_stage_logs_its_elapsed_time_and_item_count(
+    world: World, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A slow build must show which stage was slow (ADR 0008), without content."""
+    caplog.set_level(logging.INFO, logger="app.ingestion")
+
+    await world.run()
+
+    records = [r.__dict__ for r in caplog.records]
+    stages = [(r["stage"], r["items"]) for r in records if r["msg"] == "stage done"]
+    assert stages == [("embed_dense", 5), ("embed_sparse", 5), ("publish", 5)]
+    timed = [r for r in records if r["msg"] in ("stage done", "document chunked")]
+    assert len(timed) == 5
+    assert all(isinstance(r["seconds"], float) and r["seconds"] >= 0 for r in timed)
