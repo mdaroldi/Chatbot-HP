@@ -4,6 +4,7 @@ The golden set is written from the PDFs, not from the index, and reviewed outsid
 code: the loader validates its structure but never changes a question or an anchor.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -111,3 +112,28 @@ class GoldenSet:
 
     def in_split(self, split: Split) -> tuple[GoldenQuestion, ...]:
         return tuple(q for q in self.questions if q.split is split)
+
+
+@dataclass(frozen=True)
+class IndexedChunk:
+    """What anchor matching reads from one indexed chunk (ids, path and text)."""
+
+    chunk_id: str
+    doc_id: str
+    section_path: tuple[str, ...]
+    text: str
+
+
+class Metric(StrEnum):
+    RECALL_AT_5 = "recall@5"
+    RECALL_AT_20 = "recall@20"
+    HIT_AT_5 = "hit@5"
+    MRR = "mrr"
+    NDCG_AT_5 = "ndcg@5"
+
+
+@dataclass(frozen=True)
+class QuestionScores:
+    question_id: str
+    category: Category
+    values: Mapping[Metric, float]
