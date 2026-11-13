@@ -350,7 +350,7 @@ The full list, with the reasoning, is in [ADR 0001](docs/adr/0001-architecture-o
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Foundation: repo, tooling, CI, compose, health endpoints | done |
-| 1 | Ingestion: download, parse, clean, chunk, embed, upsert, manifest | in progress |
+| 1 | Ingestion: download, parse, clean, chunk, embed, upsert, manifest | done |
 | 2 | Retrieval: hybrid search, reranker, golden set, retrieval metrics | pending |
 | 3 | Chat API: LLM gateway, prompt, citations, streaming, history | pending |
 | 4 | Frontend: Streamlit chat UI with conversations and sources | pending |

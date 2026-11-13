@@ -176,3 +176,9 @@ citations are unaffected. Not fixed in v2.
   PDF 109). The text stays together and in order.
 - **Lone bullet:** a bullet marker whose text did not join it is kept as a line with
   only `●` (ENVY specifications, PDF 119).
+- **Chunks under the minimum:** 23 of 287 chunks (12 ENVY, 11 OMEN; 25 to 62
+  tokens) are under `CHUNK_MIN_TOKENS`. Most are top-level section intros, which never
+  merge, and one-line lead sentences kept apart from the table they introduce, which
+  is its own chunk (OMEN, `Product description`, PDF 8: 25 tokens). No change now:
+  the Phase 2 retrieval metrics and the Phase 5 ablation (merging a parent's one-line
+  intro into its first child) decide whether to change it.
