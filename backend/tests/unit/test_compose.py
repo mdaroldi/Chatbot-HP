@@ -131,6 +131,33 @@ def test_postgres_password_is_required_and_never_defaulted(
     assert "env_file" not in services["frontend"]
 
 
+POSTGRES_MAJOR = "17"
+DEPENDABOT = REPO / ".github" / "dependabot.yml"
+
+
+def test_postgres_stays_on_one_major_version_in_both_compose_files(
+    services: dict[str, Service],
+) -> None:
+    """Postgres 18 refuses the volume at /var/lib/postgresql/data, even when it is empty."""
+    stack = services["postgres"]["image"]
+    test = load(TEST_COMPOSE)["services"]["postgres"]["image"]
+
+    assert stack.startswith(f"postgres:{POSTGRES_MAJOR}.")
+    assert test == stack
+    assert services["postgres"]["volumes"] == ["postgres-data:/var/lib/postgresql/data"]
+
+
+def test_dependabot_never_proposes_a_postgres_major_upgrade() -> None:
+    """A major upgrade needs a new mount point and pg_upgrade; it is a decision, not a bump."""
+    updates = load(DEPENDABOT)["updates"]
+    compose_updates = [u for u in updates if u["package-ecosystem"] == "docker-compose"]
+
+    assert len(compose_updates) == 1
+    assert {"dependency-name": "postgres", "update-types": ["version-update:semver-major"]} in (
+        compose_updates[0].get("ignore", [])
+    )
+
+
 def test_qdrant_telemetry_is_disabled(services: dict[str, Service]) -> None:
     assert services["qdrant"]["environment"]["QDRANT__TELEMETRY_DISABLED"] == "true"
 

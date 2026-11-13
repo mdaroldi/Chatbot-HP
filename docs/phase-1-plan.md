@@ -367,6 +367,11 @@ fails the checksum check.
   twice on the first download: once as plain text, outside the JSON log format, and
   once as a JSON log line. Keep only the JSON line (or silence that one warning),
   without hiding other hub warnings.
+- **Postgres 18:** Dependabot proposed 17.9 → 18.4 (PR #1, merged on GitHub). Postgres
+  18 refuses a volume at `/var/lib/postgresql/data`, even an empty one, so the bump
+  was reverted and major Postgres bumps are ignored by Dependabot. Upgrading means
+  one mount at `/var/lib/postgresql` and a `pg_upgrade` (or a fresh volume) for
+  existing data.
 
 ## Open points to report
 

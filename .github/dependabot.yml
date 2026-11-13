@@ -33,6 +33,11 @@ updates:
     cooldown:
       default-days: 5
     open-pull-requests-limit: 3
+    # A Postgres major upgrade needs a new volume mount point (/var/lib/postgresql
+    # from 18 on) and pg_upgrade for existing data: a decision, not a weekly bump.
+    ignore:
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
     groups:
       service-images:
         patterns: ["*"]
