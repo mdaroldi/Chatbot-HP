@@ -9,6 +9,10 @@ README_END = "<!-- settings-table:end -->"
 
 
 def _render_default(value: object) -> str:
+    if value is None:
+        return "*unset*"
+    if value == "":
+        return "*empty*"
     if isinstance(value, Enum):
         value = value.value
     if isinstance(value, bool):

@@ -1,0 +1,227 @@
+"""Retrieval types and interfaces (pure, no I/O).
+
+A question becomes a dense and a sparse query vector, Qdrant returns candidates
+(dense, sparse, or both fused with reciprocal rank fusion), and a cross-encoder may
+rerank them. Every knob is a `RetrievalConfig` value, so the benchmark can compare
+configurations in one process and Phase 5 can rerun them from env vars alone.
+"""
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Protocol
+
+from app.domain.ingestion import ContentType, PageRange, SparseVector
+
+# Qdrant's own default is 2; the paper that introduced RRF used 60.
+DEFAULT_RRF_K = 60
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise ValueError(message)
+
+
+class SearchMode(StrEnum):
+    DENSE = "dense"
+    SPARSE = "sparse"
+    HYBRID = "hybrid"
+
+    @property
+    def uses_dense(self) -> bool:
+        return self is not SearchMode.SPARSE
+
+    @property
+    def uses_sparse(self) -> bool:
+        return self is not SearchMode.DENSE
+
+
+@dataclass(frozen=True)
+class RetrievalConfig:
+    """One retrieval configuration.
+
+    `rerank_candidates` chunks are reranked down to `top_k`; without rerank, the
+    search returns `top_k` directly. Each prefetch must return at least as many
+    chunks as the fusion is asked for, or a filtered or fused search comes back short.
+    """
+
+    mode: SearchMode
+    rerank: bool
+    top_k: int
+    rerank_candidates: int
+    prefetch_dense: int
+    prefetch_sparse: int
+    rrf_k: int
+    product_filter: bool
+    relevance_threshold: float | None
+    dense_query_prefix: str
+
+    def __post_init__(self) -> None:
+        _require(self.top_k >= 1, "top_k must be at least 1")
+        _require(self.rerank_candidates >= self.top_k, "rerank_candidates must be at least top_k")
+        _require(
+            min(self.prefetch_dense, self.prefetch_sparse) >= self.rerank_candidates,
+            "prefetch limits must be at least rerank_candidates",
+        )
+        _require(self.rrf_k >= 1, "rrf_k must be at least 1")
+
+    @property
+    def candidates(self) -> int:
+        """How many chunks the search returns."""
+        return self.rerank_candidates if self.rerank else self.top_k
+
+
+@dataclass(frozen=True)
+class SearchRequest:
+    """What the vector store is asked: the vectors the mode needs and every limit."""
+
+    mode: SearchMode
+    dense: Sequence[float] | None
+    sparse: SparseVector | None
+    limit: int
+    prefetch_dense: int
+    prefetch_sparse: int
+    rrf_k: int = DEFAULT_RRF_K
+    doc_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _require(
+            (self.dense is not None) == self.mode.uses_dense,
+            f"a {self.mode.value} search needs exactly the dense vector it uses",
+        )
+        _require(
+            (self.sparse is not None) == self.mode.uses_sparse,
+            f"a {self.mode.value} search needs exactly the sparse vector it uses",
+        )
+        _require(self.limit >= 1, "limit must be at least 1")
+        _require(
+            min(self.prefetch_dense, self.prefetch_sparse) >= self.limit,
+            "prefetch limits must be at least the limit",
+        )
+        _require(self.rrf_k >= 1, "rrf_k must be at least 1")
+        _require(self.doc_id is None or bool(self.doc_id.strip()), "doc_id must not be blank")
+
+
+@dataclass(frozen=True)
+class SearchHit:
+    """One chunk as the store returned it; `score` is the store's (cosine, BM25 or RRF)."""
+
+    chunk_id: str
+    doc_id: str
+    section_path: tuple[str, ...]
+    pages: PageRange
+    content_type: ContentType
+    has_warning: bool
+    text: str
+    score: float
+
+
+@dataclass(frozen=True)
+class RetrievedChunk:
+    hit: SearchHit
+    rank: int
+    rerank_score: float | None
+
+    def __post_init__(self) -> None:
+        _require(self.rank >= 1, "rank starts at 1")
+
+    @property
+    def score(self) -> float:
+        """The score that ordered this chunk: the reranker's when it ran."""
+        return self.rerank_score if self.rerank_score is not None else self.hit.score
+
+
+class FilterSource(StrEnum):
+    REQUEST = "request"
+    PRODUCT_RULE = "product_rule"
+
+
+@dataclass(frozen=True)
+class AppliedFilter:
+    doc_id: str
+    source: FilterSource
+
+    def __post_init__(self) -> None:
+        _require(bool(self.doc_id.strip()), "doc_id must not be blank")
+
+
+@dataclass(frozen=True)
+class Relevance:
+    """The top reranker score against the calibrated threshold.
+
+    Fused RRF scores are rank-based, not a relevance signal, so without the reranker
+    the signal is unavailable. Without a threshold the signal is still reported, with
+    no flag. Phase 3 decides what the flag does.
+    """
+
+    signal: float | None
+    threshold: float | None
+    above_threshold: bool | None
+
+    @classmethod
+    def from_top_score(cls, score: float | None, *, threshold: float | None) -> "Relevance":
+        above = None if score is None or threshold is None else score >= threshold
+        return cls(signal=score, threshold=threshold, above_threshold=above)
+
+    @property
+    def available(self) -> bool:
+        return self.signal is not None
+
+
+@dataclass(frozen=True)
+class StageTimings:
+    """Milliseconds per stage; None for a stage the configuration skipped."""
+
+    dense_embed_ms: float | None
+    sparse_embed_ms: float | None
+    search_ms: float
+    rerank_ms: float | None
+    total_ms: float
+
+
+@dataclass(frozen=True)
+class RetrievalResult:
+    chunks: tuple[RetrievedChunk, ...]
+    relevance: Relevance
+    filter: AppliedFilter | None
+    timings: StageTimings
+    config: RetrievalConfig
+
+
+class RetrievalUnavailableError(Exception):
+    """The vector store could not answer: down, timed out, or no live index.
+
+    The message names the stage and the error type only, never the query.
+    """
+
+
+class ModelsNotReadyError(Exception):
+    """The query models are still loading or failed to load."""
+
+
+# ---------------------------------------------------------------- interfaces
+
+
+class QueryEmbedder(Protocol):
+    """Query-side encoders. They must match the document encoders the index was
+    built with, but use the query paths (BM25 queries carry unit weights).
+    """
+
+    async def embed_query_dense(self, text: str) -> list[float]: ...
+
+    async def embed_query_sparse(self, text: str) -> SparseVector: ...
+
+
+class SearchStore(Protocol):
+    async def search(self, request: SearchRequest) -> list[SearchHit]:
+        """Best first; raise RetrievalUnavailableError on any store failure."""
+        ...
+
+
+class Reranker(Protocol):
+    @property
+    def model(self) -> str: ...
+
+    async def rerank(self, query: str, texts: Sequence[str]) -> list[float]:
+        """One score per text, in input order; higher is more relevant."""
+        ...

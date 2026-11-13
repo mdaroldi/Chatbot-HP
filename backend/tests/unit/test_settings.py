@@ -6,6 +6,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from app.core.settings import Environment, LogLevel, Settings, get_settings
+from app.domain.retrieval import SearchMode
 
 
 def test_safe_defaults_when_only_required_values_are_set() -> None:
@@ -411,3 +412,147 @@ def test_chunk_merge_floor_must_be_below_the_limit(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("CHUNK_MIN_TOKENS", "100")
     with pytest.raises(ValidationError, match="chunk_min_tokens must be below chunk_max_tokens"):
         Settings()
+
+
+# ------------------------------------------------------------------ retrieval (Phase 2)
+
+
+def test_retrieval_defaults_are_hybrid_with_rerank_and_no_calibrated_threshold() -> None:
+    settings = Settings()
+
+    assert settings.retrieval_mode is SearchMode.HYBRID
+    assert settings.retrieval_rerank_enabled is True
+    assert settings.retrieval_top_k == 5
+    assert settings.retrieval_rerank_candidates == 20
+    assert settings.retrieval_prefetch_dense_limit == 20
+    assert settings.retrieval_prefetch_sparse_limit == 20
+    assert settings.retrieval_rrf_k == 60
+    assert settings.retrieval_product_filter_enabled is False
+    assert settings.retrieval_relevance_threshold is None
+    assert settings.retrieval_dense_query_prefix == ""
+    assert settings.reranker_model == "Xenova/ms-marco-MiniLM-L-6-v2"
+    assert settings.inference_workers == 2
+    assert settings.inference_onnx_threads == 2
+    assert settings.qdrant_search_timeout_seconds == 2.0
+    assert settings.query_max_chars == 1000
+    assert settings.search_endpoint_enabled is False
+
+
+def test_retrieval_settings_are_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    values = {
+        "RETRIEVAL_MODE": "sparse",
+        "RETRIEVAL_RERANK_ENABLED": "false",
+        "RETRIEVAL_TOP_K": "3",
+        "RETRIEVAL_RERANK_CANDIDATES": "10",
+        "RETRIEVAL_PREFETCH_DENSE_LIMIT": "30",
+        "RETRIEVAL_PREFETCH_SPARSE_LIMIT": "40",
+        "RETRIEVAL_RRF_K": "2",
+        "RETRIEVAL_PRODUCT_FILTER_ENABLED": "true",
+        "RETRIEVAL_RELEVANCE_THRESHOLD": "-1.5",
+        "RETRIEVAL_DENSE_QUERY_PREFIX": "Represent this sentence: ",
+        "RERANKER_MODEL": "jinaai/jina-reranker-v1-turbo-en",
+        "INFERENCE_WORKERS": "4",
+        "INFERENCE_ONNX_THREADS": "1",
+        "QDRANT_SEARCH_TIMEOUT_SECONDS": "0.5",
+        "QUERY_MAX_CHARS": "500",
+        "SEARCH_ENDPOINT_ENABLED": "true",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+
+    settings = Settings()
+
+    assert settings.retrieval_mode is SearchMode.SPARSE
+    assert settings.retrieval_rerank_enabled is False
+    assert (settings.retrieval_top_k, settings.retrieval_rerank_candidates) == (3, 10)
+    assert (settings.retrieval_prefetch_dense_limit, settings.retrieval_prefetch_sparse_limit) == (
+        30,
+        40,
+    )
+    assert settings.retrieval_rrf_k == 2
+    assert settings.retrieval_product_filter_enabled is True
+    assert settings.retrieval_relevance_threshold == -1.5
+    assert settings.retrieval_dense_query_prefix == "Represent this sentence: "
+    assert settings.reranker_model == "jinaai/jina-reranker-v1-turbo-en"
+    assert (settings.inference_workers, settings.inference_onnx_threads) == (4, 1)
+    assert settings.qdrant_search_timeout_seconds == 0.5
+    assert settings.query_max_chars == 500
+    assert settings.search_endpoint_enabled is True
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("RETRIEVAL_MODE", "keyword"),
+        ("RETRIEVAL_TOP_K", "0"),
+        ("RETRIEVAL_TOP_K", "21"),
+        ("RETRIEVAL_RERANK_CANDIDATES", "101"),
+        ("RETRIEVAL_PREFETCH_DENSE_LIMIT", "201"),
+        ("RETRIEVAL_PREFETCH_SPARSE_LIMIT", "201"),
+        ("RETRIEVAL_RRF_K", "0"),
+        ("RETRIEVAL_RRF_K", "1001"),
+        ("RETRIEVAL_RELEVANCE_THRESHOLD", "101"),
+        ("RETRIEVAL_RELEVANCE_THRESHOLD", "-101"),
+        ("RETRIEVAL_RELEVANCE_THRESHOLD", "nan"),
+        ("RETRIEVAL_DENSE_QUERY_PREFIX", "x" * 201),
+        ("RERANKER_MODEL", ""),
+        ("INFERENCE_WORKERS", "0"),
+        ("INFERENCE_WORKERS", "33"),
+        ("INFERENCE_ONNX_THREADS", "0"),
+        ("INFERENCE_ONNX_THREADS", "33"),
+        ("QDRANT_SEARCH_TIMEOUT_SECONDS", "0"),
+        ("QDRANT_SEARCH_TIMEOUT_SECONDS", "31"),
+        ("QUERY_MAX_CHARS", "0"),
+        ("QUERY_MAX_CHARS", "4001"),
+    ],
+)
+def test_retrieval_settings_are_bounded(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError, match=name.lower()):
+        Settings()
+
+
+def test_rerank_candidates_must_cover_top_k(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RETRIEVAL_TOP_K", "10")
+    monkeypatch.setenv("RETRIEVAL_RERANK_CANDIDATES", "10")
+    assert Settings().retrieval_rerank_candidates == 10  # equal is fine
+
+    monkeypatch.setenv("RETRIEVAL_RERANK_CANDIDATES", "9")
+    with pytest.raises(ValidationError, match="retrieval_rerank_candidates must be at least"):
+        Settings()
+
+
+@pytest.mark.parametrize(
+    "name", ["RETRIEVAL_PREFETCH_DENSE_LIMIT", "RETRIEVAL_PREFETCH_SPARSE_LIMIT"]
+)
+def test_prefetch_limits_must_cover_the_rerank_candidates(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    monkeypatch.setenv(name, "20")
+    assert Settings()  # equal to the candidates is fine
+
+    monkeypatch.setenv(name, "19")
+    with pytest.raises(ValidationError, match="prefetch limits must be at least"):
+        Settings()
+
+
+def test_the_search_endpoint_is_rejected_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SEARCH_ENDPOINT_ENABLED", "true")
+    monkeypatch.setenv("APP_ENV", "test")
+    assert Settings().search_endpoint_enabled is True
+
+    monkeypatch.setenv("APP_ENV", "production")
+    with pytest.raises(ValidationError, match="search_endpoint_enabled=true is not allowed"):
+        Settings()
+
+
+@pytest.mark.parametrize("raw", ["", "  "])
+def test_a_blank_relevance_threshold_means_not_calibrated(
+    monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    monkeypatch.setenv("RETRIEVAL_RELEVANCE_THRESHOLD", raw)
+
+    assert Settings().retrieval_relevance_threshold is None

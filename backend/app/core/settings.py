@@ -9,6 +9,8 @@ from urllib.parse import quote, urlsplit
 from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from app.domain.retrieval import DEFAULT_RRF_K, SearchMode
+
 _ALLOWED_ORIGIN_SCHEMES = frozenset({"http", "https"})
 
 
@@ -163,6 +165,86 @@ class Settings(BaseSettings):
         "same parent (ADR 0005).",
     )
 
+    retrieval_mode: SearchMode = Field(
+        default=SearchMode.HYBRID,
+        description="`dense`, `sparse` or `hybrid` (dense and BM25 fused with RRF).",
+    )
+    retrieval_rerank_enabled: bool = Field(
+        default=True, description="Rerank the candidates with the cross-encoder."
+    )
+    retrieval_top_k: int = Field(
+        default=5, ge=1, le=20, description="Chunks returned per question."
+    )
+    retrieval_rerank_candidates: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Candidates the reranker scores; at least `RETRIEVAL_TOP_K`.",
+    )
+    retrieval_prefetch_dense_limit: int = Field(
+        default=20,
+        ge=1,
+        le=200,
+        description="Dense candidates before fusion; at least `RETRIEVAL_RERANK_CANDIDATES`.",
+    )
+    retrieval_prefetch_sparse_limit: int = Field(
+        default=20,
+        ge=1,
+        le=200,
+        description="BM25 candidates before fusion; at least `RETRIEVAL_RERANK_CANDIDATES`.",
+    )
+    retrieval_rrf_k: int = Field(
+        default=DEFAULT_RRF_K,
+        ge=1,
+        le=1000,
+        description="Reciprocal rank fusion constant k (Qdrant's default is 2).",
+    )
+    retrieval_product_filter_enabled: bool = Field(
+        default=False,
+        description="Restrict the search to one manual when the question names its product.",
+    )
+    retrieval_relevance_threshold: float | None = Field(
+        default=None,
+        ge=-100,
+        le=100,
+        allow_inf_nan=False,
+        description="Lowest top reranker score that counts as relevant; unset until "
+        "calibrated (ADR 0009). Belongs to one reranker model.",
+    )
+    retrieval_dense_query_prefix: str = Field(
+        default="",
+        max_length=200,
+        description="Text put before the question for the dense query only (BGE instruction).",
+    )
+    reranker_model: str = Field(
+        default="Xenova/ms-marco-MiniLM-L-6-v2",
+        min_length=1,
+        description="fastembed cross-encoder; must be pinned in `models.toml`.",
+    )
+    inference_workers: int = Field(
+        default=2,
+        ge=1,
+        le=32,
+        description="Threads that run embedding and reranking for requests.",
+    )
+    inference_onnx_threads: int = Field(
+        default=2,
+        ge=1,
+        le=32,
+        description="ONNX intra-op threads per model call; workers times threads should "
+        "fit the container's CPUs.",
+    )
+    qdrant_search_timeout_seconds: float = Field(
+        default=2.0, gt=0, le=30, description="Deadline for one Qdrant search."
+    )
+    query_max_chars: int = Field(
+        default=1000, ge=1, le=4000, description="Longest accepted question, in characters."
+    )
+    search_endpoint_enabled: bool = Field(
+        default=False,
+        description="Serve the `POST /v1/search` debug endpoint; rejected in production.",
+    )
+
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
     def _parse_cors_origins(cls, value: object) -> list[str]:
@@ -176,6 +258,12 @@ class Settings(BaseSettings):
             raise ValueError("cors_allowed_origins must not contain empty entries")
         return [_normalize_origin(origin) for origin in origins]
 
+    @field_validator("retrieval_relevance_threshold", mode="before")
+    @classmethod
+    def _blank_threshold_is_unset(cls, value: object) -> object:
+        """`.env.example` leaves the threshold empty until it is calibrated."""
+        return None if isinstance(value, str) and not value.strip() else value
+
     @model_validator(mode="after")
     def _no_exception_messages_in_production(self) -> "Settings":
         if self.app_env is Environment.PRODUCTION and self.log_include_exception_messages:
@@ -186,6 +274,22 @@ class Settings(BaseSettings):
     def _merge_floor_below_the_limit(self) -> "Settings":
         if self.chunk_min_tokens >= self.chunk_max_tokens:
             raise ValueError("chunk_min_tokens must be below chunk_max_tokens")
+        return self
+
+    @model_validator(mode="after")
+    def _retrieval_limits_nest(self) -> "Settings":
+        if self.retrieval_rerank_candidates < self.retrieval_top_k:
+            raise ValueError("retrieval_rerank_candidates must be at least retrieval_top_k")
+        prefetch = min(self.retrieval_prefetch_dense_limit, self.retrieval_prefetch_sparse_limit)
+        if prefetch < self.retrieval_rerank_candidates:
+            raise ValueError("prefetch limits must be at least retrieval_rerank_candidates")
+        return self
+
+    @model_validator(mode="after")
+    def _no_search_endpoint_in_production(self) -> "Settings":
+        """The debug endpoint has no rate limiter until Phase 3."""
+        if self.app_env is Environment.PRODUCTION and self.search_endpoint_enabled:
+            raise ValueError("search_endpoint_enabled=true is not allowed in production")
         return self
 
     @property

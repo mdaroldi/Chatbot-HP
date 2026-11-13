@@ -184,6 +184,22 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `EMBEDDING_BATCH_SIZE` | `32` | Texts per embedding batch (bounds memory). |
 | `CHUNK_MAX_TOKENS` | `450` | Largest chunk in dense-model tokens, prefix included; bge-small reads at most 512 (ADR 0005). |
 | `CHUNK_MIN_TOKENS` | `65` | Sections below this many tokens merge with the next one under the same parent (ADR 0005). |
+| `RETRIEVAL_MODE` | `hybrid` | `dense`, `sparse` or `hybrid` (dense and BM25 fused with RRF). |
+| `RETRIEVAL_RERANK_ENABLED` | `true` | Rerank the candidates with the cross-encoder. |
+| `RETRIEVAL_TOP_K` | `5` | Chunks returned per question. |
+| `RETRIEVAL_RERANK_CANDIDATES` | `20` | Candidates the reranker scores; at least `RETRIEVAL_TOP_K`. |
+| `RETRIEVAL_PREFETCH_DENSE_LIMIT` | `20` | Dense candidates before fusion; at least `RETRIEVAL_RERANK_CANDIDATES`. |
+| `RETRIEVAL_PREFETCH_SPARSE_LIMIT` | `20` | BM25 candidates before fusion; at least `RETRIEVAL_RERANK_CANDIDATES`. |
+| `RETRIEVAL_RRF_K` | `60` | Reciprocal rank fusion constant k (Qdrant's default is 2). |
+| `RETRIEVAL_PRODUCT_FILTER_ENABLED` | `false` | Restrict the search to one manual when the question names its product. |
+| `RETRIEVAL_RELEVANCE_THRESHOLD` | *unset* | Lowest top reranker score that counts as relevant; unset until calibrated (ADR 0009). Belongs to one reranker model. |
+| `RETRIEVAL_DENSE_QUERY_PREFIX` | *empty* | Text put before the question for the dense query only (BGE instruction). |
+| `RERANKER_MODEL` | `Xenova/ms-marco-MiniLM-L-6-v2` | fastembed cross-encoder; must be pinned in `models.toml`. |
+| `INFERENCE_WORKERS` | `2` | Threads that run embedding and reranking for requests. |
+| `INFERENCE_ONNX_THREADS` | `2` | ONNX intra-op threads per model call; workers times threads should fit the container's CPUs. |
+| `QDRANT_SEARCH_TIMEOUT_SECONDS` | `2.0` | Deadline for one Qdrant search. |
+| `QUERY_MAX_CHARS` | `1000` | Longest accepted question, in characters. |
+| `SEARCH_ENDPOINT_ENABLED` | `false` | Serve the `POST /v1/search` debug endpoint; rejected in production. |
 <!-- settings-table:end -->
 
 A unit test fails if this table, `.env.example` and the `Settings` class disagree.

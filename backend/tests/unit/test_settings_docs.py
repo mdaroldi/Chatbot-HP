@@ -41,6 +41,13 @@ def test_defaults_are_rendered_as_env_values() -> None:
     assert defaults["`READINESS_TIMEOUT_SECONDS`"] == "`2.0`"
 
 
+def test_unset_and_empty_defaults_are_named_not_rendered_as_code() -> None:
+    defaults = {row[0]: row[1] for row in table_rows()}
+
+    assert defaults["`RETRIEVAL_RELEVANCE_THRESHOLD`"] == "*unset*"
+    assert defaults["`RETRIEVAL_DENSE_QUERY_PREFIX`"] == "*empty*"
+
+
 def test_required_secret_has_no_default_shown() -> None:
     defaults = {row[0]: row[1] for row in table_rows()}
 
