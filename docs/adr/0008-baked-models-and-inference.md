@@ -49,8 +49,8 @@ revisions.
 
 | Model (setting value) | Files come from | Revision | License |
 |---|---|---|---|
-| `Xenova/ms-marco-MiniLM-L-6-v2` | same repository (ONNX export) | `a09144355adeed5f58c8ed011d209bf8ee5a1fec` | The export's card declares no license; it is an ONNX conversion of `cross-encoder/ms-marco-MiniLM-L-6-v2`, which is Apache-2.0. fastembed's metadata lists Apache-2.0. |
-| `jinaai/jina-reranker-v1-turbo-en` | same repository | `b8c14f4e723d9e0aab4732a7b7b93741eeeb77c2` | Apache-2.0 |
+| `Xenova/ms-marco-MiniLM-L-6-v2` | same repository (ONNX export) | `a09144355adeed5f58c8ed011d209bf8ee5a1fec` | **The export's own card declares no license.** Its card names `base_model: cross-encoder/ms-marco-MiniLM-L-6-v2` and describes itself as that model with ONNX weights; that base model's card declares Apache-2.0 (checked 2026-11-13, base revision `233902d25c440f23af6f7d6e94d2946bac0bee0a`). The Apache-2.0 call rests on the base model's card. fastembed's metadata also lists Apache-2.0. |
+| `jinaai/jina-reranker-v1-turbo-en` | same repository | `b8c14f4e723d9e0aab4732a7b7b93741eeeb77c2` | Apache-2.0, as declared on its card |
 
 `jinaai/jina-reranker-v2-base-multilingual` is excluded, because its license is
 CC-BY-NC-4.0. `BAAI/bge-reranker-base` (MIT, 1.04 GB) was not measured: on this CPU it
@@ -79,9 +79,21 @@ Changing one digest in `models.toml` fails the build with
 **Offline start:** in the image, with `--network none --read-only --cap-drop ALL`
 and uid 10001, all four models verify against their pins, load and answer one call.
 **Ingestion** with the store took 62 s for a forced build (40 s embedding and
-upsert). One earlier run took 12.7 min in the embedding step, while the Docker API
-was returning errors; it did not happen again, and embedding the whole corpus alone
-takes 38 s.
+upsert).
+
+**Unexplained observation: one slow ingest (2026-11-13).** The first `docker compose
+up --build` after the store was added spent 12 min 42 s between the last
+`document chunked` line (11:42:30 UTC) and `index build published` (11:55:12), against
+about 40 s normally. Conditions: the image and its store had just been baked
+(first build with the models stage); ingestion ran with its usual settings (fastembed
+`threads` unset, so onnxruntime used all 8 vCPUs, batch size 32); the container showed
+790% CPU and 1.48 GiB of 3.8 GiB; while it ran, the Docker API answered one request
+with a 500 error. It did not recur: a forced build right after took 62 s, and embedding
+all 287 chunks alone in the same image takes 38 s (35.6 s with 4 threads). The cause
+is not known, and the log could not say which stage was slow. Since Phase 2 commit 6c
+every document line carries its seconds and each of `embed_dense`, `embed_sparse` and
+`publish` logs one `stage done` line with its item count and seconds. **If it recurs,
+it is investigated before Phase 6.**
 
 **Inference latency.** Warm, 30 repetitions after 3 warm-up calls, 20 real chunks
 (mean 930 characters, breadcrumb included), p50 / p95 in ms:
@@ -106,8 +118,11 @@ MiniLM-L6 49 MB, jina-turbo 90 MB.
 **Reranker input.** fastembed truncates both rerankers at 512 tokens; jina's 8K
 context is not used. The reranker sees the stored chunk text, breadcrumb included.
 None of the 13,776 pairs of an in-scope dev question with a chunk is longer (the
-longest dev question is 26 tokens). A 1,000-character query is truncated with 55 of
-the 287 chunks.
+longest dev question is 26 tokens). A query at the `QUERY_MAX_CHARS` limit of 1,000
+characters is truncated together with 55 of the 287 chunks: the tokenizer cuts the
+pair to 512 tokens, so the reranker scores part of the pair. `QUERY_MAX_CHARS` stays
+at 1,000 for now; **Phase 3 takes this as an input for the chat message length limit**
+(the standalone query, after rewriting, is what reaches the reranker).
 
 ## Alternatives considered
 
@@ -124,5 +139,12 @@ the 287 chunks.
   it; about 147 MB unpacked goes away if MiniLM-L6 wins.
 - The image build needs the hub; the PDFs are still downloaded at runtime by
   `ingest` (ADR 0007).
+- **CI cost, accepted:** the CI `docker` job builds with a plain `docker build` and
+  downloads about 300 MB of models on every run (the cache mount does not survive
+  between runners). Caching the models stage with the buildx GitHub Actions cache was
+  evaluated and not adopted: it needs new third-party actions (pinned by SHA, with the
+  cooldown) and a different build command than `make images`, and that cache stores
+  layers only, so it helps only while `models.toml` and the store code are unchanged.
+  Revisit if the job time becomes a problem.
 - Changing a pin rebuilds the store; `--if-needed` still compares only the dense and
   BM25 pins (ADR 0006), so a reranker change never rebuilds the index.
