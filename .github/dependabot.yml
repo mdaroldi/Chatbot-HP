@@ -11,6 +11,12 @@ updates:
     cooldown:
       default-days: 5
     open-pull-requests-limit: 5
+    # fastembed caps huggingface-hub below 2.0 (backend/pyproject.toml states it).
+    # Dependabot widens that cap anyway, the resolver rejects 2.x and the whole job
+    # fails. Lift this when fastembed allows 2.x.
+    ignore:
+      - dependency-name: huggingface-hub
+        update-types: ["version-update:semver-major"]
     groups:
       python:
         patterns: ["*"]

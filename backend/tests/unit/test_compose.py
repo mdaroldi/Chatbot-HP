@@ -147,15 +147,30 @@ def test_postgres_stays_on_one_major_version_in_both_compose_files(
     assert services["postgres"]["volumes"] == ["postgres-data:/var/lib/postgresql/data"]
 
 
+def dependabot_ignores(ecosystem: str) -> list[dict[str, Any]]:
+    updates = [u for u in load(DEPENDABOT)["updates"] if u["package-ecosystem"] == ecosystem]
+    assert len(updates) == 1, ecosystem
+    ignores: list[dict[str, Any]] = updates[0].get("ignore", [])
+    return ignores
+
+
+def major_ignore(name: str) -> dict[str, Any]:
+    return {"dependency-name": name, "update-types": ["version-update:semver-major"]}
+
+
 def test_dependabot_never_proposes_a_postgres_major_upgrade() -> None:
     """A major upgrade needs a new mount point and pg_upgrade; it is a decision, not a bump."""
-    updates = load(DEPENDABOT)["updates"]
-    compose_updates = [u for u in updates if u["package-ecosystem"] == "docker-compose"]
+    assert major_ignore("postgres") in dependabot_ignores("docker-compose")
 
-    assert len(compose_updates) == 1
-    assert {"dependency-name": "postgres", "update-types": ["version-update:semver-major"]} in (
-        compose_updates[0].get("ignore", [])
-    )
+
+def test_dependabot_skips_huggingface_hub_majors_while_the_backend_caps_them() -> None:
+    """fastembed caps huggingface-hub below 2.0. Dependabot widens the backend's own cap
+    anyway, the resolver rejects 2.x, and the whole uv update job fails every week."""
+    backend = tomllib.loads(backend_file("pyproject.toml"))["project"]["dependencies"]
+    hub = [spec for spec in backend if spec.startswith("huggingface-hub")]
+
+    assert hub == ["huggingface-hub>=1.33.0,<2.0"]
+    assert major_ignore("huggingface-hub") in dependabot_ignores("uv")
 
 
 def test_qdrant_telemetry_is_disabled(services: dict[str, Service]) -> None:
