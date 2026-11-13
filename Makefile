@@ -115,9 +115,11 @@ inspect-chunks: ## Write every chunk to ingest-review/chunks.md for local review
 		python -m app.ingestion --inspect-chunks ../ingest-review/chunks.md
 
 # `docker compose up` builds the index only when it is not current (--if-needed);
-# this target always builds a new one and moves the alias (ADR 0007).
+# this target always builds a new one and moves the alias (ADR 0007). The backend
+# service builds the image that ingest runs, so `run --build` would not rebuild it.
 ingest: ## Rebuild the vector index now (forced) through compose
-	docker compose run --rm --build ingest --force
+	docker compose build backend
+	docker compose run --rm ingest --force
 
 eval: ## Run the quality benchmark
 	@echo "not implemented yet"; exit 1

@@ -350,11 +350,12 @@ fails the checksum check.
 
 ## Phase 7 hardening list (deferred from Phase 1)
 
-- **Triple image build:** `backend`, `migrate` and `ingest` each declare `build:
-  ./backend` with the same image tag, so compose runs three parallel builds of one
-  image (cheap with the shared layer cache, but redundant). Build once, for example
-  by keeping `build` on one service only, without breaking `make ingest`
-  (`docker compose run --build`).
+- **Triple image build:** done in Phase 1 (`fix(compose): build the backend image
+  once`). With an empty build cache the three parallel builds of one tag raced on
+  export ("image ... already exists"; 2 of 3 `--no-cache` builds failed on the
+  default docker driver), so it was a bug, not only redundancy. Only `backend`
+  builds; `migrate` and `ingest` run its tag with `pull_policy: never`; `make
+  ingest` runs `docker compose build backend` before the forced run.
 - **Separate ingest image** (ADR 0004 way out): the API image carries the ingestion
   stack, about 92 MB compressed.
 

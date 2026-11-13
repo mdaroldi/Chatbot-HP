@@ -12,9 +12,10 @@ x-hardening: &hardening
   tmpfs: ["/tmp"]
   restart: unless-stopped
 
-# The backend image runs the API, the migrations and the ingestion.
+# The backend image runs the API, the migrations and the ingestion. Only the
+# backend service builds it: services that share a build race to export the same
+# tag when the build cache is empty ("image ... already exists").
 x-backend-image: &backend-image
-  build: ./backend
   image: hpdocs-backend:local
   # Same numeric non-root user as the image's USER, stated here so it holds
   # even if the image changes.
@@ -25,6 +26,8 @@ x-backend-image: &backend-image
 # API, which these containers never start.
 x-one-shot: &one-shot
   restart: "no"
+  # The image is built by the backend service and exists only locally.
+  pull_policy: never
   healthcheck:
     disable: true
 
@@ -98,6 +101,7 @@ services:
 
   backend:
     <<: [*hardening, *backend-image]
+    build: ./backend
     environment:
       <<: [*logging-env, *postgres-env, *telemetry-env]
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8501}

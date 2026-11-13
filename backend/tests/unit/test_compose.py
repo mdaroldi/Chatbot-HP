@@ -17,6 +17,7 @@ from app.core.settings import Settings
 REPO = pathlib.Path(__file__).resolve().parents[3]
 COMPOSE = REPO / "docker-compose.yml"
 TEST_COMPOSE = REPO / "docker-compose.test.yml"
+MAKEFILE = REPO / "Makefile"
 
 SERVICES = {"backend", "frontend", "postgres", "qdrant", "migrate", "ingest"}
 APP_SERVICES = {"backend", "frontend"}
@@ -25,6 +26,7 @@ ONE_SHOT_SERVICES = {"migrate", "ingest"}
 BACKEND_IMAGE_SERVICES = {"backend", *ONE_SHOT_SERVICES}
 BIND = "${BIND_ADDRESS:-127.0.0.1}"
 BACKEND_IMAGE = "hpdocs-backend:local"
+FRONTEND_IMAGE = "hpdocs-frontend:local"
 APP_USER = "10001:10001"
 CORPUS_CACHE = "/var/cache/hpdocs/corpus"
 MODEL_CACHE = "/var/cache/hpdocs/models"
@@ -172,10 +174,43 @@ def test_long_running_services_restart(services: dict[str, Service]) -> None:
         assert services[name]["restart"] == "unless-stopped"
 
 
-@pytest.mark.parametrize("name", sorted(BACKEND_IMAGE_SERVICES))
-def test_backend_image_services_share_one_build(services: dict[str, Service], name: str) -> None:
+def test_only_the_backend_service_builds_the_backend_image(services: dict[str, Service]) -> None:
+    """Three services building one tag race on export with a cold cache ("already exists")."""
+    builders = {name for name, service in services.items() if "build" in service}
+
+    assert builders == APP_SERVICES
+    assert services["backend"]["build"] == "./backend"
+    assert services["backend"]["image"] == BACKEND_IMAGE
+    assert services["frontend"]["build"] == "./frontend"
+    assert services["frontend"]["image"] == FRONTEND_IMAGE
+
+
+@pytest.mark.parametrize("name", sorted(ONE_SHOT_SERVICES))
+def test_one_shot_services_run_the_backend_image_and_never_pull_it(
+    services: dict[str, Service], name: str
+) -> None:
+    """The tag exists only locally; a pull would fail or fetch a stranger's image."""
     assert services[name]["image"] == BACKEND_IMAGE
-    assert services[name]["build"] == "./backend"
+    assert services[name]["pull_policy"] == "never"
+
+
+def recipe(target: str) -> list[str]:
+    lines = MAKEFILE.read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(f"{target}:"))
+    body = []
+    for line in lines[start + 1 :]:
+        if not line.startswith("\t"):
+            break
+        body.append(line.strip())
+    return body
+
+
+def test_make_ingest_builds_the_backend_image_once_before_the_forced_run() -> None:
+    """ingest has no build section, so `run --build` would not rebuild the image."""
+    assert recipe("ingest") == [
+        "docker compose build backend",
+        "docker compose run --rm ingest --force",
+    ]
 
 
 def test_migrate_applies_migrations_and_ingest_builds_only_when_needed(
