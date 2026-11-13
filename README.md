@@ -226,6 +226,7 @@ A unit test fails if this table, `.env.example` and the `Settings` class disagre
 | `make ingest` | Build a new vector index now and move the alias (`up` builds only when needed) |
 | `make inspect-chunks` | Write every chunk to `ingest-review/chunks.md` (git-ignored) for review |
 | `make model-pins` | Regenerate `backend/models.toml` from the hub and print the diff (manual, review before committing) |
+| `make eval-retrieval` | Retrieval benchmark against the running stack (`EVAL_ARGS=preflight` or `run ...`; see [eval/README.md](eval/README.md)) |
 | `make eval` / `load` | Later phases; print "not implemented yet" and fail |
 
 ## Repository layout
@@ -238,6 +239,7 @@ backend/            FastAPI app (uv project, own lock file)
   app/services/     orchestration (readiness)
   app/infra/        adapters: Postgres, Qdrant, PDF parser, downloads, fastembed
   app/ingestion/    ingestion stages and CLI (python -m app.ingestion)
+  app/evaluation/   retrieval benchmark: golden set, metrics, runner, CLI (python -m app.evaluation)
   alembic/          migrations 0001-0003 (baseline, index_builds, error_type)
   corpus.toml       the two allowed manuals with their pinned SHA-256
   models.toml       the pinned embedding model revisions and file digests
@@ -246,7 +248,8 @@ backend/            FastAPI app (uv project, own lock file)
   tests/corpus/     the real manuals (marker `corpus`)
   tests/embeddings/ the real models (marker `model`)
 frontend/           Streamlit app (uv project, own lock file)
-eval/, loadtest/    placeholders for Phases 2, 5 and 6
+eval/               retrieval matrix and benchmark reports (Phase 2), generation metrics (Phase 5)
+loadtest/           placeholder for Phase 6
 docs/adr/           architecture decision records
 docker-compose.yml       full stack
 docker-compose.test.yml  throwaway Postgres and Qdrant for integration tests

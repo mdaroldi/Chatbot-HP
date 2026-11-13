@@ -256,6 +256,22 @@ def test_make_ingest_builds_the_backend_image_once_before_the_forced_run() -> No
     ]
 
 
+def test_make_eval_retrieval_runs_the_benchmark_in_the_backend_image() -> None:
+    """In process against the running stack (no deps, no profiles: ADR 0007), as the
+    caller's user so a Linux bind mount stays writable, with the commit it measures.
+    """
+    command = " ".join(line.removesuffix("\\").strip() for line in recipe("eval-retrieval"))
+
+    assert command.startswith("docker compose run --rm --no-deps ")
+    assert '--user "$$(id -u):$$(id -g)"' in command
+    assert '--volume "$(CURDIR)/eval:/eval"' in command
+    assert '--env GIT_SHA="$$(git rev-parse HEAD)$$(git diff --quiet HEAD || echo -dirty)"' in (
+        command
+    )
+    assert command.endswith("--entrypoint python backend -m app.evaluation $(EVAL_ARGS)")
+    assert re.search(r"^EVAL_ARGS \?= run$", MAKEFILE.read_text(), re.MULTILINE)
+
+
 def test_migrate_applies_migrations_and_ingest_builds_only_when_needed(
     services: dict[str, Service],
 ) -> None:

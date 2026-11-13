@@ -1,0 +1,60 @@
+# Named retrieval configurations for `make eval-retrieval` (ADR 0009).
+#
+# Each entry overrides only what it changes; every other value comes from the settings
+# the API would use (RETRIEVAL_*, RERANKER_MODEL), and the report records every resolved
+# value. Every configuration is scored over its candidate list (top_k is set to
+# RETRIEVAL_RERANK_CANDIDATES). Keys an entry may set: mode, rerank, rrf_k,
+# product_filter, dense_query_prefix, reranker.
+#
+# The first four rows are the baseline comparison; each later row changes exactly one
+# thing from `hybrid-rerank`. The BM25 avg_len ablation is not a row: it is a separate
+# index build, run with `--collection`.
+
+[bootstrap]
+seed = 20261113
+resamples = 2000
+
+[[configs]]
+name = "dense"
+mode = "dense"
+rerank = false
+
+[[configs]]
+name = "sparse"
+mode = "sparse"
+rerank = false
+
+[[configs]]
+name = "hybrid"
+mode = "hybrid"
+rerank = false
+
+[[configs]]
+name = "hybrid-rerank"
+mode = "hybrid"
+rerank = true
+
+[[configs]]
+name = "hybrid-rerank-jina-turbo"
+mode = "hybrid"
+rerank = true
+reranker = "jinaai/jina-reranker-v1-turbo-en"
+
+[[configs]]
+name = "hybrid-rerank-product-filter"
+mode = "hybrid"
+rerank = true
+product_filter = true
+
+[[configs]]
+name = "hybrid-rerank-bge-prefix"
+mode = "hybrid"
+rerank = true
+# The query instruction from the BGE model card, for the dense query only.
+dense_query_prefix = "Represent this sentence for searching relevant passages: "
+
+[[configs]]
+name = "hybrid-rerank-rrf-k2"
+mode = "hybrid"
+rerank = true
+rrf_k = 2

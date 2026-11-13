@@ -17,7 +17,8 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 
 .PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int \
 	fetch-test-assets models \
-	security images scan-images scan-config up down ingest inspect-chunks model-pins eval load check
+	security images scan-images scan-config up down ingest inspect-chunks model-pins \
+	eval-retrieval eval load check
 
 help: ## List available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -124,6 +125,19 @@ inspect-chunks: ## Write every chunk to ingest-review/chunks.md for local review
 ingest: ## Rebuild the vector index now (forced) through compose
 	docker compose build backend
 	docker compose run --rm ingest --force
+
+# Retrieval benchmark (ADR 0009): in process in the backend image, against the running
+# stack's index, with the baked models; no deps and no profiles (ADR 0007). EVAL_ARGS is
+# the command: `preflight`, or `run` with options, e.g. EVAL_ARGS="run --config dense".
+# It runs as the caller's user so a Linux bind mount of eval/ stays writable (the image
+# user is 10001); GIT_SHA ends in -dirty when tracked files have uncommitted changes.
+EVAL_ARGS ?= run
+
+eval-retrieval: ## Retrieval benchmark via compose (needs `make up`); EVAL_ARGS=preflight|run ...
+	docker compose run --rm --no-deps --user "$$(id -u):$$(id -g)" \
+		--volume "$(CURDIR)/eval:/eval" \
+		--env GIT_SHA="$$(git rev-parse HEAD)$$(git diff --quiet HEAD || echo -dirty)" \
+		--entrypoint python backend -m app.evaluation $(EVAL_ARGS)
 
 eval: ## Run the quality benchmark
 	@echo "not implemented yet"; exit 1
