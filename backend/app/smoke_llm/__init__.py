@@ -1,10 +1,12 @@
-"""`make smoke-llm`: a few answers from the real model, to see its latency and stops.
+"""`make smoke-llm`: a few answers and one rewrite from the real models, to see their
+latency, stops and whether the rewrite options are accepted.
 
 Manual and billed (it needs ANTHROPIC_API_KEY): never part of `make check` or CI.
 Each run sends the real answer system prompt with one synthetic excerpt (no HP text)
-and measures the time from the request to the first answer text. The report holds
-numbers and codes only: time to first token, stop reasons, the models that served
-and error codes, never the model's text.
+and measures the time from the request to the first answer text. Then one follow-up
+goes through the real query rewriter with a synthetic earlier turn. The report holds
+numbers and codes only: time to first token, stop reasons, the models that served,
+error codes and the rewrite's outcome, never the model's text.
 """
 
 import argparse
@@ -15,14 +17,17 @@ import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TextIO
 
 from app.core.settings import LLMProviderName, Settings, get_settings
+from app.domain.chat import Message, Outcome, Role
 from app.domain.ingestion import ContentType, PageRange
 from app.domain.llm import GenerationRequest, LLMError, LLMProvider, Purpose
 from app.domain.prompt import ANSWER_SYSTEM_PROMPT, answer_turn
 from app.domain.retrieval import RetrievedChunk, SearchHit
 from app.infra.llm_anthropic import AnthropicProvider, anthropic_config_from_settings
+from app.services.rewrite import QueryRewriter, RewriteResult, rewrite_config_from_settings
 
 MAX_RUNS = 50
 _DOC = "synthetic-manual"
@@ -38,7 +43,9 @@ _EXCERPT = SearchHit(
     "blow the dust out of the fan with compressed air.",
     score=1.0,
 )
-_QUESTION = "How do I clean the fan?"
+QUESTION = "How do I clean the fan?"
+FOLLOW_UP = "And how often should I do it?"
+_ANSWER = "Turn the device off, remove the fan cover and blow the dust out [S1]."
 
 ProviderFactory = Callable[[Settings], LLMProvider]
 
@@ -78,7 +85,7 @@ def smoke_request(model: str, max_tokens: int, effort: str | None) -> Generation
         purpose=Purpose.ANSWER,
         model=model,
         system=ANSWER_SYSTEM_PROMPT,
-        messages=(answer_turn(_QUESTION, [chunk], {_DOC: "Synthetic manual"}),),
+        messages=(answer_turn(QUESTION, [chunk], {_DOC: "Synthetic manual"}),),
         max_tokens=max_tokens,
         effort=effort,
     )
@@ -113,6 +120,29 @@ async def measure(
     return SmokeReport(runs, ttft, stops, models, errors)
 
 
+def _history() -> tuple[Message, ...]:
+    at = datetime(2026, 1, 1, tzinfo=UTC)
+    return (
+        Message("smoke-q", "smoke-c", 1, Role.USER, QUESTION, at),
+        Message("smoke-a", "smoke-c", 2, Role.ASSISTANT, _ANSWER, at, Outcome.COMPLETED),
+    )
+
+
+async def rewrite_once(provider: LLMProvider, settings: Settings) -> RewriteResult:
+    """The app's own rewriter and settings, so a rejected option (a model that does not
+    take `thinking: disabled`, say) shows up here as the fallback it would cause.
+    """
+    rewriter = QueryRewriter(provider, rewrite_config_from_settings(settings))
+    return await rewriter.rewrite(FOLLOW_UP, _history())
+
+
+def render_rewrite(result: RewriteResult) -> str:
+    if result.rewrite_ms is None:
+        return "rewrite: skipped (no history turns)\n"
+    outcome = "rewritten" if result.fallback is None else f"fallback={result.fallback}"
+    return f"rewrite: {outcome} ({round(result.rewrite_ms)} ms)\n"
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.smoke_llm", description=__doc__)
     parser.add_argument("--runs", type=_run_count, default=5, help=f"1 to {MAX_RUNS}")
@@ -137,9 +167,12 @@ async def run(
     request = smoke_request(
         settings.llm_answer_model, settings.llm_answer_max_tokens, settings.llm_answer_effort
     )
-    report = await measure(provider_factory(settings), request, args.runs)
+    provider = provider_factory(settings)
+    report = await measure(provider, request, args.runs)
     out.write(report.render())
-    return 1 if report.errors else 0
+    rewrite = await rewrite_once(provider, settings)
+    out.write(render_rewrite(rewrite))
+    return 1 if report.errors or rewrite.fallback is not None else 0
 
 
 def main(

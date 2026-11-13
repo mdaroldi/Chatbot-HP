@@ -134,7 +134,7 @@ ingest: ## Rebuild the vector index now (forced) through compose
 EVAL_ARGS ?= run
 SMOKE_ARGS ?= --runs 5
 
-smoke-llm: ## Manual, billed: real-model answers, prints TTFT p50 and stop reasons (needs the key)
+smoke-llm: ## Manual, billed: real-model answers and one rewrite; TTFT p50, stops, rewrite outcome (needs the key)
 	docker compose run --rm --no-deps --env LLM_PROVIDER=anthropic \
 		--entrypoint python backend -m app.smoke_llm $(SMOKE_ARGS)
 

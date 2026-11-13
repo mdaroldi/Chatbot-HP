@@ -1,5 +1,6 @@
-"""make smoke-llm: a few answers through the configured model, reported as numbers
-and codes only (time to first token, stop reasons, served models, error codes).
+"""make smoke-llm: a few answers and one follow-up rewrite through the configured
+models, reported as numbers and codes only (time to first token, stop reasons, served
+models, error codes, the rewrite's outcome).
 """
 
 import io
@@ -12,9 +13,10 @@ from pydantic import SecretStr
 
 from app import smoke_llm
 from app.domain.chat import Role
-from app.domain.llm import LLMTimeoutError, Purpose, StopReason
+from app.domain.llm import LLMRequestError, LLMTimeoutError, Purpose, StopReason
 from app.domain.prompt import ANSWER_SYSTEM_PROMPT
 from app.infra.llm_anthropic import AnthropicProvider
+from app.services.rewrite import RewriteFallback, RewriteResult
 from tests.unit.conftest import SettingsFactory
 from tests.unit.llm_fakes import FakeProvider
 
@@ -115,7 +117,8 @@ async def test_main_runs_the_configured_answer_model_and_prints_the_report(
     code = await smoke_llm.run(["--runs", "2"], settings, lambda _: fake, out)
 
     assert code == 0
-    assert [r.model for r in fake.requests] == ["answer-model", "answer-model"]
+    answers = [r.model for r in fake.requests if r.purpose is Purpose.ANSWER]
+    assert answers == ["answer-model", "answer-model"]
     assert "runs: 2\n" in out.getvalue()
     assert CANARY not in out.getvalue()
 
@@ -178,3 +181,83 @@ def test_the_module_runs_main_and_exits_with_its_code() -> None:
         runpy.run_module("app.smoke_llm", run_name="__main__")
 
     assert exited.value.code == 2
+
+
+async def test_main_makes_one_rewrite_call_with_the_rewrite_model(
+    make_settings: SettingsFactory,
+) -> None:
+    fake = FakeProvider(("standalone query about ", CANARY))
+    out = io.StringIO()
+
+    code = await smoke_llm.run(
+        ["--runs", "1"], make_settings(llm_rewrite_model="rewrite-model"), lambda _: fake, out
+    )
+
+    assert code == 0
+    rewrites = [r for r in fake.requests if r.purpose is Purpose.REWRITE]
+    assert [r.model for r in rewrites] == ["rewrite-model"]
+    assert "rewrite: rewritten" in out.getvalue()
+    assert CANARY not in out.getvalue()
+
+
+async def test_a_rewrite_that_fell_back_fails_the_smoke_test(
+    make_settings: SettingsFactory,
+) -> None:
+    """In the app a fallback is silent (the raw message is searched); here it means
+    the rewrite model or its options are wrong, which is what the smoke test is for.
+    """
+    out = io.StringIO()
+
+    code = await smoke_llm.run(
+        ["--runs", "1"],
+        make_settings(),
+        lambda _: FakeProvider(("x",), error=LLMRequestError(), fail_at=0),
+        out,
+    )
+
+    assert code == 1
+    assert "rewrite: fallback=llm_error" in out.getvalue()
+
+
+async def test_the_rewrite_call_has_a_finished_synthetic_turn_to_resolve(
+    make_settings: SettingsFactory,
+) -> None:
+    fake = FakeProvider(("a query",))
+
+    result = await smoke_llm.rewrite_once(fake, make_settings())
+
+    (request,) = fake.requests
+    assert request.purpose is Purpose.REWRITE
+    assert smoke_llm.QUESTION in request.system  # the earlier turn, given as data
+    assert [m.text for m in request.messages] == [smoke_llm.FOLLOW_UP]
+    assert result.rewritten_query == "a query"
+
+
+@pytest.mark.parametrize(
+    ("result", "line"),
+    [
+        (RewriteResult("q", "q", 812.4, None), "rewrite: rewritten (812 ms)\n"),
+        (
+            RewriteResult("raw", None, 5000.0, RewriteFallback.TIMEOUT),
+            "rewrite: fallback=timeout (5000 ms)\n",
+        ),
+        (RewriteResult("raw", None, None, None), "rewrite: skipped (no history turns)\n"),
+    ],
+)
+def test_the_rewrite_line_has_the_outcome_and_time_only(result: RewriteResult, line: str) -> None:
+    assert smoke_llm.render_rewrite(result) == line
+
+
+async def test_rewriting_disabled_by_settings_is_reported_and_does_not_fail(
+    make_settings: SettingsFactory,
+) -> None:
+    fake = FakeProvider(("x",))
+    out = io.StringIO()
+
+    code = await smoke_llm.run(
+        ["--runs", "1"], make_settings(chat_rewrite_history_turns=0), lambda _: fake, out
+    )
+
+    assert code == 0
+    assert [r.purpose for r in fake.requests] == [Purpose.ANSWER]
+    assert "rewrite: skipped (no history turns)\n" in out.getvalue()
