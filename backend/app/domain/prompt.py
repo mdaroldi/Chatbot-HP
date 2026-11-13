@@ -8,7 +8,7 @@ contract exact: every `tag="S<n>"` in a prompt is an excerpt the builder wrote.
 """
 
 import math
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from html import escape
 from itertools import pairwise
@@ -111,37 +111,68 @@ def _past_answer(answer: Message) -> str:
     return REFUSAL_MARKER if answer.refusal else strip_citations(answer.content).strip()
 
 
-def _finished_turns(messages: Sequence[Message]) -> Iterator[tuple[PromptMessage, PromptMessage]]:
+@dataclass(frozen=True)
+class PastTurn:
+    """One finished exchange as prompts show it: the question as the user wrote it and
+    the answer rendered for the model (see `_past_answer`).
+    """
+
+    question: str
+    answer: str
+
+
+def past_turns(messages: Sequence[Message]) -> tuple[PastTurn, ...]:
     """Each question with the answer right after it, oldest first; a question whose
     answer failed, was cancelled, is missing or is empty once rendered is left out
     with it.
     """
     ordered = sorted(messages, key=lambda message: message.seq)
+    turns: list[PastTurn] = []
     for question, answer in pairwise(ordered):
         if question.role is not Role.USER or answer.role is not Role.ASSISTANT:
             continue
         rendered = _past_answer(answer) if answer.counts_as_turn else ""
         if rendered:
-            yield (
-                PromptMessage(Role.USER, _question(question.content)),
-                PromptMessage(Role.ASSISTANT, rendered),
-            )
+            turns.append(PastTurn(question.content, rendered))
+    return tuple(turns)
 
 
-def select_history(messages: Sequence[Message], budget: HistoryBudget) -> tuple[PromptMessage, ...]:
-    """The newest finished turns that fit the budget, oldest first.
+def newest_turns(
+    turns: Sequence[PastTurn], budget: HistoryBudget, cost: Callable[[PastTurn], int]
+) -> tuple[PastTurn, ...]:
+    """The newest turns that fit the budget, oldest first; `cost` is a turn's estimated
+    tokens as the prompt renders it.
 
     Selection stops at the first turn that does not fit, so the model never sees an
     older exchange without the ones that followed it.
     """
-    selected: list[tuple[PromptMessage, PromptMessage]] = []
+    selected: list[PastTurn] = []
     tokens = 0
-    for turn in reversed(list(_finished_turns(messages))):
-        tokens += sum(estimate_tokens(message.text) for message in turn)
+    for turn in reversed(turns):
+        tokens += cost(turn)
         if len(selected) == budget.max_turns or tokens > budget.max_tokens:
             break
         selected.append(turn)
-    return tuple(message for turn in reversed(selected) for message in turn)
+    return tuple(reversed(selected))
+
+
+def _history_messages(turn: PastTurn) -> tuple[PromptMessage, PromptMessage]:
+    return (
+        PromptMessage(Role.USER, _question(turn.question)),
+        PromptMessage(Role.ASSISTANT, turn.answer),
+    )
+
+
+def _history_cost(turn: PastTurn) -> int:
+    return sum(estimate_tokens(message.text) for message in _history_messages(turn))
+
+
+def select_history(messages: Sequence[Message], budget: HistoryBudget) -> tuple[PromptMessage, ...]:
+    """The answer prompt's history: the newest finished turns under the budget, as
+    alternating user and assistant messages.
+    """
+    turns = newest_turns(past_turns(messages), budget, _history_cost)
+    return tuple(message for turn in turns for message in _history_messages(turn))
 
 
 def answer_messages(
