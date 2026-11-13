@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.domain.llm import LLMProvider
 from app.domain.prompt import HistoryBudget
 from app.domain.retrieval import IndexBuildRef, RetrievalConfig, SearchHit, SearchMode
 from app.services.chat import ChatConfig, ChatService
@@ -101,14 +102,17 @@ class Rig:
     def __post_init__(self) -> None:
         self.search = FakeSearchStore(self.hits)
 
-    def service(self, config: RetrievalConfig | None = None) -> ChatService:
+    def service(
+        self, config: RetrievalConfig | None = None, *, provider: LLMProvider | None = None
+    ) -> ChatService:
+        """`provider` replaces the scripted answer model (e.g. with the real stub)."""
         retrieval = RetrievalService(self.embedder, self.search, self.reranker)
         return ChatService(
             store=self.store,
             retrieval=retrieval,
             retrieval_config=config or retrieval_config(),
             rewriter=QueryRewriter(self.rewrite, REWRITE),
-            provider=self.answer,
+            provider=provider or self.answer,
             index=self.index,
             titles=TITLES,
             config=CONFIG,

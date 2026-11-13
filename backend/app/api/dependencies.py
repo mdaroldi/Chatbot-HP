@@ -10,11 +10,13 @@ from app.core.middleware import trusted_identifier
 from app.core.settings import Settings
 from app.domain.chat_store import ChatStore
 from app.domain.health import DependencyProbe
+from app.services.chat import ChatService
 from app.services.retrieval import RetrievalService
 
 CLIENT_ID_HEADER = "x-client-id"
 
 RetrievalServiceFactory = Callable[[], Awaitable[RetrievalService]]
+ChatServiceFactory = Callable[[], Awaitable[ChatService]]
 
 
 def get_app_settings(request: Request) -> Settings:
@@ -69,3 +71,11 @@ def get_chat_store(request: Request) -> ChatStore:
     """The conversation store the lifespan built; tests override this with a fake."""
     store: ChatStore = request.app.state.chat_store
     return store
+
+
+async def get_chat_service(request: Request) -> ChatService:
+    """A chat service over the per-request retrieval service, built by the composition
+    root (main); ModelsNotReadyError until the query models load.
+    """
+    factory: ChatServiceFactory = request.app.state.chat_service_factory
+    return await factory()

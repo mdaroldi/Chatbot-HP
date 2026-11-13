@@ -576,6 +576,7 @@ def test_rate_limit_defaults() -> None:
         settings.rate_limit_conversations_burst,
     ) == (120, 30)
     assert (settings.rate_limit_search_per_minute, settings.rate_limit_search_burst) == (30, 10)
+    assert (settings.rate_limit_messages_per_minute, settings.rate_limit_messages_burst) == (10, 5)
     assert settings.rate_limit_max_keys == 10_000
 
 
@@ -586,7 +587,10 @@ def test_rate_limit_defaults() -> None:
         ("RATE_LIMIT_CONVERSATIONS_BURST", 1, 10_000),
         ("RATE_LIMIT_SEARCH_PER_MINUTE", 1, 100_000),
         ("RATE_LIMIT_SEARCH_BURST", 1, 10_000),
+        ("RATE_LIMIT_MESSAGES_PER_MINUTE", 1, 100_000),
+        ("RATE_LIMIT_MESSAGES_BURST", 1, 10_000),
         ("RATE_LIMIT_MAX_KEYS", 1, 1_000_000),
+        ("CHAT_MESSAGE_MAX_CHARS", 1, 4_000),
     ],
 )
 def test_rate_limit_bounds(
@@ -733,6 +737,34 @@ def test_an_effort_the_api_does_not_accept_fails_at_startup(
     monkeypatch: pytest.MonkeyPatch, name: str, value: str
 ) -> None:
     monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_chat_message_and_heartbeat_defaults() -> None:
+    """1,000 characters: a longer first question already cuts chunk tails in the
+    reranker (handoff Q5); 15 s of silence before a keepalive, below common proxy
+    idle timeouts (nginx: 60 s).
+    """
+    settings = Settings()
+
+    assert settings.chat_message_max_chars == 1000
+    assert settings.sse_heartbeat_seconds == 15.0
+
+
+@pytest.mark.parametrize("valid", ["0.001", "300"])
+def test_heartbeat_interval_accepts_its_bounds(monkeypatch: pytest.MonkeyPatch, valid: str) -> None:
+    monkeypatch.setenv("SSE_HEARTBEAT_SECONDS", valid)
+
+    assert Settings().sse_heartbeat_seconds == float(valid)
+
+
+@pytest.mark.parametrize("invalid", ["0", "-1", "300.5", "inf", "nan"])
+def test_heartbeat_interval_rejects_values_out_of_bounds(
+    monkeypatch: pytest.MonkeyPatch, invalid: str
+) -> None:
+    monkeypatch.setenv("SSE_HEARTBEAT_SECONDS", invalid)
 
     with pytest.raises(ValidationError):
         Settings()

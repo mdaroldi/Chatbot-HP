@@ -316,6 +316,29 @@ async def test_access_log_records_500_for_unhandled_exception(
     assert [entry["status"] for entry in access] == [500]
 
 
+async def test_access_log_records_499_when_the_app_ends_without_a_response(
+    json_logs: LogReader,
+) -> None:
+    """The app sends nothing when the client left before an answer (499, as nginx
+    logs a closed request), and this is not an error.
+    """
+
+    async def silent_app(scope: Scope, receive: Receive, send: Send) -> None:  # noqa: ARG001
+        return
+
+    sent: list[Message] = []
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    await RequestIdMiddleware(silent_app)(http_scope([]), empty_receive, send)
+
+    assert sent == []
+    access = [line for line in json_logs() if line["logger"] == "app.access"]
+    assert [entry["status"] for entry in access] == [499]
+    assert [line for line in json_logs() if line["level"] == "ERROR"] == []
+
+
 async def test_access_log_never_contains_query_string_or_bodies(
     client: httpx.AsyncClient, json_logs: LogReader
 ) -> None:

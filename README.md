@@ -254,6 +254,8 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `RATE_LIMIT_CONVERSATIONS_BURST` | `30` | Conversation calls a client may make at once (opening the UI loads several). |
 | `RATE_LIMIT_SEARCH_PER_MINUTE` | `30` | `POST /v1/search` calls per client ID (else per IP) per minute. |
 | `RATE_LIMIT_SEARCH_BURST` | `10` | Search calls allowed at once. |
+| `RATE_LIMIT_MESSAGES_PER_MINUTE` | `10` | Chat questions per client ID per minute (each one may call the model). |
+| `RATE_LIMIT_MESSAGES_BURST` | `5` | Chat questions a client may send at once. |
 | `RATE_LIMIT_MAX_KEYS` | `10000` | Client IDs or IPs tracked per limiter and replica; the least recent is forgotten. |
 | `LLM_ANSWER_MODEL` | `claude-opus-5-5` | Model that writes the answers (Anthropic model ID). |
 | `LLM_ANSWER_EFFORT` | `low` | Effort sent with each answer request: `low`, `medium`, `high`, `xhigh` or `max`; empty sends none. |
@@ -268,6 +270,8 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `CHAT_HISTORY_MAX_TOKENS` | `3000` | Estimated tokens of history the answer prompt carries at most. |
 | `CHAT_REWRITE_HISTORY_TURNS` | `3` | Earlier turns the rewrite prompt sees at most; 0 disables rewriting. |
 | `CHAT_REWRITE_HISTORY_TOKENS` | `1000` | Estimated tokens of history the rewrite prompt sees at most. |
+| `CHAT_MESSAGE_MAX_CHARS` | `1000` | Longest accepted chat question, in characters (after trimming). |
+| `SSE_HEARTBEAT_SECONDS` | `15.0` | Silence on an answer stream before a `: keepalive` comment is sent. |
 | `CHAT_SNIPPET_CHARS` | `160` | Length of the excerpt shown on each source card. |
 | `SEARCH_ENDPOINT_ENABLED` | `false` | Serve the `POST /v1/search` debug endpoint (returns chunk text); a warning is logged when enabled in production. |
 <!-- settings-table:end -->

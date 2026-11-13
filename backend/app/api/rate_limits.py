@@ -35,6 +35,7 @@ class RateLimiters:
     """One limiter per route group, so search traffic never spends chat tokens."""
 
     conversations: TokenBucketLimiter
+    messages: TokenBucketLimiter
     search: TokenBucketLimiter
 
     @classmethod
@@ -50,6 +51,9 @@ class RateLimiters:
             conversations=limiter(
                 settings.rate_limit_conversations_per_minute,
                 settings.rate_limit_conversations_burst,
+            ),
+            messages=limiter(
+                settings.rate_limit_messages_per_minute, settings.rate_limit_messages_burst
             ),
             search=limiter(settings.rate_limit_search_per_minute, settings.rate_limit_search_burst),
         )
@@ -71,6 +75,11 @@ def limit_conversations(
 ) -> None:
     """Runs after the client ID check, so a rejected request spends no token."""
     _spend(_limiters(request).conversations, client_id)
+
+
+def limit_messages(request: Request, client_id: Annotated[str, Depends(require_client_id)]) -> None:
+    """Questions have their own, smaller bucket: each one may cost a model call."""
+    _spend(_limiters(request).messages, client_id)
 
 
 def limit_search(request: Request) -> None:

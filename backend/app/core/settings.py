@@ -275,6 +275,15 @@ class Settings(BaseSettings):
     rate_limit_search_burst: int = Field(
         default=10, ge=1, le=10_000, description="Search calls allowed at once."
     )
+    rate_limit_messages_per_minute: int = Field(
+        default=10,
+        ge=1,
+        le=100_000,
+        description="Chat questions per client ID per minute (each one may call the model).",
+    )
+    rate_limit_messages_burst: int = Field(
+        default=5, ge=1, le=10_000, description="Chat questions a client may send at once."
+    )
     rate_limit_max_keys: int = Field(
         default=10_000,
         ge=1,
@@ -352,6 +361,19 @@ class Settings(BaseSettings):
         ge=0,
         le=20_000,
         description="Estimated tokens of history the rewrite prompt sees at most.",
+    )
+    chat_message_max_chars: int = Field(
+        default=1000,
+        ge=1,
+        le=4000,
+        description="Longest accepted chat question, in characters (after trimming).",
+    )
+    sse_heartbeat_seconds: float = Field(
+        default=15.0,
+        gt=0,
+        le=300,
+        allow_inf_nan=False,
+        description="Silence on an answer stream before a `: keepalive` comment is sent.",
     )
     chat_snippet_chars: int = Field(
         default=160,

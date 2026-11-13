@@ -17,6 +17,8 @@ from app.core.request_context import bound_request_id
 
 REQUEST_ID_HEADER = "x-request-id"
 _REQUEST_ID_HEADER_BYTES = REQUEST_ID_HEADER.encode("ascii")
+# Logged when the app ends without a response: the client left first (nginx's code).
+CLIENT_CLOSED_REQUEST = 499
 # Strict allowlist: anything else (CR/LF, spaces, non-ASCII) could forge log lines
 # or headers, so it is replaced rather than sanitized.
 _VALID_REQUEST_ID = re.compile(r"[A-Za-z0-9-]{8,64}")
@@ -57,7 +59,8 @@ class RequestIdMiddleware:
     It is also the outermost boundary for unhandled exceptions: they are logged once
     with the request ID and turned into a generic 500, so clients never see internals.
     If the response already started (e.g. mid-stream), the exception is re-raised so
-    the server aborts the connection instead of sending a corrupt response.
+    the server aborts the connection instead of sending a corrupt response. An app
+    that ends without responding (the client left first) is logged as 499.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -102,6 +105,9 @@ class RequestIdMiddleware:
                 if response_started:
                     raise
                 await self._send_internal_error(send_with_request_id, request_id)
+            else:
+                if not response_started:
+                    status = CLIENT_CLOSED_REQUEST
             finally:
                 ended_at = finished_at if finished_at is not None else time.perf_counter()
                 _access_logger.info(

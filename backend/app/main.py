@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.conversations import router as conversations_router
 from app.api.errors import register_domain_error_handlers
 from app.api.health import router as health_router
+from app.api.messages import build_messages_router
 from app.api.rate_limits import RateLimiters
 from app.api.search import build_search_router
 from app.core.errors import register_exception_handlers
@@ -174,6 +175,7 @@ def create_app(
     register_domain_error_handlers(app)
     app.include_router(health_router)
     app.include_router(conversations_router)
+    app.include_router(build_messages_router(settings))
     if settings.search_endpoint_enabled:
         if settings.app_env is Environment.PRODUCTION:
             # Allowed (rate-limited) but unusual: it returns raw document chunks.
