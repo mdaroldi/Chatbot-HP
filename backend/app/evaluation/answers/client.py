@@ -215,6 +215,9 @@ class ChatClient:
         self, conversation_id: str, client_id: str, content: str
     ) -> Answered | Failed:
         status: int | None = None
+        # Before the request: the API primes the answer (retrieval and the first model
+        # token) before it sends the headers, and that wait is part of the latency.
+        start = self._clock()
         try:
             async with asyncio.timeout(self._timeouts.total):
                 async with self._http.stream(
@@ -228,7 +231,7 @@ class ChatClient:
                     if status != httpx.codes.OK:
                         await response.aread()
                         return _status_failure(response)
-                    return await self._read(response, conversation_id, self._clock())
+                    return await self._read(response, conversation_id, start)
         except TimeoutError:
             return Failed(HarnessCode.TOTAL_TIMEOUT, status, 0)
         except httpx.TransportError as exc:

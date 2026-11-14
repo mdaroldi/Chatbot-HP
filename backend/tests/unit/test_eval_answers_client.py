@@ -179,6 +179,28 @@ async def test_an_answered_turn_returns_the_done_event_and_its_latencies(
     assert result.total_ms == pytest.approx(20.0)
 
 
+async def test_latencies_count_the_wait_before_the_response_starts() -> None:
+    """The API primes the answer (retrieval, first model token) before it sends the
+    headers, so time to first token must be taken from the request, not the headers.
+    """
+    clock = Clock()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == MESSAGES
+        clock.now += 3.0  # the server's work before the first byte
+        return sse(answer_stream())
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport, base_url="http://backend:8000") as http:
+        chat = ChatClient(http, timeouts=Timeouts(), clock=clock, sleep=Sleeps())
+        result = await chat.send_turn(CONVERSATION, CLIENT_ID, "How do I clear a jam?")
+
+    assert isinstance(result, Answered)
+    # Clock reads: start (before the request), +3 s server, first token, done.
+    assert result.ttft_ms == pytest.approx(3010.0)
+    assert result.total_ms == pytest.approx(3020.0)
+
+
 async def test_the_turn_is_posted_with_the_client_id_and_the_content(
     rig_factory: Callable[..., Rig],
 ) -> None:
