@@ -15,8 +15,10 @@ from app.evaluation.answers.journal import (
     JOURNAL_SCHEMA,
     Journal,
     JournalError,
+    latest,
     pending,
     read_journal,
+    retried_items,
     run_pending,
 )
 from app.evaluation.answers.sse import Done
@@ -254,12 +256,39 @@ def test_a_journal_from_another_selection_is_refused() -> None:
         pending([item("q-1")], [answered("q-9")])
 
 
+def test_a_retried_error_may_be_recorded_again_and_the_last_line_wins() -> None:
+    final = latest([failed("q-1"), failed("q-1"), answered("q-1"), answered("q-2")])
+
+    assert final["q-1"] == answered("q-1")
+    assert final["q-2"] == answered("q-2")
+
+
+def test_an_answered_item_is_never_recorded_again() -> None:
+    with pytest.raises(JournalError, match="recorded twice: q-1"):
+        latest([answered("q-1"), failed("q-1")])
+
+
+def test_retry_errors_selects_only_items_whose_last_result_is_an_error() -> None:
+    items = [item("q-1"), item("q-2"), item("q-3"), item("q-4")]
+    recorded = [failed("q-1"), answered("q-2"), failed("q-3"), answered("q-3")]
+
+    left = pending(items, recorded, retry_errors=True)
+
+    assert [i.id for i in left] == ["q-1", "q-4"]
+
+
+def test_retried_items_are_those_with_more_than_one_line() -> None:
+    recorded = [failed("q-1"), answered("q-1"), answered("q-2"), failed("q-3"), failed("q-3")]
+
+    assert retried_items(recorded) == ("q-1", "q-3")
+
+
 class Recorder:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str, int]] = []
 
-    async def __call__(self, run_item: EvalItem, client_id: str) -> ItemResult:
-        self.calls.append((run_item.id, client_id))
+    async def __call__(self, run_item: EvalItem, client_id: str, attempt: int) -> ItemResult:
+        self.calls.append((run_item.id, client_id, attempt))
         return answered(run_item.id)
 
 
@@ -271,7 +300,7 @@ async def test_a_run_asks_each_item_once_with_a_fresh_client_id_and_records_it(
 
     results = await run_pending([item("q-1"), item("q-2")], Journal(path), ask, lambda: next(ids))
 
-    assert ask.calls == [("q-1", "id-a"), ("q-2", "id-b")]
+    assert ask.calls == [("q-1", "id-a", 1), ("q-2", "id-b", 1)]
     assert [r.item_id for r in results] == ["q-1", "q-2"]
     assert read_journal(path) == results
 
@@ -285,7 +314,7 @@ async def test_a_resumed_run_asks_only_what_is_missing_and_returns_everything(
 
     results = await run_pending([item("q-1"), item("q-2")], journal, ask, lambda: "id")
 
-    assert ask.calls == [("q-2", "id")]
+    assert ask.calls == [("q-2", "id", 1)]
     assert [r.item_id for r in results] == ["q-1", "q-2"]
     assert [r.item_id for r in read_journal(path)] == ["q-1", "q-2"]
 
@@ -297,3 +326,29 @@ async def test_results_come_back_in_item_order_whatever_the_journal_order(path: 
     results = await run_pending([item("q-1"), item("q-2")], journal, Recorder(), lambda: "id")
 
     assert [r.item_id for r in results] == ["q-1", "q-2"]
+
+
+async def test_a_retry_errors_run_re_asks_failed_items_and_keeps_both_lines(path: Path) -> None:
+    journal = Journal(path)
+    journal.append(failed("q-1"))
+    journal.append(answered("q-2"))
+    ask = Recorder()
+
+    results = await run_pending(
+        [item("q-1"), item("q-2")], journal, ask, lambda: "id", retry_errors=True
+    )
+
+    assert ask.calls == [("q-1", "id", 2)]
+    assert results == [answered("q-1"), answered("q-2")]
+    recorded = read_journal(path)
+    assert [r.item_id for r in recorded] == ["q-1", "q-2", "q-1"]
+    assert retried_items(recorded) == ("q-1",)
+
+
+async def test_without_retry_errors_a_failed_item_stays_failed(path: Path) -> None:
+    journal = Journal(path)
+    journal.append(failed("q-1"))
+
+    results = await run_pending([item("q-1")], journal, Recorder(), lambda: "id")
+
+    assert results == [failed("q-1")]

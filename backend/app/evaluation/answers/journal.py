@@ -5,13 +5,16 @@ loses at most the item in flight. The file is only ever appended; reading it bac
 strict (a partial or malformed line stops the run instead of being skipped), and the
 `done` part keeps the API's own event shape, so it is checked by the same parser that
 read it off the wire. A resumed run asks only the items with no line: an error is that
-item's result, and asking again would let a flaky item pick its best attempt.
+item's result, and asking again would let a flaky item pick its best attempt. Only
+`--retry-errors` (off by default) re-asks items whose last result is an error: the new
+line is appended, the last line counts for scoring and every attempt is charged.
 
 The journal holds model answers, so it lives in the git-ignored run directory, and
 error messages name line numbers and fields only.
 """
 
 import json
+from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import cast
@@ -173,32 +176,61 @@ def read_journal(path: Path) -> list[ItemResult]:
 # ---------------------------------------------------------------- resume
 
 
-def pending(items: Sequence[EvalItem], recorded: Sequence[ItemResult]) -> list[EvalItem]:
-    """The items with no recorded result, in run order."""
-    wanted = {item.id for item in items}
-    seen: set[str] = set()
+def latest(recorded: Sequence[ItemResult]) -> dict[str, ItemResult]:
+    """Each item's last result. A later line is allowed only after an error (a
+    `--retry-errors` re-ask); a line after an answer means the journal is corrupt.
+    """
+    final: dict[str, ItemResult] = {}
     for result in recorded:
-        if result.item_id in seen:
+        earlier = final.get(result.item_id)
+        if earlier is not None and earlier.ok:
             raise JournalError(f"recorded twice: {result.item_id}")
-        if result.item_id not in wanted:
-            raise JournalError(f"not in this run: {result.item_id}")
-        seen.add(result.item_id)
-    return [item for item in items if item.id not in seen]
+        final[result.item_id] = result
+    return final
+
+
+def retried_items(recorded: Sequence[ItemResult]) -> tuple[str, ...]:
+    """Items asked more than once, in first-seen order, for the report."""
+    counts = Counter(result.item_id for result in recorded)
+    return tuple(item_id for item_id, count in counts.items() if count > 1)
+
+
+def pending(
+    items: Sequence[EvalItem], recorded: Sequence[ItemResult], *, retry_errors: bool = False
+) -> list[EvalItem]:
+    """The items to ask, in run order: those with no result and, with `retry_errors`,
+    those whose last result is an error.
+    """
+    wanted = {item.id for item in items}
+    unknown = next((r.item_id for r in recorded if r.item_id not in wanted), None)
+    if unknown is not None:
+        raise JournalError(f"not in this run: {unknown}")
+    final = latest(recorded)
+
+    def asked_again(item: EvalItem) -> bool:
+        result = final.get(item.id)
+        return result is None or (retry_errors and not result.ok)
+
+    return [item for item in items if asked_again(item)]
 
 
 async def run_pending(
     items: Sequence[EvalItem],
     journal: Journal,
-    ask: Callable[[EvalItem, str], Awaitable[ItemResult]],
+    ask: Callable[[EvalItem, str, int], Awaitable[ItemResult]],
     new_client_id: Callable[[], str],
+    *,
+    retry_errors: bool = False,
 ) -> list[ItemResult]:
-    """Ask the missing items one at a time (latencies stay comparable), each with its
-    own client ID, and return every result of the run in item order.
+    """Ask the selected items one at a time (latencies stay comparable), each with its
+    own client ID and its attempt number (the ledger charges every attempt), and
+    return each item's final result in item order. Every attempt stays in the journal.
     """
     recorded = read_journal(journal.path)
-    by_id = {result.item_id: result for result in recorded}
-    for item in pending(items, recorded):
-        result = await ask(item, new_client_id())
+    attempts = Counter(result.item_id for result in recorded)
+    final = latest(recorded)
+    for item in pending(items, recorded, retry_errors=retry_errors):
+        result = await ask(item, new_client_id(), attempts[item.id] + 1)
         journal.append(result)
-        by_id[item.id] = result
-    return [by_id[item.id] for item in items]
+        final[item.id] = result
+    return [final[item.id] for item in items]
