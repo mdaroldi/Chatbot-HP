@@ -54,7 +54,6 @@ def pages(
 def source(tag: str = "S1", *, has_warning: bool = False) -> Source:
     return Source(
         tag=tag,
-        document_id="omen-17-mg",
         document_title="OMEN 17 Maintenance and Service Guide",
         section_path=("Removal and replacement", "Battery"),
         pages=pages((50, 51), (48, 49)),
@@ -65,11 +64,7 @@ def source(tag: str = "S1", *, has_warning: bool = False) -> Source:
 
 def flags(*, uncited: bool = False) -> Flags:
     return Flags(
-        late_refusal_marker=False,
         uncited=uncited,
-        invalid_citations=0,
-        rewrite_fallback=None,
-        truncated=False,
     )
 
 
@@ -77,19 +72,13 @@ def done(
     *,
     outcome: Outcome = "completed",
     content: str = "Remove the battery [S1].",
-    citations: tuple[str, ...] = ("S1",),
     refusal_reason: RefusalReason | None = None,
     uncited: bool = False,
 ) -> Done:
     return Done(
-        conversation_id="c",
-        user_message_id="u",
-        message_id="m",
         outcome=outcome,
-        refusal=outcome == "refused",
         refusal_reason=refusal_reason,
         content=content,
-        citations=citations,
         flags=flags(uncited=uncited),
     )
 
@@ -240,9 +229,7 @@ def test_a_completed_answer_with_no_citations_is_uncited_after_a_reload() -> Non
 
 @pytest.mark.parametrize("reason", ["below_threshold", "model_refused", "provider_refused"])
 def test_a_refusal_shows_the_page_wording_never_the_stored_text(reason: RefusalReason) -> None:
-    view = message_view(
-        message(outcome="refused", content=BACKEND_REFUSAL, citations=(), refusal_reason=reason)
-    )
+    view = message_view(message(outcome="refused", content=BACKEND_REFUSAL, refusal_reason=reason))
 
     assert (view.text, view.state, view.sources, view.notice) == (
         REFUSAL_TEXT[reason],
@@ -270,10 +257,6 @@ def test_an_answer_still_pending_is_empty_with_the_refresh_notice(outcome: Outco
 
 def test_a_thread_view_keeps_the_message_order() -> None:
     detail = ConversationDetail(
-        id="c",
-        title="Battery",
-        created_at=NOW,
-        updated_at=NOW,
         messages=(
             message(role="user", outcome=None, content="Q1", citations=()),
             message(content="A1", citations=()),
@@ -289,7 +272,7 @@ def test_a_thread_view_keeps_the_message_order() -> None:
 
 
 def test_an_empty_thread_has_no_views() -> None:
-    detail = ConversationDetail(id="c", title=None, created_at=NOW, updated_at=NOW, messages=())
+    detail = ConversationDetail(messages=())
 
     assert thread_view(detail) == ()
 
@@ -313,9 +296,7 @@ def test_a_streamed_answer_shows_the_final_content_not_the_streamed_tokens() -> 
 
 def test_on_the_stream_the_uncited_flag_decides_not_the_citations() -> None:
     flagged = answer_from_stream([SourcesEvent(sources=()), done(uncited=True)], None)
-    unflagged = answer_from_stream(
-        [SourcesEvent(sources=()), done(citations=(), uncited=False)], None
-    )
+    unflagged = answer_from_stream([SourcesEvent(sources=()), done(uncited=False)], None)
 
     assert flagged is not None
     assert unflagged is not None
@@ -327,7 +308,7 @@ def test_a_streamed_refusal_shows_the_page_wording(reason: RefusalReason) -> Non
     events = [
         *tokens(BACKEND_REFUSAL),
         SourcesEvent(sources=()),
-        done(outcome="refused", content=BACKEND_REFUSAL, citations=(), refusal_reason=reason),
+        done(outcome="refused", content=BACKEND_REFUSAL, refusal_reason=reason),
     ]
 
     view = answer_from_stream(events, None)
@@ -403,7 +384,6 @@ PARITY_CASES: dict[str, tuple[list[StreamEvent], ApiError | None, Message]] = {
             done(
                 outcome="refused",
                 content=BACKEND_REFUSAL,
-                citations=(),
                 refusal_reason="below_threshold",
             ),
         ],
@@ -419,7 +399,7 @@ PARITY_CASES: dict[str, tuple[list[StreamEvent], ApiError | None, Message]] = {
         [
             *tokens("An answer."),
             SourcesEvent(sources=()),
-            done(content="An answer.", citations=(), uncited=True),
+            done(content="An answer.", uncited=True),
         ],
         None,
         message(content="An answer.", citations=()),
@@ -490,8 +470,7 @@ def test_only_a_busy_conversation_offers_to_refresh_its_thread() -> None:
 
 
 def _titled(title: str | None) -> Conversation:
-    when = datetime(2026, 11, 14, tzinfo=UTC)
-    return Conversation(id="c", title=title, created_at=when, updated_at=when)
+    return Conversation(id="c", title=title)
 
 
 def test_a_conversation_label_is_its_title_escaped_for_a_button() -> None:

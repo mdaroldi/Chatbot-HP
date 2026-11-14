@@ -140,8 +140,13 @@ never reach the logs (CLAUDE.md).
   the frontend modelled `flags.invalid_citations` and `flags.rewrite_fallback` as
   booleans, while the backend sends a count and a code or null. The unit fixtures
   shared the wrong types, so only the stack test could catch it (fixed in
-  `fix(frontend)`, before commit 10). The contract is mirrored by hand, without a
-  shared schema; the stack test is what checks it.
+  `fix(frontend)`, before commit 10).
+- **Tolerant reader (after the Phase 4 report).** The response models declare only the
+  fields the page reads and ignore every other field, whatever its type. `done.flags`
+  keeps only `uncited`, as a strict bool: missing, `"true"`, `1` or `null` is
+  `bad_response`. A backend change to a field the page never shows cannot break it.
+  The fields the page does read are still mirrored by hand, and the stack test is what
+  checks them.
 
 ## Consequences
 
@@ -157,5 +162,5 @@ never reach the logs (CLAUDE.md).
   - After a reload, a failed or cancelled answer no longer says why it stopped.
   - Escapes can show as backslashes inside a fence indented 1 to 3 spaces.
   - The UI integration test is not in CI yet.
-- Changing the backend's response shapes needs the frontend models and the stack test
+- Changing a field the page reads needs the frontend model and the stack test
   updated together.

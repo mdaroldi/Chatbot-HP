@@ -1,16 +1,16 @@
 """What the page needs from the chat API: the calls, and the shapes they return.
 
-The models mirror the backend's responses (ADR 0010) but ignore fields they do not
-know, so a backend that adds a field does not break the page. They are frozen:
-views and state hold them without copying.
+The models are tolerant readers of the backend's responses (ADR 0010, ADR 0011):
+they declare only the fields the page reads and ignore every other field, whatever
+it holds, so a backend change to a field the page never shows cannot break it.
+They are frozen: views and state hold them without copying.
 """
 
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
-from datetime import datetime
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictBool
 
 Outcome = Literal["pending", "completed", "refused", "failed", "cancelled"]
 RefusalReason = Literal["below_threshold", "model_refused", "provider_refused"]
@@ -29,7 +29,6 @@ class Pages(_Model):
 
 class Source(_Model):
     tag: str
-    document_id: str
     document_title: str
     section_path: tuple[str, ...]
     pages: Pages
@@ -40,8 +39,6 @@ class Source(_Model):
 class Conversation(_Model):
     id: str
     title: str | None
-    created_at: datetime
-    updated_at: datetime
 
 
 class ConversationPage(_Model):
@@ -50,18 +47,15 @@ class ConversationPage(_Model):
 
 
 class Message(_Model):
-    id: str
     role: Literal["user", "assistant"]
     content: str
-    created_at: datetime
     outcome: Outcome | None
-    refusal: bool
     refusal_reason: RefusalReason | None
     citations: tuple[str, ...]
     sources: tuple[Source, ...]
 
 
-class ConversationDetail(Conversation):
+class ConversationDetail(_Model):
     messages: tuple[Message, ...]
 
 
@@ -74,24 +68,14 @@ class SourcesEvent(_Model):
 
 
 class Flags(_Model):
-    late_refusal_marker: bool
-    uncited: bool
-    # Citations dropped because they named no excerpt (a count).
-    invalid_citations: int
-    # A code naming why the follow-up rewrite fell back to the raw question, or None.
-    rewrite_fallback: str | None
-    truncated: bool
+    # Strict: "true" or 1 would otherwise pass as True and hide a changed contract.
+    uncited: StrictBool
 
 
 class Done(_Model):
-    conversation_id: str
-    user_message_id: str
-    message_id: str
     outcome: Outcome
-    refusal: bool
     refusal_reason: RefusalReason | None
     content: str
-    citations: tuple[str, ...]
     flags: Flags
 
 

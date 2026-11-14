@@ -31,7 +31,7 @@ EMPTY_PAGE = ConversationPage(items=(), next_cursor=None)
 
 
 def conversation(conversation_id: str, title: str | None = "Title") -> Conversation:
-    return Conversation(id=conversation_id, title=title, created_at=NOW, updated_at=NOW)
+    return Conversation(id=conversation_id, title=title)
 
 
 def page(*items: Conversation, next_cursor: str | None = None) -> ConversationPage:
@@ -44,27 +44,17 @@ def tokens(*texts: str) -> tuple[Token, ...]:
 
 def done(
     content: str,
-    conversation_id: str = A,
     *,
     uncited: bool = False,
     reason: RefusalReason | None = None,
 ) -> Done:
     flags = Flags(
-        late_refusal_marker=False,
         uncited=uncited,
-        invalid_citations=0,
-        rewrite_fallback=None,
-        truncated=False,
     )
     return Done(
-        conversation_id=conversation_id,
-        user_message_id="user-message",
-        message_id="assistant-message",
         outcome="completed" if reason is None else "refused",
-        refusal=reason is not None,
         refusal_reason=reason,
         content=content,
-        citations=() if uncited or reason else ("S1",),
         flags=flags,
     )
 
@@ -79,7 +69,6 @@ def source(
 ) -> Source:
     return Source(
         tag=tag,
-        document_id="envy-6000",
         document_title=title,
         section_path=section_path,
         pages=Pages(pdf_start=40, pdf_end=40, printed_start=38, printed_end=38),
@@ -90,12 +79,9 @@ def source(
 
 def asked(content: str) -> Message:
     return Message(
-        id="user-message",
         role="user",
         content=content,
-        created_at=NOW,
         outcome=None,
-        refusal=False,
         refusal_reason=None,
         citations=(),
         sources=(),
@@ -111,22 +97,17 @@ def answered(
     sources: tuple[Source, ...] = (),
 ) -> Message:
     return Message(
-        id="assistant-message",
         role="assistant",
         content=content,
-        created_at=NOW,
         outcome=outcome,
-        refusal=outcome == "refused",
         refusal_reason=reason,
         citations=citations,
         sources=sources,
     )
 
 
-def detail(conversation_id: str, *messages: Message) -> ConversationDetail:
-    return ConversationDetail(
-        id=conversation_id, title="Title", created_at=NOW, updated_at=NOW, messages=messages
-    )
+def detail(*messages: Message) -> ConversationDetail:
+    return ConversationDetail(messages=messages)
 
 
 # The events one POST /messages yields, then the error it raises (if any). Errors

@@ -47,7 +47,7 @@ SETTINGS = FrontendSettings(
 )
 
 CONVERSATION_JSON = {"id": CONV, "title": None, "created_at": STAMP, "updated_at": STAMP}
-CONVERSATION = Conversation(id=CONV, title=None, created_at=WHEN, updated_at=WHEN)
+CONVERSATION = Conversation(id=CONV, title=None)
 SOURCE_JSON = {
     "tag": "S1",
     "document_id": "envy-6000",
@@ -59,7 +59,6 @@ SOURCE_JSON = {
 }
 SOURCE = Source(
     tag="S1",
-    document_id="envy-6000",
     document_title="HP ENVY 6000 All-in-One series User Guide",
     section_path=("Paper", "Load paper"),
     pages=Pages(pdf_start=7, pdf_end=8, printed_start=6, printed_end=None),
@@ -85,20 +84,11 @@ DONE_JSON = {
     "flags": FLAGS_JSON,
 }
 DONE = Done(
-    conversation_id=CONV,
-    user_message_id="11111111-1111-4111-8111-111111111111",
-    message_id="22222222-2222-4222-8222-222222222222",
     outcome="completed",
-    refusal=False,
     refusal_reason=None,
     content="Pull out the input tray [S1].",
-    citations=("S1",),
     flags=Flags(
-        late_refusal_marker=False,
         uncited=False,
-        invalid_citations=0,
-        rewrite_fallback=None,
-        truncated=False,
     ),
 )
 
@@ -247,26 +237,19 @@ def test_get_conversation_parses_messages_and_their_sources() -> None:
     detail = make_api(handler).get_conversation(CONV)
 
     assert detail == ConversationDetail(
-        **CONVERSATION.model_dump(),
         messages=(
             Message(
-                id="u1",
                 role="user",
                 content="How do I load paper?",
-                created_at=WHEN,
                 outcome=None,
-                refusal=False,
                 refusal_reason=None,
                 citations=(),
                 sources=(),
             ),
             Message(
-                id="a1",
                 role="assistant",
                 content="Pull out the input tray [S1].",
-                created_at=WHEN,
                 outcome="completed",
-                refusal=False,
                 refusal_reason=None,
                 citations=("S1",),
                 sources=(SOURCE,),
@@ -449,7 +432,7 @@ def test_an_unreadable_error_response_is_bad_response_with_its_status(
     ("call", "response"),
     [
         (CALLS["create"], httpx.Response(201, text=f"{{{CANARY}")),
-        (CALLS["create"], httpx.Response(201, json={"id": CONV, "title": CANARY})),
+        (CALLS["create"], httpx.Response(201, json={"title": CANARY})),
         (CALLS["list"], httpx.Response(200, json={"items": [{"id": CANARY}]})),
         (CALLS["list"], httpx.Response(200, json=[CANARY])),
         (CALLS["get"], httpx.Response(200, json={**CONVERSATION_JSON, "messages": CANARY})),
@@ -578,30 +561,97 @@ def test_a_streamed_answer_yields_tokens_sources_and_done_then_closes() -> None:
     assert body.closed
 
 
-@pytest.mark.parametrize(
-    ("invalid_citations", "rewrite_fallback"),
-    [(0, None), (2, "llm_error")],
-    ids=["no-fallback", "fallback-code"],
-)
-def test_done_flags_are_read_as_the_backend_writes_them(
-    invalid_citations: int, rewrite_fallback: str | None
-) -> None:
-    # A count and a code (backend app/domain/chat.py AnswerFlags), not booleans.
-    flags: dict[str, object] = {
-        **FLAGS_JSON,
-        "invalid_citations": invalid_citations,
-        "rewrite_fallback": rewrite_fallback,
-    }
-    body = RecordingStream([frame("done", {**DONE_JSON, "flags": flags})])
+# Fields the page never reads, each with a type the backend would never send.
+UNUSED_DONE_FIELDS: dict[str, object] = {
+    "conversation_id": 5,
+    "user_message_id": None,
+    "message_id": [],
+    "refusal": "no",
+    "citations": "S1",
+}
+UNUSED_FLAGS: dict[str, object] = {
+    "late_refusal_marker": "x",
+    "invalid_citations": "many",
+    "rewrite_fallback": {"code": 1},
+    "truncated": None,
+}
+
+
+def test_a_done_whose_unused_fields_have_unexpected_types_still_parses() -> None:
+    # A tolerant reader: a backend change to a field the page ignores must not break it.
+    hostile_source = {**SOURCE_JSON, "document_id": 7}
+    done = {**DONE_JSON, **UNUSED_DONE_FIELDS, "flags": {"uncited": True, **UNUSED_FLAGS}}
+    body = RecordingStream([frame("sources", {"sources": [hostile_source]}), frame("done", done)])
 
     events: list[StreamEvent] = []
     collect(make_api(sse(body)), events)
 
-    (done,) = events
-    assert isinstance(done, Done)
-    assert (done.flags.invalid_citations, done.flags.rewrite_fallback) == (
-        invalid_citations,
-        rewrite_fallback,
+    assert events == [
+        SourcesEvent(sources=(SOURCE,)),
+        Done(
+            outcome="completed",
+            refusal_reason=None,
+            content="Pull out the input tray [S1].",
+            flags=Flags(uncited=True),
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [{}, {"uncited": "true"}, {"uncited": 1}, {"uncited": None}],
+    ids=["missing", "string", "number", "null"],
+)
+def test_a_missing_or_non_bool_uncited_is_bad_response(flags: dict[str, object]) -> None:
+    # Every other flag as the backend writes it, so only uncited can fail the parse.
+    others = {name: value for name, value in FLAGS_JSON.items() if name != "uncited"}
+    body = RecordingStream([frame("done", {**DONE_JSON, "flags": {**others, **flags}})])
+
+    error, events = stream_failure(make_api(sse(body)))
+
+    assert events == []
+    assert (error.code, error.status) == (BAD_RESPONSE, 200)
+
+
+def test_conversations_and_messages_parse_whatever_their_unused_fields_hold() -> None:
+    conversation = {**CONVERSATION_JSON, "created_at": "yesterday", "updated_at": None}
+    message = {
+        "id": 5,
+        "role": "assistant",
+        "content": "Pull out the input tray [S1].",
+        "created_at": "soon",
+        "outcome": "completed",
+        "refusal": "x",
+        "refusal_reason": None,
+        "citations": ["S1"],
+        "sources": [{**SOURCE_JSON, "document_id": None}],
+    }
+    page = {"items": [conversation], "next_cursor": None}
+    bodies = {
+        ("POST", "/v1/conversations"): (201, conversation),
+        ("GET", "/v1/conversations"): (200, page),
+        ("GET", f"/v1/conversations/{CONV}"): (200, {**conversation, "messages": [message]}),
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        status, body = bodies[(request.method, request.url.path)]
+        return httpx.Response(status, json=body)
+
+    api = make_api(handler)
+
+    assert api.create_conversation() == CONVERSATION
+    assert api.list_conversations() == ConversationPage(items=(CONVERSATION,), next_cursor=None)
+    assert api.get_conversation(CONV) == ConversationDetail(
+        messages=(
+            Message(
+                role="assistant",
+                content="Pull out the input tray [S1].",
+                outcome="completed",
+                refusal_reason=None,
+                citations=("S1",),
+                sources=(SOURCE,),
+            ),
+        )
     )
 
 

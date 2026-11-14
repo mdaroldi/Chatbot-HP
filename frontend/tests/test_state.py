@@ -43,7 +43,7 @@ ANSWER = MessageView(role="assistant", text="Old answer.", state="uncited", sour
 
 
 def conversation(conversation_id: str, title: str | None = "Title") -> Conversation:
-    return Conversation(id=conversation_id, title=title, created_at=NOW, updated_at=NOW)
+    return Conversation(id=conversation_id, title=title)
 
 
 def selected(conversation_id: str = A) -> UiState:
@@ -53,21 +53,12 @@ def selected(conversation_id: str = A) -> UiState:
 
 def done(content: str = "New answer [S1].") -> Done:
     flags = Flags(
-        late_refusal_marker=False,
         uncited=False,
-        invalid_citations=0,
-        rewrite_fallback=None,
-        truncated=False,
     )
     return Done(
-        conversation_id=A,
-        user_message_id="u",
-        message_id="m",
         outcome="completed",
-        refusal=False,
         refusal_reason=None,
         content=content,
-        citations=("S1",),
         flags=flags,
     )
 

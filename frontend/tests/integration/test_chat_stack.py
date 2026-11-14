@@ -73,7 +73,7 @@ def test_a_question_streams_a_cited_answer_with_its_sources(
     assert [str(m.name) for m in app.chat_message] == ["user", "assistant"]
     conversation_id = app.query_params["conv"]
     stored = last_answer(api, conversation_id)
-    assert (stored.outcome, stored.refusal) == ("completed", False)
+    assert (stored.outcome, stored.refusal_reason) == ("completed", None)
     assert stored.citations
     assert stored.sources
     answer = app.chat_message[-1]

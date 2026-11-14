@@ -302,7 +302,7 @@ def test_the_url_keeps_a_valid_client_and_its_conversation_in_canonical_form(
 ) -> None:
     fake.pages[None] = page(conversation(A))
 
-    fake.details[A] = detail(A)
+    fake.details[A] = detail()
     app = open_app(cid=CID, conv=A.upper())
 
     assert (app.query_params["cid"], app.query_params["conv"]) == (CID, A)
@@ -342,7 +342,7 @@ def test_the_list_is_fetched_once_until_something_changes_it(
     app = open_app(cid=CID)
 
     app.run()
-    fake.details[A] = detail(A)
+    fake.details[A] = detail()
     click(app, f"open-{A}")
 
     assert [call for call in fake.calls if call[0] == "list"] == [("list", None)]
@@ -401,7 +401,7 @@ def test_selecting_a_conversation_marks_it_and_writes_it_to_the_url(
     app = open_app(cid=CID)
     assert not is_selected(app, A)
 
-    fake.details[B] = detail(B)
+    fake.details[B] = detail()
     click(app, f"open-{B}")
 
     assert app.query_params["conv"] == B
@@ -412,7 +412,7 @@ def test_new_conversation_clears_the_selection_from_the_url(
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
     fake.pages[None] = page(conversation(A))
-    fake.details[A] = detail(A)
+    fake.details[A] = detail()
     app = open_app(cid=CID, conv=A)
 
     click(app, "new-conversation")
@@ -429,7 +429,7 @@ def test_delete_asks_for_confirmation_and_cancel_keeps_the_conversation(
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
     fake.pages[None] = page(conversation(A))
-    fake.details[A] = detail(A)
+    fake.details[A] = detail()
     app = open_app(cid=CID, conv=A)
 
     click(app, f"delete-{A}")
@@ -449,7 +449,7 @@ def test_a_confirmed_delete_of_the_selected_conversation_removes_it_and_refetche
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
     fake.pages[None] = page(conversation(A), conversation(B))
-    fake.details[A] = detail(A)
+    fake.details[A] = detail()
     app = open_app(cid=CID, conv=A)
     click(app, f"delete-{A}")
     fake.pages[None] = page(conversation(B))
@@ -467,7 +467,7 @@ def test_deleting_another_conversation_keeps_the_selection(
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
     fake.pages[None] = page(conversation(A), conversation(B))
-    fake.details[A] = detail(A)
+    fake.details[A] = detail()
     app = open_app(cid=CID, conv=A)
     click(app, f"delete-{B}")
     fake.pages[None] = page(conversation(A))
@@ -484,7 +484,7 @@ def test_a_delete_answering_not_found_drops_the_conversation_with_the_not_found_
 ) -> None:
     fake.pages[None] = page(conversation(A), conversation(B))
     fake.delete_errors[A] = ApiError("conversation_not_found", status=404)
-    fake.details[A] = detail(A)
+    fake.details[A] = detail()
     app = open_app(cid=CID, conv=A)
     click(app, f"delete-{A}")
     fake.pages[None] = page(conversation(B))
@@ -502,7 +502,7 @@ def test_a_failed_delete_keeps_the_conversation_and_shows_the_fixed_wording(
 ) -> None:
     fake.pages[None] = page(conversation(A))
     fake.delete_errors[A] = ApiError("backend_unreachable")
-    fake.details[A] = detail(A)
+    fake.details[A] = detail()
     app = open_app(cid=CID, conv=A)
     click(app, f"delete-{A}")
 
@@ -661,7 +661,7 @@ def test_a_question_in_the_open_conversation_creates_nothing(
 ) -> None:
     fake.pages[None] = page(conversation(A))
     fake.streams = [((*tokens("Hi."), done("Hi.")), None)]
-    fake.details[A] = detail(A)
+    fake.details[A] = detail()
     app = open_app(cid=CID, conv=A)
 
     ask(app, "How do I print?")
@@ -729,7 +729,7 @@ def test_a_send_answering_not_found_drops_the_conversation_and_keeps_the_questio
 ) -> None:
     fake.pages[None] = page(conversation(A), conversation(B))
     fake.streams = [((), ApiError("conversation_not_found", status=404))]
-    fake.details[A] = detail(A)
+    fake.details[A] = detail()
     app = open_app(cid=CID, conv=A)
     fake.pages[None] = page(conversation(B))
 
@@ -820,7 +820,7 @@ def test_a_reload_draws_the_same_thread_as_the_stream_did(
     fake.created = [conversation(A, None)]
     fake.streams = [script]
     streamed = ask(open_app(cid=CID), "How do I *print*?")
-    fake.details[A] = detail(A, asked("How do I *print*?"), stored)
+    fake.details[A] = detail(asked("How do I *print*?"), stored)
 
     reloaded = open_app(cid=CID, conv=A)
 
@@ -841,7 +841,7 @@ def test_a_reload_draws_the_same_thread_as_the_stream_did(
 def test_an_answer_that_is_not_a_cited_completion_carries_its_notice(
     open_app: OpenApp, fake: FakeChatApi, stored: Message, notice: str
 ) -> None:
-    fake.details[A] = detail(A, asked("How?"), stored)
+    fake.details[A] = detail(asked("How?"), stored)
 
     app = open_app(cid=CID, conv=A)
 
@@ -854,7 +854,7 @@ def test_a_refusal_shows_the_fixed_wording_and_no_notice(
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
     fake.details[A] = detail(
-        A, asked("Who won?"), answered("BACKEND-REFUSAL", "refused", reason="below_threshold")
+        asked("Who won?"), answered("BACKEND-REFUSAL", "refused", reason="below_threshold")
     )
 
     app = open_app(cid=CID, conv=A)
@@ -871,7 +871,6 @@ def test_sources_are_listed_under_their_answer_with_warnings_and_plain_snippets(
 ) -> None:
     hostile = "**Load** ![i](http://evil.invalid/i.png) <b>"
     fake.details[A] = detail(
-        A,
         asked(hostile),
         answered(
             "Press OK [S1] [S2].",
@@ -903,8 +902,8 @@ def test_a_thread_is_read_once_when_its_conversation_is_selected(
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
     fake.pages[None] = page(conversation(A), conversation(B))
-    fake.details[A] = detail(A, asked("First?"), answered("One [S1].", citations=("S1",)))
-    fake.details[B] = detail(B, asked("Second?"), answered("Two [S1].", citations=("S1",)))
+    fake.details[A] = detail(asked("First?"), answered("One [S1].", citations=("S1",)))
+    fake.details[B] = detail(asked("Second?"), answered("Two [S1].", citations=("S1",)))
     app = open_app(cid=CID, conv=A)
     app.run()
 
@@ -943,7 +942,7 @@ def test_a_failed_thread_read_shows_its_wording_and_is_read_again_on_the_next_ru
     assert not app.chat_message
     assert app.query_params["conv"] == A
 
-    fake.details[A] = detail(A, asked("First?"), answered("One [S1].", citations=("S1",)))
+    fake.details[A] = detail(asked("First?"), answered("One [S1].", citations=("S1",)))
     app.run()
 
     assert main_errors(app) == []
@@ -954,7 +953,7 @@ def test_a_failed_thread_read_shows_its_wording_and_is_read_again_on_the_next_ru
 def test_a_new_answer_is_drawn_after_the_thread_already_loaded(
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
-    fake.details[A] = detail(A, asked("First?"), answered("One [S1].", citations=("S1",)))
+    fake.details[A] = detail(asked("First?"), answered("One [S1].", citations=("S1",)))
     fake.streams = [((*tokens("Two [S1]."), source_event(), done("Two [S1].")), None)]
     app = open_app(cid=CID, conv=A)
 
@@ -974,11 +973,11 @@ def test_only_the_latest_answer_opens_its_sources_after_a_stream_and_after_a_rel
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
     first = answered("One [S1].", citations=("S1",), sources=(source(),))
-    fake.details[A] = detail(A, asked("First?"), first)
+    fake.details[A] = detail(asked("First?"), first)
     fake.streams = [((*tokens("Two [S1]."), source_event(), done("Two [S1].")), None)]
     streamed = ask(open_app(cid=CID, conv=A), "Second?")
     second = answered("Two [S1].", citations=("S1",), sources=(source(),))
-    fake.details[A] = detail(A, asked("First?"), first, asked("Second?"), second)
+    fake.details[A] = detail(asked("First?"), first, asked("Second?"), second)
 
     reloaded = open_app(cid=CID, conv=A)
 
@@ -991,7 +990,6 @@ def test_earlier_sources_stay_closed_when_the_latest_answer_has_none(
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
     fake.details[A] = detail(
-        A,
         asked("First?"),
         answered("One [S1].", citations=("S1",), sources=(source(),)),
         asked("Who won?"),
@@ -1087,7 +1085,7 @@ def test_an_example_is_sent_like_a_typed_question_and_the_empty_state_goes(
 def test_an_empty_conversation_shows_the_examples_but_a_failed_read_does_not(
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
-    fake.details[A] = detail(A)
+    fake.details[A] = detail()
     fake.details[B] = ApiError("backend_unreachable")
 
     assert example_buttons(open_app(cid=CID, conv=A)) == EXAMPLES
@@ -1185,7 +1183,7 @@ def test_error_state_a_backend_that_is_up_offers_no_retry(
 def test_error_state_before_the_first_token_shows_fixed_wording_and_the_question(
     open_app: OpenApp, fake: FakeChatApi, error: ApiError, wording: str
 ) -> None:
-    fake.details[A] = detail(A, asked("First?"), answered("One [S1].", citations=("S1",)))
+    fake.details[A] = detail(asked("First?"), answered("One [S1].", citations=("S1",)))
     fake.streams = [((), error)]
     app = open_app(cid=CID, conv=A)
 
@@ -1223,7 +1221,7 @@ def test_error_state_mid_stream_keeps_the_partial_answer_marked_interrupted(
 def test_error_state_busy_offers_refresh_which_rereads_the_thread(
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
-    fake.details[A] = detail(A, asked("First?"), answered("", "pending"))
+    fake.details[A] = detail(asked("First?"), answered("", "pending"))
     fake.streams = [((), ApiError("conversation_busy", status=409, request_id="req-12345678"))]
     app = open_app(cid=CID, conv=A)
 
@@ -1236,7 +1234,7 @@ def test_error_state_busy_offers_refresh_which_rereads_the_thread(
     assert escape_markdown("Request ID: req-12345678") in main_captions(app)
     assert fake.count("stream") == 1
 
-    fake.details[A] = detail(A, asked("First?"), answered("One [S1].", citations=("S1",)))
+    fake.details[A] = detail(asked("First?"), answered("One [S1].", citations=("S1",)))
     click(app, "refresh-busy")
 
     assert main_errors(app) == []
@@ -1249,13 +1247,13 @@ def test_error_state_busy_offers_refresh_which_rereads_the_thread(
 def test_a_pending_answer_offers_refresh_which_rereads_the_thread(
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
-    fake.details[A] = detail(A, asked("First?"), answered("", "pending"))
+    fake.details[A] = detail(asked("First?"), answered("", "pending"))
     app = open_app(cid=CID, conv=A)
     _, answer = app.chat_message
     assert [str(i.value) for i in answer.info] == [NOTICE_TEXT["pending"]]
     assert not app.chat_input(key="question").disabled
 
-    fake.details[A] = detail(A, asked("First?"), answered("One [S1].", citations=("S1",)))
+    fake.details[A] = detail(asked("First?"), answered("One [S1].", citations=("S1",)))
     click(app, "refresh-answer-1")
 
     assert fake.count("get") == 2
@@ -1267,7 +1265,7 @@ def test_a_pending_answer_offers_refresh_which_rereads_the_thread(
 def test_a_pending_answer_refresh_is_disabled_while_an_answer_streams(
     open_app: OpenApp, fake: FakeChatApi, sent: Sent
 ) -> None:
-    fake.details[A] = detail(A, asked("First?"), answered("", "pending"))
+    fake.details[A] = detail(asked("First?"), answered("", "pending"))
     fake.streams = [((*tokens("Hi."), done("Hi.")), None)]
     app = open_app(cid=CID, conv=A)
     sent.log.clear()
@@ -1413,7 +1411,7 @@ def test_a_bug_while_an_answer_streams_leaves_an_enabled_page(
 ) -> None:
     fake.created = [conversation(A, None)]
     fake.streams = [(tokens("Press the"), RuntimeError(CANARY))]
-    fake.details[A] = detail(A, asked("How do I print?"), answered("Press the", "cancelled"))
+    fake.details[A] = detail(asked("How do I print?"), answered("Press the", "cancelled"))
     app = open_app(cid=CID)
 
     ask(app, "How do I print?")
@@ -1432,7 +1430,7 @@ def test_after_a_bug_mid_answer_the_thread_is_read_again_from_the_backend(
     # The backend stored the turn (here as cancelled) while the page failed.
     fake.created = [conversation(A, None)]
     fake.streams = [(tokens("Press the"), RuntimeError(CANARY))]
-    fake.details[A] = detail(A, asked("How do I print?"), answered("Press the", "cancelled"))
+    fake.details[A] = detail(asked("How do I print?"), answered("Press the", "cancelled"))
     app = open_app(cid=CID)
 
     ask(app, "How do I print?")
@@ -1447,7 +1445,7 @@ def test_after_a_bug_mid_answer_the_thread_is_read_again_from_the_backend(
 
 @pytest.mark.usefixtures("fetch")
 def test_a_bug_in_two_runs_in_a_row_still_reads_the_thread_again(fake: FakeChatApi) -> None:
-    fake.details[A] = detail(A, asked("How do I print?"), answered("Press OK."))
+    fake.details[A] = detail(asked("How do I print?"), answered("Press OK."))
     fake.pages[None] = RuntimeError(CANARY)
     app = AppTest.from_file(str(APP), default_timeout=30)
     app.query_params.update(cid=CID, conv=A)
@@ -1498,10 +1496,10 @@ def test_canary_never_reaches_the_logs_in_any_flow(
         ((), ApiError("bad_response", status=200)),
         (tokens(CANARY), RuntimeError(CANARY)),
     ]
-    fake.details[A] = detail(A, asked(CANARY), answered(CANARY, citations=("S1",)))
+    fake.details[A] = detail(asked(CANARY), answered(CANARY, citations=("S1",)))
     fake.details[B] = ApiError("backend_unreachable")
     # Read again after the bug mid-answer, as the page guard asks.
-    fake.details[C] = detail(C, asked(CANARY), answered(CANARY, "cancelled"))
+    fake.details[C] = detail(asked(CANARY), answered(CANARY, "cancelled"))
     fake.delete_errors[A] = ApiError("internal_error", status=500)
     fake.delete_errors[B] = RuntimeError(CANARY)
     fake.pages["cursor"] = RuntimeError(CANARY)
