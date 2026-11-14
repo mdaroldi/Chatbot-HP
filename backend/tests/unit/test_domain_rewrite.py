@@ -9,13 +9,19 @@ from app.domain.prompt import HistoryBudget, PastTurn
 from app.domain.rewrite import (
     REWRITE_MAX_CHARS,
     REWRITE_MAX_WORDS,
-    accept_rewrite,
+    RewriteCheck,
+    RewriteRejection,
+    check_rewrite,
     rewrite_system_prompt,
     rewrite_turns,
 )
 
 NOW = datetime(2026, 11, 13, tzinfo=UTC)
 WIDE = HistoryBudget(max_turns=50, max_tokens=100_000)
+
+
+def query_of(text: str) -> str | None:
+    return check_rewrite(text).query
 
 
 def user(seq: int, content: str) -> Message:
@@ -129,26 +135,26 @@ def test_the_rewrite_turn_limit_keeps_the_newest_turns() -> None:
 
 
 def test_a_one_line_query_is_accepted_without_surrounding_whitespace() -> None:
-    assert accept_rewrite("  replace the bottom cover on the laptop \n") == (
+    assert query_of("  replace the bottom cover on the laptop \n") == (
         "replace the bottom cover on the laptop"
     )
 
 
 def test_a_query_of_the_maximum_length_is_accepted() -> None:
-    assert accept_rewrite("a" * REWRITE_MAX_CHARS) == "a" * REWRITE_MAX_CHARS
+    assert query_of("a" * REWRITE_MAX_CHARS) == "a" * REWRITE_MAX_CHARS
 
 
 def test_a_query_of_the_maximum_word_count_is_accepted() -> None:
     query = " ".join(["word"] * REWRITE_MAX_WORDS)
 
-    assert accept_rewrite(query) == query
+    assert query_of(query) == query
 
 
 def test_a_query_over_the_word_limit_is_rejected_even_when_short() -> None:
     query = " ".join(["w"] * (REWRITE_MAX_WORDS + 1))
 
     assert len(query) < REWRITE_MAX_CHARS
-    assert accept_rewrite(query) is None
+    assert query_of(query) is None
 
 
 def test_the_limits_match_the_rules_the_model_is_given() -> None:
@@ -161,4 +167,46 @@ def test_the_limits_match_the_rules_the_model_is_given() -> None:
     ["", "   \n", "first line\nsecond line", "first\r\nsecond", "a" * (REWRITE_MAX_CHARS + 1)],
 )
 def test_an_empty_multi_line_or_too_long_output_is_rejected(text: str) -> None:
-    assert accept_rewrite(text) is None
+    assert query_of(text) is None
+
+
+# --- Why an output was rejected: a code and lengths, never the text -------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "rejection"),
+    [
+        ("", RewriteRejection.EMPTY),
+        ("  \n\t ", RewriteRejection.EMPTY),
+        ("cover removal\nfan removal", RewriteRejection.MULTILINE),
+        ("cover removal\r\nfan removal", RewriteRejection.MULTILINE),
+        ("Here is the standalone query:\nremove the fan cover", RewriteRejection.PREAMBLE),
+        ("Rewritten question:\nremove the fan cover", RewriteRejection.PREAMBLE),
+        ("Sure! Here's the query:\n\nremove the fan cover", RewriteRejection.PREAMBLE),
+        ("a" * (REWRITE_MAX_CHARS + 1), RewriteRejection.TOO_MANY_CHARS),
+        (" ".join(["w"] * (REWRITE_MAX_WORDS + 1)), RewriteRejection.TOO_MANY_WORDS),
+    ],
+)
+def test_a_rejected_output_names_one_reason(text: str, rejection: RewriteRejection) -> None:
+    check = check_rewrite(text)
+
+    assert check.query is None
+    assert check.rejection is rejection
+
+
+def test_an_accepted_output_has_no_reason_and_the_query() -> None:
+    assert check_rewrite("  remove the fan cover \n") == RewriteCheck(
+        query="remove the fan cover", rejection=None, chars=20, words=4, lines=1
+    )
+
+
+def test_the_check_measures_the_trimmed_output() -> None:
+    check = check_rewrite("  Rewritten question:\nremove the fan cover\n\n")
+
+    assert (check.chars, check.words, check.lines) == (40, 6, 2)
+
+
+def test_a_line_that_merely_contains_a_colon_is_not_a_preamble() -> None:
+    check = check_rewrite("error code: E3 on the printer\nwhat does it mean")
+
+    assert check.rejection is RewriteRejection.MULTILINE

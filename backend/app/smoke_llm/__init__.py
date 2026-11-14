@@ -6,16 +6,21 @@ Each run sends the real answer system prompt with one synthetic excerpt (no HP t
 and measures the time from the request to the first answer text. Then one follow-up
 goes through the real query rewriter with a synthetic earlier turn. The report holds
 numbers and codes only: time to first token, stop reasons, the models that served,
-error codes and the rewrite's outcome, never the model's text.
+error codes and the rewrite's outcome. One exception, here only: when the rewrite falls
+back, its raw output is printed (one line, at most 400 characters) to show what the
+model returned. The input is the fixed synthetic conversation below, never user data;
+the app itself never logs or returns that text.
 """
 
 import argparse
 import asyncio
+import json
 import statistics
 import sys
 import time
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TextIO
@@ -23,13 +28,22 @@ from typing import TextIO
 from app.core.settings import LLMProviderName, Settings, get_settings
 from app.domain.chat import Message, Outcome, Role
 from app.domain.ingestion import ContentType, PageRange
-from app.domain.llm import GenerationRequest, LLMError, LLMProvider, Purpose
+from app.domain.llm import (
+    GenerationRequest,
+    GenerationStream,
+    LLMError,
+    LLMProvider,
+    Purpose,
+    StopReason,
+    Usage,
+)
 from app.domain.prompt import ANSWER_SYSTEM_PROMPT, answer_turn
 from app.domain.retrieval import RetrievedChunk, SearchHit
 from app.infra.llm_anthropic import AnthropicProvider, anthropic_config_from_settings
 from app.services.rewrite import QueryRewriter, RewriteResult, rewrite_config_from_settings
 
 MAX_RUNS = 50
+RAW_OUTPUT_MAX_CHARS = 400
 _DOC = "synthetic-manual"
 _EXCERPT = SearchHit(
     chunk_id="smoke-1",
@@ -140,7 +154,69 @@ def render_rewrite(result: RewriteResult) -> str:
     if result.rewrite_ms is None:
         return "rewrite: skipped (no history turns)\n"
     outcome = "rewritten" if result.fallback is None else f"fallback={result.fallback}"
+    if result.rejection is not None:
+        outcome += f" rejection={result.rejection}"
     return f"rewrite: {outcome} ({round(result.rewrite_ms)} ms)\n"
+
+
+def render_raw_output(text: str) -> str:
+    """JSON-escaped, so newlines and quotes stay visible on one line."""
+    shown = json.dumps(text[:RAW_OUTPUT_MAX_CHARS], ensure_ascii=False)
+    cut = f" (truncated, {len(text)} chars)" if len(text) > RAW_OUTPUT_MAX_CHARS else ""
+    return f"rewrite_output: {shown}{cut}\n"
+
+
+class _RecordingStream:
+    def __init__(self, inner: GenerationStream, pieces: list[str] | None) -> None:
+        self._inner, self._pieces = inner, pieces
+
+    async def _pass_through(self) -> AsyncIterator[str]:
+        async for piece in self._inner:
+            if self._pieces is not None:
+                self._pieces.append(piece)
+            yield piece
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        return self._pass_through()
+
+    @property
+    def served_model(self) -> str | None:
+        return self._inner.served_model
+
+    @property
+    def usage(self) -> Usage:
+        return self._inner.usage
+
+    @property
+    def stop_reason(self) -> StopReason | None:
+        return self._inner.stop_reason
+
+
+class RewriteRecorder:
+    """Wraps the provider for the smoke test only, keeping the text of the last rewrite."""
+
+    def __init__(self, inner: LLMProvider) -> None:
+        self._inner = inner
+        self._pieces: list[str] | None = None
+
+    @property
+    def name(self) -> str:
+        return self._inner.name
+
+    @property
+    def text(self) -> str | None:
+        return None if self._pieces is None else "".join(self._pieces)
+
+    def stream(self, request: GenerationRequest) -> AbstractAsyncContextManager[GenerationStream]:
+        return self._open(request)
+
+    @asynccontextmanager
+    async def _open(self, request: GenerationRequest) -> AsyncIterator[GenerationStream]:
+        pieces: list[str] | None = None
+        if request.purpose is Purpose.REWRITE:
+            pieces = self._pieces = []
+        async with self._inner.stream(request) as stream:
+            yield _RecordingStream(stream, pieces)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -170,8 +246,11 @@ async def run(
     provider = provider_factory(settings)
     report = await measure(provider, request, args.runs)
     out.write(report.render())
-    rewrite = await rewrite_once(provider, settings)
+    recorder = RewriteRecorder(provider)
+    rewrite = await rewrite_once(recorder, settings)
     out.write(render_rewrite(rewrite))
+    if rewrite.fallback is not None and recorder.text is not None:
+        out.write(render_raw_output(recorder.text))
     return 1 if report.errors or rewrite.fallback is not None else 0
 
 

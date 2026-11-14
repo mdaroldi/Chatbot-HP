@@ -13,8 +13,9 @@ from pydantic import SecretStr
 
 from app import smoke_llm
 from app.domain.chat import Role
-from app.domain.llm import LLMRequestError, LLMTimeoutError, Purpose, StopReason
+from app.domain.llm import LLMRequestError, LLMTimeoutError, Purpose, StopReason, Usage
 from app.domain.prompt import ANSWER_SYSTEM_PROMPT
+from app.domain.rewrite import RewriteRejection
 from app.infra.llm_anthropic import AnthropicProvider
 from app.services.rewrite import RewriteFallback, RewriteResult
 from tests.unit.conftest import SettingsFactory
@@ -261,3 +262,76 @@ async def test_rewriting_disabled_by_settings_is_reported_and_does_not_fail(
     assert code == 0
     assert [r.purpose for r in fake.requests] == [Purpose.ANSWER]
     assert "rewrite: skipped (no history turns)\n" in out.getvalue()
+
+
+# --- Diagnosing a rewrite fallback (smoke only: a fixed synthetic conversation) --------
+
+
+def test_the_rewrite_line_names_the_rejection_of_an_invalid_output() -> None:
+    result = RewriteResult(
+        "raw", None, 1285.0, RewriteFallback.INVALID_OUTPUT, RewriteRejection.PREAMBLE
+    )
+
+    assert smoke_llm.render_rewrite(result) == (
+        "rewrite: fallback=invalid_output rejection=preamble (1285 ms)\n"
+    )
+
+
+async def test_on_a_fallback_the_raw_output_is_printed_on_one_line(
+    make_settings: SettingsFactory,
+) -> None:
+    out = io.StringIO()
+    fake = FakeProvider(("Here is the standalone query:", '\n"clean the fan"'))
+
+    code = await smoke_llm.run(["--runs", "1"], make_settings(), lambda _: fake, out)
+
+    assert code == 1
+    lines = out.getvalue().splitlines()
+    assert "rewrite: fallback=invalid_output rejection=preamble" in lines[-2]
+    assert lines[-1] == 'rewrite_output: "Here is the standalone query:\\n\\"clean the fan\\""'
+
+
+async def test_the_raw_output_is_cut_at_400_characters(make_settings: SettingsFactory) -> None:
+    out = io.StringIO()
+    fake = FakeProvider(("x" * 350, "\n", "y" * 100))
+
+    await smoke_llm.run(["--runs", "1"], make_settings(), lambda _: fake, out)
+
+    last = out.getvalue().splitlines()[-1]
+    assert last == 'rewrite_output: "' + "x" * 350 + "\\n" + "y" * 49 + '" (truncated, 451 chars)'
+
+
+async def test_a_successful_rewrite_prints_no_output(make_settings: SettingsFactory) -> None:
+    out = io.StringIO()
+
+    await smoke_llm.run(["--runs", "1"], make_settings(), lambda _: FakeProvider(("q",)), out)
+
+    assert "rewrite_output" not in out.getvalue()
+
+
+async def test_the_recorder_passes_the_stream_through_and_keeps_only_rewrite_text(
+    make_settings: SettingsFactory,
+) -> None:
+    fake = FakeProvider(("a ", "query"), stop=StopReason.END_TURN)
+    recorder = smoke_llm.RewriteRecorder(fake)
+
+    async with recorder.stream(smoke_llm.smoke_request("m", 300, None)) as stream:
+        assert [piece async for piece in stream] == ["a ", "query"]
+        assert (stream.stop_reason, stream.served_model) == (StopReason.END_TURN, "fake-served")
+        assert stream.usage == fake_usage()
+    assert recorded(recorder) is None  # an answer is not recorded
+
+    result = await smoke_llm.rewrite_once(recorder, make_settings())
+
+    assert recorded(recorder) == "a query"
+    assert result.rewritten_query == "a query"
+    assert recorder.name == fake.name
+
+
+def recorded(recorder: smoke_llm.RewriteRecorder) -> str | None:
+    """Read through a call so mypy does not reuse an earlier narrowing."""
+    return recorder.text
+
+
+def fake_usage() -> Usage:
+    return Usage(1, 1)  # what FakeStream reports

@@ -16,7 +16,7 @@ from app.domain.llm import (
     StopReason,
 )
 from app.domain.prompt import HistoryBudget, PastTurn
-from app.domain.rewrite import rewrite_system_prompt
+from app.domain.rewrite import RewriteRejection, rewrite_system_prompt
 from app.infra.llm_stub import StubProvider
 from app.services.rewrite import (
     QueryRewriter,
@@ -169,15 +169,27 @@ async def test_an_output_that_did_not_end_its_turn_falls_back(stop: StopReason) 
     assert result == RewriteResult("And the fan?", None, 250.0, RewriteFallback.INCOMPLETE)
 
 
-@pytest.mark.parametrize("pieces", [(), ("  ", "\n"), ("one\n", "two"), ("a" * 301,)])
-async def test_an_empty_multi_line_or_too_long_output_falls_back(
-    pieces: tuple[str, ...],
+@pytest.mark.parametrize(
+    ("pieces", "rejection"),
+    [
+        ((), RewriteRejection.EMPTY),
+        (("  ", "\n"), RewriteRejection.EMPTY),
+        (("one\n", "two"), RewriteRejection.MULTILINE),
+        (("Standalone query:", "\nremove the fan"), RewriteRejection.PREAMBLE),
+        (("a" * 301,), RewriteRejection.TOO_MANY_CHARS),
+        ((" ".join(["w"] * 31),), RewriteRejection.TOO_MANY_WORDS),
+    ],
+)
+async def test_an_invalid_output_falls_back_and_says_why(
+    pieces: tuple[str, ...], rejection: RewriteRejection
 ) -> None:
     provider = FakeProvider(pieces)
 
     result = await rewriter(provider).rewrite("And the fan?", HISTORY)
 
-    assert result == RewriteResult("And the fan?", None, 250.0, RewriteFallback.INVALID_OUTPUT)
+    assert result == RewriteResult(
+        "And the fan?", None, 250.0, RewriteFallback.INVALID_OUTPUT, rejection
+    )
 
 
 async def test_an_unexpected_error_is_not_swallowed() -> None:
@@ -225,3 +237,25 @@ async def test_a_fallback_logs_its_code_but_never_the_text(json_logs: LogReader)
     assert CANARY not in json.dumps(lines)
     (done,) = [line for line in lines if line["message"] == "query rewrite"]
     assert done["outcome"] == "invalid_output"
+    assert done["rejection"] == "multiline"
+    assert (done["output_chars"], done["output_words"], done["output_lines"]) == (
+        4 + len(CANARY),
+        2,
+        2,
+    )
+
+
+async def test_a_rewritten_query_logs_no_rejection_or_lengths(json_logs: LogReader) -> None:
+    await rewriter(FakeProvider(("remove the fan",))).rewrite("And the fan?", HISTORY)
+
+    (done,) = [line for line in json_logs() if line["message"] == "query rewrite"]
+    assert "rejection" not in done
+    assert "output_chars" not in done
+
+
+async def test_other_fallbacks_carry_no_rejection() -> None:
+    provider = FakeProvider(("remove the fan",), stop=StopReason.MAX_TOKENS)
+
+    result = await rewriter(provider).rewrite("And the fan?", HISTORY)
+
+    assert result.rejection is None

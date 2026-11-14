@@ -10,6 +10,8 @@ rejected, so the caller falls back to the raw message.
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
+from enum import StrEnum
 from html import escape
 
 from app.domain.chat import REFUSAL_MARKER, Message
@@ -35,6 +37,12 @@ explanation.
 """
 
 _LINE_BREAK = re.compile(r"[\r\n]")
+# A first line that only introduces the answer: an opener word, then a label ending in a
+# colon, e.g. "Here is the standalone query:" or "Rewritten question:".
+_PREAMBLE = re.compile(
+    r"^\W*(?:here|sure|okay|ok|rewritten|standalone|search|query|question)\b[^:]{0,60}:\s*$",
+    re.IGNORECASE,
+)
 
 
 def _render(turn: PastTurn) -> str:
@@ -57,13 +65,45 @@ def rewrite_system_prompt(turns: Sequence[PastTurn]) -> str:
     return f"{_RULES}\n<conversation>\n{conversation}</conversation>"
 
 
-def accept_rewrite(text: str) -> str | None:
-    """The query, or None when the output is empty, spans lines, or exceeds the word or
-    character cap.
+class RewriteRejection(StrEnum):
+    """Why an output is not a usable query: a code, so a fallback can be diagnosed
+    from logs without the text.
     """
-    query = text.strip()
-    if not query or _LINE_BREAK.search(query):
-        return None
-    if len(query) > REWRITE_MAX_CHARS or len(query.split()) > REWRITE_MAX_WORDS:
-        return None
-    return query
+
+    EMPTY = "empty"
+    MULTILINE = "multiline"
+    PREAMBLE = "preamble"  # several lines, the first a label such as "Here is the query:"
+    TOO_MANY_CHARS = "too_many_chars"
+    TOO_MANY_WORDS = "too_many_words"
+
+
+@dataclass(frozen=True)
+class RewriteCheck:
+    """The query (None when rejected), the reason, and the trimmed output's size."""
+
+    query: str | None
+    rejection: RewriteRejection | None
+    chars: int
+    words: int
+    lines: int
+
+
+def check_rewrite(text: str) -> RewriteCheck:
+    """Accept one line within both caps; otherwise name the first rule it breaks."""
+    output = text.strip()
+    lines = output.splitlines()
+    chars, words = len(output), len(output.split())
+
+    def reject(rejection: RewriteRejection) -> RewriteCheck:
+        return RewriteCheck(None, rejection, chars, words, len(lines))
+
+    if not output:
+        return reject(RewriteRejection.EMPTY)
+    if _LINE_BREAK.search(output):
+        preamble = _PREAMBLE.match(lines[0])
+        return reject(RewriteRejection.PREAMBLE if preamble else RewriteRejection.MULTILINE)
+    if chars > REWRITE_MAX_CHARS:
+        return reject(RewriteRejection.TOO_MANY_CHARS)
+    if words > REWRITE_MAX_WORDS:
+        return reject(RewriteRejection.TOO_MANY_WORDS)
+    return RewriteCheck(output, None, chars, words, 1)
