@@ -1413,6 +1413,7 @@ def test_a_bug_while_an_answer_streams_leaves_an_enabled_page(
 ) -> None:
     fake.created = [conversation(A, None)]
     fake.streams = [(tokens("Press the"), RuntimeError(CANARY))]
+    fake.details[A] = detail(A, asked("How do I print?"), answered("Press the", "cancelled"))
     app = open_app(cid=CID)
 
     ask(app, "How do I print?")
@@ -1422,6 +1423,56 @@ def test_a_bug_while_an_answer_streams_leaves_an_enabled_page(
     assert not [b for b in app.button if b.disabled]
     assert (fake.count("stream"), fake.streams_closed) == (1, 1)
     assert CANARY not in page_text(sent.log)
+    assert CANARY not in logged()
+
+
+def test_after_a_bug_mid_answer_the_thread_is_read_again_from_the_backend(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    # The backend stored the turn (here as cancelled) while the page failed.
+    fake.created = [conversation(A, None)]
+    fake.streams = [(tokens("Press the"), RuntimeError(CANARY))]
+    fake.details[A] = detail(A, asked("How do I print?"), answered("Press the", "cancelled"))
+    app = open_app(cid=CID)
+
+    ask(app, "How do I print?")
+
+    assert main_errors(app) == [GENERIC]
+    assert fake.count("get") == 1
+    assert roles(app) == ["user", "assistant"]
+    assert [str(w.value) for w in app.main.warning] == [NOTICE_TEXT["cancelled"]]
+    app.run()
+    assert fake.count("get") == 1  # read once, not on every run
+
+
+@pytest.mark.usefixtures("fetch")
+def test_a_bug_in_two_runs_in_a_row_still_reads_the_thread_again(fake: FakeChatApi) -> None:
+    fake.details[A] = detail(A, asked("How do I print?"), answered("Press OK."))
+    fake.pages[None] = RuntimeError(CANARY)
+    app = AppTest.from_file(str(APP), default_timeout=30)
+    app.query_params.update(cid=CID, conv=A)
+    app.run()
+    assert not app.exception
+    assert main_errors(app) == [GENERIC]
+    assert fake.count("get") == 2  # the failed run, then its rerun, which failed too
+
+    fake.pages[None] = page(conversation(A))
+    app.run()
+
+    assert main_errors(app) == []
+    assert fake.count("get") == 3
+
+
+def test_a_bug_before_the_page_state_exists_shows_the_generic_wording(
+    monkeypatch: pytest.MonkeyPatch, logged: Logged
+) -> None:
+    monkeypatch.setenv("BACKEND_URL", f"not a url {CANARY}")
+    app = AppTest.from_file(str(APP), default_timeout=30)
+
+    app.run()
+
+    assert not app.exception
+    assert main_errors(app) == [GENERIC]
     assert CANARY not in logged()
 
 
@@ -1449,6 +1500,8 @@ def test_canary_never_reaches_the_logs_in_any_flow(
     ]
     fake.details[A] = detail(A, asked(CANARY), answered(CANARY, citations=("S1",)))
     fake.details[B] = ApiError("backend_unreachable")
+    # Read again after the bug mid-answer, as the page guard asks.
+    fake.details[C] = detail(C, asked(CANARY), answered(CANARY, "cancelled"))
     fake.delete_errors[A] = ApiError("internal_error", status=500)
     fake.delete_errors[B] = RuntimeError(CANARY)
     fake.pages["cursor"] = RuntimeError(CANARY)

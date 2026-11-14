@@ -155,6 +155,13 @@ def refresh_thread(state: UiState) -> UiState:
     return replace(state, thread_for=None, send_error=None)
 
 
+def thread_stale(state: UiState) -> UiState:
+    """After a failed page run: the backend may have stored a turn (as cancelled, say)
+    that the page never drew, so the thread is read again; the last error stays.
+    """
+    return replace(state, thread_for=None)
+
+
 def notice_shown(state: UiState) -> UiState:
     return replace(state, notice=None)
 

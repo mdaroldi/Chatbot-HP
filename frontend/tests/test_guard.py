@@ -24,8 +24,10 @@ def raising(error: BaseException) -> None:
     ids=["stop", "rerun", "keyboard-interrupt", "system-exit"],
 )
 def test_streamlit_control_flow_and_interrupts_pass_through(control: BaseException) -> None:
+    failures: list[str] = []
     with pytest.raises(type(control)):
-        guard.run_page(lambda: raising(control))
+        guard.run_page(lambda: raising(control), on_failure=lambda: failures.append("called"))
+    assert failures == []
     with pytest.raises(type(control)):
         guard.callback(raising)(control)
 

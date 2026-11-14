@@ -30,4 +30,4 @@ def page() -> None:
 
 st.set_page_config(page_title="HP Docs Chatbot", initial_sidebar_state="expanded")
 wiring.quiet_http_logs()
-guard.run_page(page)
+guard.run_page(page, on_failure=session.forget_thread)

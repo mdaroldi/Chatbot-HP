@@ -9,7 +9,8 @@ interrupts derive from BaseException and pass through.
 Widget callbacks run before the script, outside the page run, so each is guarded on
 its own. A failure is shown in the next page run, once: a page that failed is rerun a
 single time, so a run that drew every widget disabled (an answer streaming) is
-replaced by an enabled one.
+replaced by an enabled one. `on_failure` lets the page drop what the failed run may
+have left stale (the thread, when the backend stored an answer the page never drew).
 """
 
 import functools
@@ -24,7 +25,7 @@ _FAILED = "page-failed"
 _logger = logging.getLogger(__name__)
 
 
-def run_page(page: Callable[[], None]) -> None:
+def run_page(page: Callable[[], None], *, on_failure: Callable[[], None]) -> None:
     failed_before = bool(st.session_state.pop(_FAILED, False))
     if failed_before:
         st.error(GENERIC_ERROR_TEXT)
@@ -32,6 +33,7 @@ def run_page(page: Callable[[], None]) -> None:
         page()
     except Exception as error:
         _log("page run failed", error)
+        on_failure()
         if failed_before:
             return  # already shown in this run; rerunning again could loop
         st.session_state[_FAILED] = True

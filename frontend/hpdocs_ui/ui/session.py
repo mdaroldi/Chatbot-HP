@@ -6,7 +6,7 @@ from typing import Concatenate
 import streamlit as st
 
 from hpdocs_ui import url_state
-from hpdocs_ui.state import UiState, initial
+from hpdocs_ui.state import UiState, initial, thread_stale
 from hpdocs_ui.state import url_state as state_url
 from hpdocs_ui.ui import guard
 
@@ -32,6 +32,14 @@ def get() -> UiState:
 
 def put(state: UiState) -> None:
     st.session_state[_KEY] = state
+
+
+def forget_thread() -> None:
+    """The page guard's recovery: the next run reads the selected thread again. A run
+    can fail before the state exists, and then there is nothing to forget.
+    """
+    if _KEY in st.session_state:
+        put(thread_stale(get()))
 
 
 def sync_url(state: UiState) -> None:

@@ -1,5 +1,6 @@
 """Page state transitions: pure functions from one UiState to the next."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from hpdocs_ui.api import Conversation, ConversationPage, Done, Flags, StreamEvent, Token
@@ -28,6 +29,7 @@ from hpdocs_ui.state import (
     take_outbox,
     thread_loaded,
     thread_missing,
+    thread_stale,
     url_state,
 )
 from hpdocs_ui.url_state import UrlState
@@ -444,3 +446,16 @@ def test_refresh_thread_clears_the_last_error_it_answers() -> None:
 
     assert state.send_error is None
     assert state.needs_thread
+
+
+def test_a_stale_thread_is_read_again_and_keeps_the_last_error() -> None:
+    failed = not_sent(selected(), "Q?", ApiError("conversation_busy", status=409))
+
+    state = thread_stale(failed)
+
+    assert state.needs_thread
+    assert state == replace(failed, thread_for=None)
+
+
+def test_a_stale_thread_without_a_selection_reads_nothing() -> None:
+    assert not thread_stale(initial(UrlState(CID, None))).needs_thread
