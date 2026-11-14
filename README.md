@@ -6,12 +6,12 @@ Retrieval-Augmented Generation (RAG):
 - HP ENVY 6000 All-in-One series User Guide
 - OMEN 17.3 inch Gaming Laptop PC Maintenance and Service Guide
 
-> **Status: Phase 3 (chat API) built.** `docker compose up` downloads the two
+> **Status: Phase 4 (chat UI) built.** `docker compose up` downloads the two
 > manuals, verifies them against pinned checksums and builds a hybrid (dense + BM25)
 > Qdrant index of them. The API answers questions over SSE with citations, keeps
 > conversations in Postgres and refuses when the manuals do not hold the answer
-> ([Chat](#chat)). The Streamlit page is still a placeholder: the chat UI comes in
-> Phase 4; see [Status](#status).
+> ([Chat](#chat)). The Streamlit page at http://localhost:8501 is the chat
+> ([Chat UI](#chat-ui)); see [Status](#status).
 
 ## Architecture
 
@@ -29,7 +29,7 @@ flowchart LR
         qdrant[("qdrant<br/>Qdrant 1.20")]
     end
     hp[["HP download hosts<br/>(the two manuals)"]]
-    frontend -->|"HTTP: /health, /ready"| backend
+    frontend -->|"HTTP: /v1 chat API, /health, /ready"| backend
     operator([Operator]) -->|":8000"| backend
     migrate -->|"schema"| postgres
     ingest -->|"build manifest"| postgres
@@ -77,7 +77,7 @@ docker compose up --build   # or: make up (waits until every service is healthy)
 the key, or set `LLM_PROVIDER=stub` to run everything offline with the deterministic
 stub model (answers built from the retrieved excerpts, no API calls).
 
-- Frontend: http://localhost:8501 (shows backend health and readiness)
+- Chat UI: http://localhost:8501
 - API: http://localhost:8000 (`/health`, `/ready`, `/docs`)
 
 Compose refuses to start without `POSTGRES_PASSWORD`. Only the API and the frontend
@@ -207,8 +207,8 @@ build, not across builds (ADR 0009).
 
 ## Chat
 
-Conversations belong to an anonymous client ID sent as `X-Client-ID` (the Phase 4
-frontend keeps one per browser). Endpoints, under `/v1` (full contract in
+Conversations belong to an anonymous client ID sent as `X-Client-ID` (the chat UI
+keeps one per browser). Endpoints, under `/v1` (full contract in
 [ADR 0010](docs/adr/0010-chat-api.md)):
 
 | Endpoint | What it does |
@@ -262,6 +262,32 @@ after its last message. The backend purges at startup and every
 `RETENTION_PURGE_INTERVAL_MINUTES` (60; 0 turns it off), one replica at a time under a
 Postgres advisory lock; `make purge` runs one purge now and prints the counts. Logs
 carry counts only.
+
+## Chat UI
+
+The Streamlit page at http://localhost:8501 talks to the API only over HTTP
+([ADR 0011](docs/adr/0011-chat-ui.md)).
+
+- **Conversations** are listed in the sidebar, newest first, with "New conversation",
+  "Load more" and a delete button that asks for confirmation. A conversation is
+  created with its first question.
+- **Answers stream** token by token; while one streams, every widget is disabled. Each
+  answer cites its excerpts as `[S1]`, `[S2]` ..., and the latest answer opens its
+  Sources: document, section, printed and PDF pages, a snippet, and a WARNING/CAUTION
+  badge when the excerpt carries such a note.
+- **Refusals and errors** use fixed wording. A failure before the first token keeps the
+  question in a copyable box, and nothing is stored. A failure after it keeps the
+  partial answer, marked incomplete. An uncited answer is kept and labelled.
+- **Your link is your identity.** The page keeps an anonymous client ID in the URL
+  (`cid`), and the open conversation in `conv`: reloading or bookmarking the link
+  reopens your conversations, and anyone with the link can read them. The sidebar
+  says so. A second browser without the link sees nothing.
+- **Privacy notice.** The sidebar and the empty page say what leaves the machine: with
+  `LLM_PROVIDER=anthropic`, your questions, recent messages and the excerpts found for
+  them go to the Anthropic API; with the stub, nothing does.
+- The page reaches the API at `BACKEND_URL`, which compose sets to
+  `http://backend:8000`; it is wiring, not configuration, so it is not in
+  `.env.example`.
 
 ## Configuration
 
@@ -360,6 +386,7 @@ A unit test fails if this table, `.env.example` and the `Settings` class disagre
 | `make typecheck` | mypy `--strict`, backend and frontend |
 | `make test` | Unit tests with a branch-coverage gate of 90%, both projects |
 | `make test-int` | Integration tests against real Postgres and Qdrant (Docker), plus the corpus and model tests on the real manuals and models |
+| `make test-ui-int` | The real chat page against the running stub stack (local only; see [Development and testing](#development-and-testing)) |
 | `make fetch-test-assets` | Download and verify the manuals and models for `test-int` (3 attempts; the CI download step) |
 | `make security` | bandit, pip-audit on both lock files, gitleaks on the history |
 | `make images` / `scan-images` / `scan-config` | Build images; Trivy image and Dockerfile scans |
@@ -422,6 +449,30 @@ interfaces (for example `FakeProbe`), never real databases or the network; the
 backend and the frontend each have a 90% branch-coverage gate (currently 100%).
 Integration tests run Alembic and the probes against real containers and fail,
 rather than skip, when those containers are not running.
+
+**UI integration tests** (`make test-ui-int`, local only, not in CI yet) run the real
+page and HTTP client against the running stack with the stub model. They fail when
+the backend is down, and stop before sending anything unless `/ready` reports
+`"llm": "stub"`. Your `.env` may not set `LLM_PROVIDER` (compose then defaults to the
+stub, while a fresh copy of `.env.example` selects anthropic), so every recipe below
+passes it explicitly:
+
+```bash
+# Stub stack (the closed-stream test needs a token delay above 0)
+LLM_PROVIDER=stub LLM_STUB_TOKEN_DELAY_MS=50 docker compose up -d --build --wait
+curl -s localhost:8000/ready | jq -c '{status, llm}'   # {"status":"ready","llm":"stub"}
+make test-ui-int
+
+# Switch the model without rebuilding (/ready is not_ready for ~10 s while models load)
+LLM_PROVIDER=anthropic docker compose up -d --no-deps --no-build --wait backend
+
+# Real-key stack
+LLM_PROVIDER=anthropic docker compose up -d --build --wait
+```
+
+For a manual browser check, rebuild the frontend image first (`--build`) and use
+`LLM_STUB_TOKEN_DELAY_MS=150` so the streaming is visible. `up` reruns `migrate` and
+`ingest --if-needed` each time.
 
 Run the pieces without Docker (needs the variables from `.env.example`):
 
@@ -503,6 +554,11 @@ are not redistributed.
   is unaffected.
 - The Postgres pool is sized per process and has no explicit `pool_timeout` yet
   (SQLAlchemy's 30 s default applies).
+- **Chat UI:** a second click on an example question before the disabled page
+  reaches the browser can send it twice; a tab closed while the answer is still
+  being prepared is noticed only at the first token (one model call wasted); after a
+  reload, an interrupted or stopped answer no longer says why
+  ([ADR 0011](docs/adr/0011-chat-ui.md)).
 - The frontend image is about 830 MB, mostly Streamlit's own dependencies. The
   backend image carries the ingestion stack (pdfplumber, fastembed, onnxruntime) and
   the baked models (152 MB): 618 MiB unpacked and 300 MB compressed
@@ -556,7 +612,7 @@ The full list, with the reasoning, is in [ADR 0001](docs/adr/0001-architecture-o
 | 1 | Ingestion: download, parse, clean, chunk, embed, upsert, manifest | done |
 | 2 | Retrieval: hybrid search, reranker, golden set, retrieval metrics | done |
 | 3 | Chat API: LLM gateway, prompt, citations, streaming, history | done |
-| 4 | Frontend: Streamlit chat UI with conversations and sources | pending |
+| 4 | Frontend: Streamlit chat UI with conversations and sources | done |
 | 5 | Benchmark: generation metrics, ablation, report | pending |
 | 6 | Load testing: Locust profiles, tuning, capacity report | pending |
 | 7 | Hardening: security review, docs, demo script | pending |

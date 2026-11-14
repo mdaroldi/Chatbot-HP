@@ -91,6 +91,7 @@ make lint         # ruff check + ruff format --check
 make typecheck    # mypy --strict
 make test         # unit tests with coverage gate (branch coverage, fail under 90)
 make test-int     # integration, corpus and model tests (needs Docker)
+make test-ui-int  # UI integration tests against the running stub stack (local only)
 make fetch-test-assets  # download and verify the HP manuals and models for test-int (CI step)
 make models       # download and verify every pinned model into backend/models (model tests)
 make security     # bandit, pip-audit, gitleaks
@@ -192,7 +193,7 @@ Rules:
 | 1 | Ingestion: download, parse, clean, chunk, embed, upsert, manifest | done |
 | 2 | Retrieval: hybrid search, reranker, golden set, retrieval metrics | done |
 | 3 | Chat API: LLM gateway, prompt, citations, streaming, history | done |
-| 4 | Frontend: Streamlit chat UI with conversations and sources | pending |
+| 4 | Frontend: Streamlit chat UI with conversations and sources | done |
 | 5 | Benchmark: generation metrics, ablation, report | pending |
 | 6 | Load testing: Locust profiles, tuning, capacity report | pending |
 | 7 | Hardening: security review, docs, demo script | pending |

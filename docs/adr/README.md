@@ -15,3 +15,4 @@ considered, consequences.
 | [0008](0008-baked-models-and-inference.md) | Models baked into the backend image, read offline; inference threading |
 | [0009](0009-retrieval-strategy-and-evaluation.md) | Retrieval strategy and evaluation method |
 | [0010](0010-chat-api.md) | Chat API: conversations, SSE answers, three refusal reasons, rate limits, retention |
+| [0011](0011-chat-ui.md) | Chat UI: Streamlit page, state model, safe rendering, page guard |
