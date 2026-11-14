@@ -17,6 +17,8 @@ from app.domain.answer_dataset import EvalItem
 from app.domain.chat import AnswerFlags
 from app.evaluation.answers.ask import (
     CONFIG_SCHEMA,
+    READY_ATTEMPTS,
+    READY_INTERVAL_SECONDS,
     ApiBackend,
     AskError,
     AskOptions,
@@ -70,13 +72,18 @@ class FakeBackend:
         self,
         ready: Mapping[str, object] | None = None,
         errors: Mapping[str, str] | None = None,
+        warming: int = 0,
     ) -> None:
         self.body = ready_body() if ready is None else ready
+        self.warming = warming  # /ready calls answered not_ready first (models loading)
         self.errors = {} if errors is None else errors
         self.log: list[str] = []
 
     async def ready(self) -> Mapping[str, object]:
         self.log.append("ready")
+        if self.warming:
+            self.warming -= 1
+            return {"status": "not_ready", "checks": {"index": {"status": "loading"}}}
         return self.body
 
     async def answer(self, item: EvalItem, client_id: str) -> ItemResult:
@@ -128,6 +135,18 @@ def by_run(items: Sequence[EvalItem] = ITEMS) -> dict[str, Sequence[EvalItem]]:
     return {"reference-1": items, "heldout": HELDOUT}
 
 
+SLEPT: list[float] = []
+
+
+async def record_sleep(seconds: float) -> None:
+    SLEPT.append(seconds)
+
+
+@pytest.fixture(autouse=True)
+def clear_sleeps() -> None:
+    SLEPT.clear()
+
+
 def chunks_of(collection: str) -> FakeChunks:
     assert collection == COLLECTION  # the live collection, not the alias
     return FakeChunks()
@@ -140,6 +159,7 @@ def ports(
 ) -> AskPorts:
     ids = iter(f"client-{n}" for n in range(1, 100))
     return AskPorts(
+        sleep=record_sleep,
         backend=backend or FakeBackend(),
         index=index or FakeIndex(),
         rows=rows or FakeRows(),
@@ -455,3 +475,38 @@ async def test_a_stub_run_checks_ready_for_the_stub_and_records_the_stub_env(
 async def test_a_stub_run_against_the_real_provider_is_refused(files: RunFiles) -> None:
     with pytest.raises(ConfigMismatchError, match="expected stub"):
         await ask(files, options=AskOptions(provider=LLMProviderName.STUB))
+
+
+# ------------------------------------------------------------------ waiting for /ready
+
+
+async def test_a_backend_still_loading_is_asked_again_until_ready(files: RunFiles) -> None:
+    backend = FakeBackend(warming=2)
+
+    await ask(files, ports(backend), AskOptions(limit=1))
+
+    assert backend.log[:3] == ["ready", "ready", "ready"]
+    assert SLEPT == [READY_INTERVAL_SECONDS] * 2
+    assert backend.log[3].startswith("answer")
+
+
+async def test_a_backend_never_ready_stops_the_run_after_the_wait(files: RunFiles) -> None:
+    backend = FakeBackend(warming=READY_ATTEMPTS)
+
+    with pytest.raises(ConfigMismatchError, match="status not_ready"):
+        await ask(files, ports(backend))
+
+    assert backend.log == ["ready"] * READY_ATTEMPTS
+    assert len(SLEPT) == READY_ATTEMPTS - 1
+    assert READY_ATTEMPTS * READY_INTERVAL_SECONDS >= 120  # model loading takes this long
+
+
+async def test_a_ready_backend_serving_another_build_fails_without_waiting(
+    files: RunFiles,
+) -> None:
+    other = ready_body(checks={"index": {"info": {"collection": "x", "build_id": "y"}}})
+
+    with pytest.raises(ConfigMismatchError):
+        await ask(files, ports(FakeBackend(ready=other)))
+
+    assert SLEPT == []

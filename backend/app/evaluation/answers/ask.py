@@ -6,7 +6,8 @@ cheapest first:
 1. The start check (`estimate.run_start`): the rest of the run, with margin, must fit
    in the budget left after the reserved runs. Files only.
 2. The run's alias resolves to a live collection with a succeeded build.
-3. `/ready` reports the real provider and exactly that collection and build.
+3. `/ready` reports the real provider and exactly that collection and build, once it
+   is ready (it is polled while the restarted backend still loads its query models).
 4. The run directory's config record (`config.json`: run, item set, expected backend
    env, collection, build) is written on the first ask. A run directory that exists
    needs `--resume` (or `--retry-errors`), and its record must equal the new one, so a
@@ -18,9 +19,10 @@ rows must show the run's config (`check_rows`; a mismatch stops the run as inval
 its charges kept, and the item gets no journal line) -> the journal line.
 """
 
+import asyncio
 import json
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
@@ -62,6 +64,10 @@ from app.evaluation.answers.store import AnswerRows
 logger = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = "answers-run-v1"
+# Right after a restart the compose healthcheck passes while /ready still waits for the
+# query models to load; two minutes covers that on a loaded laptop.
+READY_ATTEMPTS = 60
+READY_INTERVAL_SECONDS = 2.0
 
 
 class AskError(Exception):
@@ -100,6 +106,7 @@ class AskPorts:
     chunks: Callable[[str], ChunkSource]  # by collection name
     titles: Mapping[str, str]
     new_client_id: Callable[[], str]
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
 
 
 @dataclass(frozen=True)
@@ -159,6 +166,20 @@ class ApiBackend:
 
     async def delete_conversation(self, conversation_id: str, client_id: str) -> Failed | None:
         return await self._chat.delete_conversation(conversation_id, client_id)
+
+
+async def _wait_ready(
+    backend: Backend, sleep: Callable[[float], Awaitable[None]]
+) -> Mapping[str, object]:
+    """The first ready body, or the last body once the wait is over (check_ready then
+    names its status). A ready body is returned at once, whatever build it serves.
+    """
+    for _ in range(READY_ATTEMPTS - 1):
+        body = await backend.ready()
+        if body.get("status") == "ready":
+            return body
+        await sleep(READY_INTERVAL_SECONDS)
+    return await backend.ready()
 
 
 def _record(matrix: AnswerMatrix, run: RunSpec, index: IndexRef, provider: LLMProviderName) -> Json:
@@ -224,7 +245,7 @@ async def ask_run(  # noqa: PLR0913, PLR0917 - the run, its inputs, files, ports
     if index is None:
         raise AskError(f"alias {alias} has no live collection with a succeeded build")
     check_ready(
-        await ports.backend.ready(),
+        await _wait_ready(ports.backend, ports.sleep),
         collection=index.collection,
         build_id=index.build_id,
         provider=options.provider,
