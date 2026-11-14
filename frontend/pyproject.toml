@@ -57,7 +57,11 @@ files = ["app.py", "hpdocs_ui", "tests"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-ra --strict-markers --strict-config"
+# The integration tests need the running stub stack: `make test-ui-int` selects them.
+addopts = '-ra --strict-markers --strict-config -m "not integration"'
+markers = [
+  "integration: the real page against the running compose stack with the stub model",
+]
 filterwarnings = ["error"]
 
 # ---------------------------------------------------------------- coverage

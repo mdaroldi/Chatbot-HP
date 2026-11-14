@@ -15,7 +15,7 @@ IMAGES := hpdocs-backend:local hpdocs-frontend:local
 TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURDIR)":/src:ro \
 	-v trivy-cache:/root/.cache $(TRIVY_IMAGE)
 
-.PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int smoke-llm \
+.PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int test-ui-int smoke-llm \
 	fetch-test-assets models \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins \
 	purge eval-retrieval eval load check
@@ -78,6 +78,13 @@ test-int: ## Integration tests (real Postgres and Qdrant, needs Docker), corpus 
 	$(TEST_COMPOSE) up -d --wait
 	status=0; (cd $(BACKEND) && uv run --frozen pytest tests/integration tests/corpus tests/embeddings -m "$(TEST_INT_MARKERS)") \
 		|| status=$$?; $(TEST_COMPOSE) down -v; exit $$status
+
+# Local only, not in test-int or CI (ADR 0011): it needs both images built and the
+# index ingested. Start the stub stack first (README, testing); the tests fail when the
+# backend is down and abort before sending anything unless /ready reports the stub.
+UI_IT_BACKEND_URL ?= http://127.0.0.1:$${API_PORT:-8000}
+test-ui-int: ## UI integration tests against the running stub stack (local only)
+	cd $(FRONTEND) && UI_IT_BACKEND_URL="$(UI_IT_BACKEND_URL)" uv run --frozen pytest tests/integration -m integration
 
 security: ## bandit, pip-audit (both lock files), gitleaks
 	cd $(BACKEND) && uv run --frozen bandit -q -c pyproject.toml -r app
