@@ -7,6 +7,7 @@ file are real files, read back as JSON lines.
 import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -110,9 +111,17 @@ async def test_an_answer_is_charged_traced_with_its_excerpts_and_then_deleted(
     assert (trace["kind"], trace["item_id"], trace["attempt"]) == ("trace", "q-1", 2)
     assert trace["conversation_id"] == "conv-1"
     assert trace["rows"] == [json.loads(json.dumps(stored.__dict__))]
-    assert trace["excerpts"] == [
-        {"tag": e.tag, "chunk_id": e.chunk.chunk_id, "text": e.text} for e in settled.excerpts
-    ]
+    # Anchor matching needs the chunk itself, the judge the rendered text.
+    excerpts = cast(list[dict[str, object]], trace["excerpts"])
+    assert excerpts[0] == {
+        "tag": "S1",
+        "chunk_id": "c-2",
+        "doc_id": "demo-guide",
+        "section_path": ["Setup", "c-2"],
+        "chunk_text": "Text of c-2.",
+        "text": settled.excerpts[0].text,
+    }
+    assert [e["chunk_id"] for e in excerpts] == ["c-2", "c-1"]
     assert deleter.deleted == [("conv-1", "client-1")]
     assert settled.delete_failure is None
 

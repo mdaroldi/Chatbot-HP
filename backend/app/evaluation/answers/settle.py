@@ -7,7 +7,8 @@ Order matters, from what must never be lost to what can be redone:
 2. Append the item's charges to the ledger (`charging.item_charges`).
 3. For an answered item, check that the last row is the answered message, then rebuild
    the excerpts the model saw from its chunk ids.
-4. Append the trace (rows and excerpts) to the run's trace file.
+4. Append the trace (rows, and each excerpt with its chunk for anchor matching and its
+   rendered text for the judge) to the run's trace file.
 5. Delete the conversation through the API. A failed delete does not stop the run; it
    is appended as a `delete_failed` line naming the conversation, so leftovers are
    visible and can be removed later (the retention purge also removes them).
@@ -67,7 +68,14 @@ class TraceLog:
             kind="trace",
             rows=[cast(Json, dataclasses.asdict(row)) for row in settled.rows],
             excerpts=[
-                {"tag": e.tag, "chunk_id": e.chunk.chunk_id, "text": e.text}
+                {
+                    "tag": e.tag,
+                    "chunk_id": e.chunk.chunk_id,
+                    "doc_id": e.chunk.doc_id,
+                    "section_path": list(e.chunk.section_path),
+                    "chunk_text": e.chunk.text,
+                    "text": e.text,
+                }
                 for e in settled.excerpts
             ],
         )
