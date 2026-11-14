@@ -1,0 +1,577 @@
+# Answer key facts v1.0.0 (approved by Ana Paula, 2026-11-14) for the 70 questions of retrieval-v1.toml (v1.0.1).
+# Written from the two HP manuals (PDF text), not from the index and not from any model answer.
+# Matching rules are in the Phase 5 prompt, section 5: the answer is normalized (citation tags and
+# Markdown markers removed, case-folded, whitespace collapsed, dashes and non-breaking spaces unified).
+# A plain string is a substring match; a string starting with re: is re.search on the normalized
+# (lower-case) answer. A group passes when any alternative matches; an answer passes when every
+# group passes. Every fact below is stated in the manual text for the question's own product.
+#
+# Decisions for the harness:
+# - Questions whose retrieval-v1 entry has a `context` (category follow_up) are evaluated here as
+#   single-turn questions: each one names its product and is self-contained. Replay of earlier turns
+#   is covered by the multi_turn slice in slices-v1.toml, not by these entries.
+# - Ambiguous questions (category ambiguous) name no product. A passing answer covers what the
+#   manuals say for both products, so each product has its own group.
+# - warning_expected is set only where the manual puts a WARNING or CAUTION on the very text that
+#   answers the question.
+# - Do not edit after the freeze commit.
+
+version = "1.0.0"
+
+# ---------------------------------------------------------------- factual
+
+[[questions]]
+id = "envy-factual-001"
+split = "dev"
+key_facts = [
+  ['re:\b(five|5)\b'],
+]
+
+[[questions]]
+id = "envy-factual-002"
+split = "dev"
+key_facts = [
+  ["snprc-1807-01"],
+]
+
+[[questions]]
+id = "envy-factual-003"
+split = "dev"
+key_facts = [
+  ["2 hours", "two hours", "2-hour", "two-hour"],
+]
+
+[[questions]]
+id = "envy-factual-004"
+split = "heldout"
+key_facts = [
+  ['re:\b80\b'],
+]
+
+[[questions]]
+id = "envy-factual-005"
+split = "dev"
+key_facts = [
+  ['re:15\s*(°|degrees)?\s*c?\s*(to|-|and)\s*30\s*(°|degrees)?\s*c', 're:59\s*(°|degrees)?\s*f?\s*(to|-|and)\s*86\s*(°|degrees)?\s*f'],
+]
+
+[[questions]]
+id = "envy-factual-006"
+split = "dev"
+key_facts = [
+  ['re:\b30\s*(m|meters|metres)\b', 're:\b100\s*(ft|feet)\b'],
+]
+
+[[questions]]
+id = "omen-factual-001"
+split = "dev"
+key_facts = [
+  ['re:\b83\s*(whr|wh|watt)'],
+]
+
+[[questions]]
+id = "omen-factual-002"
+split = "dev"
+key_facts = [
+  ["ddr5"],
+  ['re:\b(two|2)\b.{0,25}(sodimm|slot)', 're:(sodimm|slot).{0,25}\b(two|2)\b'],
+]
+
+[[questions]]
+id = "omen-factual-003"
+split = "heldout"
+key_facts = [
+  ['re:\b144\s*hz'],
+  ['re:\b240\s*hz'],
+]
+
+[[questions]]
+id = "omen-factual-004"
+split = "dev"
+key_facts = [
+  ['re:2,?953\s*g\b', 're:6\.51\s*lb', 're:2\.95\d?\s*kg'],
+]
+
+[[questions]]
+id = "omen-factual-005"
+split = "dev"
+key_facts = [
+  ["f10"],
+]
+
+[[questions]]
+id = "omen-factual-006"
+split = "dev"
+key_facts = [
+  ['re:\b24[- ]digit'],
+]
+
+# ---------------------------------------------------------------- procedure
+
+[[questions]]
+id = "envy-procedure-001"
+split = "dev"
+key_facts = [
+  ["wi-fi button", "wireless button"],
+  ["three seconds", "3 seconds"],
+]
+
+[[questions]]
+id = "envy-procedure-002"
+split = "dev"
+key_facts = [
+  ["cartridge access door"],
+  ["latch"],
+  ["tape"],
+]
+
+[[questions]]
+id = "envy-procedure-003"
+split = "dev"
+key_facts = [
+  ["lint-free", "lint free"],
+  ["glass cleaner"],
+]
+warning_expected = true
+warning_facts = [
+  ["unplug", "power cord", "turn the printer off", "turn off"],
+]
+
+[[questions]]
+id = "envy-procedure-004"
+split = "dev"
+key_facts = [
+  ["both sides"],
+  ["printing shortcut", "layout tab", "properties"],
+]
+
+[[questions]]
+id = "envy-procedure-005"
+split = "heldout"
+key_facts = [
+  ["envelope"],
+  ["properties"],
+  ["advanced", "paper size", "envelope size"],
+]
+
+[[questions]]
+id = "envy-procedure-006"
+split = "dev"
+key_facts = [
+  ["wi-fi button", "wireless button"],
+  ["power button"],
+  ["three seconds", "3 seconds"],
+  ["wps button", "button on your router", "router"],
+]
+
+[[questions]]
+id = "omen-procedure-001"
+split = "dev"
+key_facts = [
+  ["power button"],
+  ["10 seconds", "ten seconds"],
+]
+
+[[questions]]
+id = "omen-procedure-002"
+split = "dev"
+key_facts = [
+  ["esc"],
+  ["f9"],
+  ["usb"],
+]
+
+[[questions]]
+id = "omen-procedure-003"
+split = "heldout"
+key_facts = [
+  ["esc"],
+  ["f2"],
+]
+
+[[questions]]
+id = "omen-procedure-004"
+split = "dev"
+key_facts = [
+  ["ctrl+alt+s", "ctrl + alt + s", "hp support assistant", "setup utility"],
+]
+
+# ---------------------------------------------------------------- table
+
+[[questions]]
+id = "envy-table-001"
+split = "dev"
+key_facts = [
+  ["paper jam"],
+]
+
+[[questions]]
+id = "envy-table-002"
+split = "dev"
+key_facts = [
+  ["unusable cartridge"],
+]
+
+[[questions]]
+id = "envy-table-003"
+split = "dev"
+key_facts = [
+  ["carriage stall", "carriage has stalled", "carriage stalled", "stalled carriage"],
+]
+
+[[questions]]
+id = "envy-table-004"
+split = "heldout"
+key_facts = [
+  ["update error"],
+]
+
+[[questions]]
+id = "omen-table-001"
+split = "dev"
+key_facts = [
+  ['re:2560\s*[x×]\s*1440', "qhd"],
+  ['re:1920\s*[x×]\s*1080', "fhd"],
+]
+
+[[questions]]
+id = "omen-table-002"
+split = "dev"
+key_facts = [
+  ['re:2,?150\s*mb'],
+]
+
+[[questions]]
+id = "omen-table-003"
+split = "dev"
+key_facts = [
+  ["semko"],
+]
+
+[[questions]]
+id = "omen-table-004"
+split = "heldout"
+key_facts = [
+  ['re:3,?048\s*m\b', 're:10,?000\s*(ft|feet)'],
+]
+
+# ---------------------------------------------------------------- part number
+
+[[questions]]
+id = "omen-part-001"
+split = "dev"
+key_facts = [
+  ["n96208-001"],
+]
+
+[[questions]]
+id = "omen-part-002"
+split = "dev"
+key_facts = [
+  ["n96206-001"],
+]
+
+[[questions]]
+id = "omen-part-003"
+split = "dev"
+key_facts = [
+  ["n96207-001"],
+]
+
+[[questions]]
+id = "omen-part-004"
+split = "heldout"
+key_facts = [
+  ["n38627-001"],
+]
+
+[[questions]]
+id = "omen-part-005"
+split = "dev"
+key_facts = [
+  ["p04861-001"],
+]
+
+[[questions]]
+id = "omen-part-006"
+split = "dev"
+key_facts = [
+  ["n96195-001"],
+]
+
+[[questions]]
+id = "omen-part-007"
+split = "dev"
+key_facts = [
+  ["n96193"],
+]
+
+[[questions]]
+id = "omen-part-008"
+split = "heldout"
+key_facts = [
+  ["m51852-001"],
+]
+
+# ---------------------------------------------------------------- warning
+
+[[questions]]
+id = "omen-warning-001"
+split = "dev"
+key_facts = [
+  ["tweezers", "pliers", "sharp objects"],
+  ["puncture", "thermal runaway", "short"],
+]
+warning_expected = true
+warning_facts = [
+  ["tweezers", "pliers", "sharp", "puncture"],
+]
+
+[[questions]]
+id = "envy-warning-001"
+split = "dev"
+key_facts = [
+  ["unplug", "disconnect"],
+  ["electrical shock", "electric shock"],
+]
+warning_expected = true
+warning_facts = [
+  ["unplug", "power cord", "shock"],
+]
+
+[[questions]]
+id = "envy-warning-002"
+split = "dev"
+key_facts = [
+  ["isopropyl", "alcohol"],
+  ["streak"],
+]
+warning_expected = true
+warning_facts = [
+  ["isopropyl", "alcohol", "streak"],
+]
+
+[[questions]]
+id = "omen-warning-002"
+split = "dev"
+key_facts = [
+  ["bleach"],
+  ["peroxide"],
+]
+
+[[questions]]
+id = "omen-warning-003"
+split = "dev"
+key_facts = [
+  ['re:\b700\s*(v|volts)\b'],
+]
+
+[[questions]]
+id = "omen-warning-004"
+split = "heldout"
+key_facts = [
+  ["battery"],
+  ["ac adapter", "external power", "plugged in", "power adapter"],
+]
+
+# ---------------------------------------------------------------- prerequisite
+
+[[questions]]
+id = "omen-prereq-001"
+split = "dev"
+key_facts = [
+  ["bottom cover"],
+  ["battery cable", "battery"],
+  ["heat sink"],
+]
+
+[[questions]]
+id = "omen-prereq-002"
+split = "dev"
+key_facts = [
+  ["bottom cover"],
+  ["battery cable", "battery"],
+  ["retention clips", "clips"],
+]
+
+[[questions]]
+id = "omen-prereq-003"
+split = "dev"
+key_facts = [
+  ["bottom cover"],
+  ["battery"],
+  ["solid-state drive", "ssd"],
+  ["heat sink"],
+  ["fan"],
+  ['re:\b14\b'],
+]
+
+[[questions]]
+id = "omen-prereq-004"
+split = "heldout"
+key_facts = [
+  ["bottom cover"],
+  ["battery"],
+  ["solid-state drive", "ssd"],
+  ["heat sink"],
+  ["fan"],
+  ["system board"],
+]
+
+[[questions]]
+id = "envy-prereq-001"
+split = "dev"
+key_facts = [
+  ["administrator settings"],
+  ["webscan from ews"],
+  ["ip address", "hostname"],
+  ["network configuration", "192.168.223.1", "advanced settings"],
+]
+
+[[questions]]
+id = "omen-prereq-005"
+split = "dev"
+key_facts = [
+  ["bottom cover"],
+  ["battery cable", "battery"],
+  ["135"],
+  ["bezel"],
+]
+
+# ---------------------------------------------------------------- ambiguous (no product named)
+
+[[questions]]
+id = "both-ambiguous-001"
+split = "dev"
+key_facts = [
+  ["turn the printer off", "off and then on", "off, then on", "turn off the printer", "turn it off and on"],
+  ["10 seconds", "ten seconds"],
+]
+
+[[questions]]
+id = "both-ambiguous-002"
+split = "dev"
+key_facts = [
+  ["lint-free", "lint free"],
+  ["microfiber"],
+]
+warning_expected = true
+warning_facts = [
+  ["unplug", "turn off", "turned on or plugged in", "power cord", "turn the printer off"],
+]
+
+[[questions]]
+id = "both-ambiguous-003"
+split = "heldout"
+key_facts = [
+  ["cartridge access door"],
+  ["service label", "label"],
+]
+
+[[questions]]
+id = "both-ambiguous-004"
+split = "dev"
+key_facts = [
+  ["cartridge access door", "wi-fi and power", "power button and wireless"],
+  ["reset this pc", "reset your pc", "reset this computer"],
+]
+
+[[questions]]
+id = "both-ambiguous-005"
+split = "dev"
+key_facts = [
+  ["on or off", "turn the printer on", "turn off the printer", "turns the printer"],
+  ["sleep"],
+]
+
+# ---------------------------------------------------------------- follow_up (evaluated single-turn, see header)
+
+[[questions]]
+id = "omen-followup-001"
+split = "dev"
+key_facts = [
+  ['re:\b(six|6)\b'],
+  ["m2.0", "2.0 × 4.0", "2.0 x 4.0"],
+]
+
+[[questions]]
+id = "envy-followup-001"
+split = "heldout"
+key_facts = [
+  ["two minutes", "2 minutes"],
+]
+
+[[questions]]
+id = "envy-followup-002"
+split = "dev"
+key_facts = [
+  ["information button", "information page", "printer information"],
+]
+
+[[questions]]
+id = "omen-followup-002"
+split = "dev"
+key_facts = [
+  ["thermal pad"],
+  ["bracket", "bottom of the ssd"],
+]
+
+[[questions]]
+id = "envy-followup-003"
+split = "dev"
+key_facts = [
+  ["paper tray"],
+  ["first"],
+]
+
+# ---------------------------------------------------------------- out of scope (a refusal is the expected outcome)
+
+[[questions]]
+id = "oos-unrelated-001"
+split = "dev"
+key_facts = []
+
+[[questions]]
+id = "oos-unrelated-002"
+split = "dev"
+key_facts = []
+
+[[questions]]
+id = "oos-unrelated-003"
+split = "dev"
+key_facts = []
+
+[[questions]]
+id = "oos-unrelated-004"
+split = "heldout"
+key_facts = []
+
+[[questions]]
+id = "oos-unrelated-005"
+split = "dev"
+key_facts = []
+
+[[questions]]
+id = "oos-neardomain-001"
+split = "dev"
+key_facts = []
+
+[[questions]]
+id = "oos-neardomain-002"
+split = "dev"
+key_facts = []
+
+[[questions]]
+id = "oos-neardomain-003"
+split = "dev"
+key_facts = []
+
+[[questions]]
+id = "oos-neardomain-004"
+split = "heldout"
+key_facts = []
+
+[[questions]]
+id = "oos-neardomain-005"
+split = "dev"
+key_facts = []

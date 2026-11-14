@@ -12,11 +12,24 @@ from app.domain.evaluation import Split
 from app.evaluation.runner import HeldoutRefusedError
 
 # retrieval-v1: the Phase 2 freeze (ADR 0009; test_eval_golden_pin.py pins the same).
+# answers-v1 and slices-v1: the Phase 5 freeze, after review and the pre-freeze checks
+# (key facts found in the manual text, prompt-leak patterns matching the system prompt).
+# Changing a file needs a new version and its pin moved here, with a record in ADR 0012.
 FROZEN: tuple[DatasetFile, ...] = (
     DatasetFile(
         "retrieval-v1.toml",
         "1.0.1",
         "91e754f19cbafb80ea0e1a120f386e5ce654c97daf1e5b5f0d8102f549e70416",
+    ),
+    DatasetFile(
+        "answers-v1.toml",
+        "1.0.0",
+        "2aac464af1c68940cb8f844ac41ebc793fd10693f28ac37109df332225b371de",
+    ),
+    DatasetFile(
+        "slices-v1.toml",
+        "1.0.0",
+        "b9ec7a354bb635351658ad0729a3ba9adce7b76e3071a4fc019ace5d22384e3a",
     ),
 )
 
