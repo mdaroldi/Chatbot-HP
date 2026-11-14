@@ -214,23 +214,38 @@ def pending(
     return [item for item in items if asked_again(item)]
 
 
-async def run_pending(
+def spread[T](items: Sequence[T], limit: int) -> list[T]:
+    """`limit` evenly spaced items, the first included: a pilot over a run's item order
+    (answers-v1, then each slice) samples every kind of item, not only the first kind.
+    """
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    if limit >= len(items):
+        return list(items)
+    return [items[i * len(items) // limit] for i in range(limit)]
+
+
+async def run_pending(  # noqa: PLR0913 - two keyword-only selection options
     items: Sequence[EvalItem],
     journal: Journal,
     ask: Callable[[EvalItem, str, int], Awaitable[ItemResult]],
     new_client_id: Callable[[], str],
     *,
     retry_errors: bool = False,
+    limit: int | None = None,
 ) -> list[ItemResult]:
     """Ask the selected items one at a time (latencies stay comparable), each with its
     own client ID and its attempt number (the ledger charges every attempt), and
-    return each item's final result in item order. Every attempt stays in the journal.
+    return each recorded item's final result in item order. Every attempt stays in the
+    journal. `limit` asks only a `spread` of the selected items (the pilot); a later
+    run without it asks the rest.
     """
     recorded = read_journal(journal.path)
     attempts = Counter(result.item_id for result in recorded)
     final = latest(recorded)
-    for item in pending(items, recorded, retry_errors=retry_errors):
+    todo = pending(items, recorded, retry_errors=retry_errors)
+    for item in todo if limit is None else spread(todo, limit):
         result = await ask(item, new_client_id(), attempts[item.id] + 1)
         journal.append(result)
         final[item.id] = result
-    return [final[item.id] for item in items]
+    return [final[item.id] for item in items if item.id in final]

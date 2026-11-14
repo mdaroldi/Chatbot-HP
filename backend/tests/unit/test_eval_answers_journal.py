@@ -20,6 +20,7 @@ from app.evaluation.answers.journal import (
     read_journal,
     retried_items,
     run_pending,
+    spread,
 )
 from app.evaluation.answers.sse import Done
 
@@ -352,3 +353,44 @@ async def test_without_retry_errors_a_failed_item_stays_failed(path: Path) -> No
     results = await run_pending([item("q-1")], journal, Recorder(), lambda: "id")
 
     assert results == [failed("q-1")]
+
+
+def test_spread_takes_evenly_spaced_items_starting_with_the_first() -> None:
+    assert spread(list(range(10)), 3) == [0, 3, 6]
+    assert spread(list(range(105)), 10) == [0, 10, 21, 31, 42, 52, 63, 73, 84, 94]
+
+
+def test_spread_with_a_limit_at_or_above_the_length_takes_everything() -> None:
+    assert spread([1, 2, 3], 3) == [1, 2, 3]
+    assert spread([1, 2, 3], 7) == [1, 2, 3]
+
+
+def test_spread_rejects_a_limit_below_one() -> None:
+    with pytest.raises(ValueError, match="limit"):
+        spread([1, 2], 0)
+
+
+async def test_a_limited_run_asks_a_spread_of_the_pending_items_and_returns_only_results(
+    path: Path,
+) -> None:
+    journal = Journal(path)
+    journal.append(answered("q-1"))
+    ask = Recorder()
+    items = [item(f"q-{n}") for n in range(1, 6)]
+
+    results = await run_pending(items, journal, ask, lambda: "id", limit=2)
+
+    assert [call[0] for call in ask.calls] == ["q-2", "q-4"]
+    assert [r.item_id for r in results] == ["q-1", "q-2", "q-4"]
+
+
+async def test_a_later_unlimited_run_finishes_what_a_limited_run_left(path: Path) -> None:
+    journal = Journal(path)
+    items = [item(f"q-{n}") for n in range(1, 5)]
+    await run_pending(items, journal, Recorder(), lambda: "id", limit=2)
+    ask = Recorder()
+
+    results = await run_pending(items, journal, ask, lambda: "id")
+
+    assert [call[0] for call in ask.calls] == ["q-2", "q-4"]
+    assert [r.item_id for r in results] == ["q-1", "q-2", "q-3", "q-4"]
