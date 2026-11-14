@@ -52,8 +52,8 @@ def done(
     flags = Flags(
         late_refusal_marker=False,
         uncited=uncited,
-        invalid_citations=False,
-        rewrite_fallback=False,
+        invalid_citations=0,
+        rewrite_fallback=None,
         truncated=False,
     )
     return Done(

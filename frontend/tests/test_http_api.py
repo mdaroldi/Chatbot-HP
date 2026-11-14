@@ -69,8 +69,8 @@ SOURCE = Source(
 FLAGS_JSON = {
     "late_refusal_marker": False,
     "uncited": False,
-    "invalid_citations": False,
-    "rewrite_fallback": True,
+    "invalid_citations": 0,
+    "rewrite_fallback": None,
     "truncated": False,
 }
 DONE_JSON = {
@@ -96,8 +96,8 @@ DONE = Done(
     flags=Flags(
         late_refusal_marker=False,
         uncited=False,
-        invalid_citations=False,
-        rewrite_fallback=True,
+        invalid_citations=0,
+        rewrite_fallback=None,
         truncated=False,
     ),
 )
@@ -576,6 +576,33 @@ def test_a_streamed_answer_yields_tokens_sources_and_done_then_closes() -> None:
     assert json.loads(request.content) == {"content": "  How do I load paper? "}
     assert request.headers["accept"] == "text/event-stream"
     assert body.closed
+
+
+@pytest.mark.parametrize(
+    ("invalid_citations", "rewrite_fallback"),
+    [(0, None), (2, "llm_error")],
+    ids=["no-fallback", "fallback-code"],
+)
+def test_done_flags_are_read_as_the_backend_writes_them(
+    invalid_citations: int, rewrite_fallback: str | None
+) -> None:
+    # A count and a code (backend app/domain/chat.py AnswerFlags), not booleans.
+    flags: dict[str, object] = {
+        **FLAGS_JSON,
+        "invalid_citations": invalid_citations,
+        "rewrite_fallback": rewrite_fallback,
+    }
+    body = RecordingStream([frame("done", {**DONE_JSON, "flags": flags})])
+
+    events: list[StreamEvent] = []
+    collect(make_api(sse(body)), events)
+
+    (done,) = events
+    assert isinstance(done, Done)
+    assert (done.flags.invalid_citations, done.flags.rewrite_fallback) == (
+        invalid_citations,
+        rewrite_fallback,
+    )
 
 
 def test_a_refusal_streams_its_text_then_empty_sources_and_a_refused_done() -> None:

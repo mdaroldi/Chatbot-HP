@@ -55,8 +55,8 @@ def done(content: str = "New answer [S1].") -> Done:
     flags = Flags(
         late_refusal_marker=False,
         uncited=False,
-        invalid_citations=False,
-        rewrite_fallback=False,
+        invalid_citations=0,
+        rewrite_fallback=None,
         truncated=False,
     )
     return Done(

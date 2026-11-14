@@ -76,8 +76,10 @@ class SourcesEvent(_Model):
 class Flags(_Model):
     late_refusal_marker: bool
     uncited: bool
-    invalid_citations: bool
-    rewrite_fallback: bool
+    # Citations dropped because they named no excerpt (a count).
+    invalid_citations: int
+    # A code naming why the follow-up rewrite fell back to the raw question, or None.
+    rewrite_fallback: str | None
     truncated: bool
 
 
