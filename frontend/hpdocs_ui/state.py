@@ -17,6 +17,8 @@ from hpdocs_ui.chat_view import ErrorView, MessageView, answer_from_stream, erro
 from hpdocs_ui.errors import ERROR_TEXT, ApiError
 from hpdocs_ui.url_state import UrlState
 
+_NOT_FOUND = "conversation_not_found"
+
 Notice = Literal["not_found", "deleted"]
 NOTICE_TEXT: Mapping[Notice, str] = {
     "not_found": ERROR_TEXT["conversation_not_found"],
@@ -87,7 +89,11 @@ def send_finished(
     state = replace(state, list_stale=True)
     if answer is None:
         # answer_from_stream returns None only for an error before the stream started.
-        return replace(state, send_error=error_view(cast("ApiError", error), question=question))
+        refused = cast("ApiError", error)
+        if refused.code == _NOT_FOUND:
+            # Deleted elsewhere: drop the selection, or every resend fails the same way.
+            state = thread_missing(state)
+        return replace(state, send_error=error_view(refused, question=question))
     asked = MessageView(role="user", text=question, state=None, sources=())
     return replace(
         state,
@@ -152,9 +158,18 @@ def cancel_delete(state: UiState) -> UiState:
 
 
 def deleted(state: UiState, conversation_id: str) -> UiState:
+    return _gone(state, conversation_id, "deleted")
+
+
+def already_deleted(state: UiState, conversation_id: str) -> UiState:
+    """A delete answering not found: the conversation is gone either way."""
+    return _gone(state, conversation_id, "not_found")
+
+
+def _gone(state: UiState, conversation_id: str, notice: Notice) -> UiState:
     if conversation_id == state.conversation_id:
         state = new_conversation(state)
     remaining = tuple(c for c in state.conversations if c.id != conversation_id)
     return replace(
-        state, conversations=remaining, confirm_delete=None, notice="deleted", list_stale=True
+        state, conversations=remaining, confirm_delete=None, notice=notice, list_stale=True
     )

@@ -8,6 +8,7 @@ from hpdocs_ui.errors import ApiError
 from hpdocs_ui.state import (
     NOTICE_TEXT,
     UiState,
+    already_deleted,
     ask_delete,
     cancel_delete,
     conversation_created,
@@ -191,6 +192,24 @@ def test_a_withdrawn_answer_shows_the_refusal_and_the_withdrawn_error() -> None:
     assert state.send_error.text == "The model withdrew this answer."
 
 
+def test_a_send_to_a_conversation_gone_before_the_stream_clears_it_and_keeps_the_question() -> None:
+    listed = list_loaded(
+        selected(), ConversationPage(items=(conversation(A),), next_cursor=None), more=False
+    )
+    error = ApiError("conversation_not_found", status=404, request_id="req-12345678")
+
+    state = send_finished(listed, "Q?", [], error)
+
+    assert (state.conversation_id, state.thread, state.thread_for) == (None, None, None)
+    assert (state.notice, state.list_stale) == ("not_found", True)
+    assert state.send_error == ErrorView(
+        text="This conversation doesn't exist or was deleted.",
+        request_id="req-12345678",
+        question="Q?",
+    )
+    assert not state.needs_thread
+
+
 def test_an_answer_to_a_conversation_with_no_loaded_thread_starts_one() -> None:
     state = send_finished(initial(UrlState(CID, A)), "Q?", [done()], None)
 
@@ -320,3 +339,31 @@ def test_deleting_another_conversation_keeps_the_selection() -> None:
     assert (state.conversation_id, state.thread) == (A, (ANSWER,))
     assert [c.id for c in state.conversations] == [A]
     assert (state.notice, state.confirm_delete, state.list_stale) == ("deleted", None, True)
+
+
+def test_a_delete_answering_not_found_drops_the_selected_conversation_as_gone() -> None:
+    listed = list_loaded(
+        selected(),
+        ConversationPage(items=(conversation(A), conversation(B)), next_cursor=None),
+        more=False,
+    )
+
+    state = already_deleted(ask_delete(listed, A), A)
+
+    assert (state.conversation_id, state.thread, state.confirm_delete) == (None, None, None)
+    assert [c.id for c in state.conversations] == [B]
+    assert (state.notice, state.list_stale) == ("not_found", True)
+
+
+def test_a_delete_answering_not_found_for_another_conversation_keeps_the_selection() -> None:
+    listed = list_loaded(
+        selected(),
+        ConversationPage(items=(conversation(A), conversation(B)), next_cursor=None),
+        more=False,
+    )
+
+    state = already_deleted(ask_delete(listed, B), B)
+
+    assert (state.conversation_id, state.thread) == (A, (ANSWER,))
+    assert [c.id for c in state.conversations] == [A]
+    assert (state.notice, state.confirm_delete, state.list_stale) == ("not_found", None, True)
