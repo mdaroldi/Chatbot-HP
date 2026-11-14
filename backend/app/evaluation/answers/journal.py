@@ -12,19 +12,16 @@ error messages name line numbers and fields only.
 """
 
 import json
-import os
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import cast
 
 from app.domain.answer_dataset import EvalItem
 from app.evaluation.answers.client import Answered, ItemResult
+from app.evaluation.answers.jsonl import Json, append_object, read_objects
 from app.evaluation.answers.sse import Done, MalformedEventError, parse_done
 
 JOURNAL_SCHEMA = "answers-journal-v1"
-
-# A decoded JSON object; values are checked one by one before use.
-Json = dict[str, object]
 
 
 class JournalError(Exception):
@@ -78,11 +75,7 @@ class Journal:
         self.path = path
 
     def append(self, result: ItemResult) -> None:
-        line = json.dumps(_record(result), ensure_ascii=False) + "\n"
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(line)
-            handle.flush()
-            os.fsync(handle.fileno())
+        append_object(self.path, _record(result))
 
 
 # ---------------------------------------------------------------- reading
@@ -166,30 +159,15 @@ def _result(obj: Json) -> ItemResult:
     )
 
 
-def _line(text: str, number: int) -> ItemResult:
-    try:
-        decoded: object = json.loads(text)
-    except json.JSONDecodeError:
-        decoded = None
-    if not isinstance(decoded, dict):
-        raise JournalError(f"line {number}: not a JSON object")
-    try:
-        return _result(cast(Json, decoded))
-    except _FieldError as exc:
-        raise JournalError(f"line {number}: {exc}") from None
-
-
 def read_journal(path: Path) -> list[ItemResult]:
     """Every recorded result, in file order; a missing file is an empty journal."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return []
-    lines = text.split("\n")
-    if lines[-1]:
-        # The last write did not finish its line: no guess at what it held.
-        raise JournalError(f"line {len(lines)}: partial line")
-    return [_line(line, number) for number, line in enumerate(lines[:-1], start=1)]
+    results = []
+    for number, obj in read_objects(path, JournalError):
+        try:
+            results.append(_result(obj))
+        except _FieldError as exc:
+            raise JournalError(f"line {number}: {exc}") from None
+    return results
 
 
 # ---------------------------------------------------------------- resume
