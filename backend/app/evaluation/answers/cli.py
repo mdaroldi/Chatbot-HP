@@ -9,7 +9,9 @@
   settings. `--limit N` asks a spread of N pending items (the pilot), `--resume`
   continues a run directory, `--retry-errors` re-asks errored items, and
   `--allow-heldout` is accepted for the heldout run only. Exit 1 also when the run is
-  invalid (more than 5% errors).
+  invalid (more than 5% errors). `--provider stub` (both commands) is the free
+  pipeline check of `make test-eval-int`: the stub matrix ($0 models), and the run
+  directory with its own ledger under `answer-runs/stub/`.
 - `drive --run NAME --eval-dir DIR` is the host side (`make eval-answers`): it restarts
   the backend for the run, checks its env, runs `ask` in a harness container with the
   same run options and restores the defaults (`driver.drive`). It never opens a
@@ -36,7 +38,7 @@ from pathlib import Path
 from typing import TextIO
 
 from app.core.logging import configure_logging
-from app.core.settings import Settings, get_settings
+from app.core.settings import LLMProviderName, Settings, get_settings
 from app.domain.answer_dataset import Dataset, DatasetError, DatasetNotFrozenError, EvalItem
 from app.domain.evaluation import GoldenSetError
 from app.evaluation.answers.answer_matrix import (
@@ -45,6 +47,7 @@ from app.evaluation.answers.answer_matrix import (
     MatrixError,
     RunSpec,
     load_answer_matrix,
+    stub_matrix,
 )
 from app.evaluation.answers.ask import AskError, AskOptions, AskPorts, RunFiles, ask_run
 from app.evaluation.answers.budget import (
@@ -90,6 +93,7 @@ logger = logging.getLogger(__name__)
 MATRIX_FILE = Path("answer-matrix.toml")
 RUNS_DIR = Path("answer-runs")
 LEDGER_FILE = RUNS_DIR / "ledger.jsonl"
+STUB_DIR = "stub"
 DEFAULT_EVAL_DIR = Path("/eval")
 DEFAULT_API_URL = "http://backend:8000"
 # The API's message limit as compose sets it by default; turns longer than this fail
@@ -111,6 +115,13 @@ def _parser() -> argparse.ArgumentParser:
     run_options.add_argument("--retry-errors", action="store_true", help="re-ask errored items")
     run_options.add_argument("--limit", type=int, help="ask a spread of N pending items (pilot)")
     run_options.add_argument("--allow-heldout", action="store_true", help="the heldout run only")
+    run_options.add_argument(
+        "--provider",
+        type=LLMProviderName,
+        choices=list(LLMProviderName),
+        default=LLMProviderName.ANTHROPIC,
+        help="stub: a free pipeline check with its own run directory and ledger",
+    )
     ask = commands.add_parser(
         "ask", parents=[run_options], help="ask one run of the matrix (inside the backend image)"
     )
@@ -155,15 +166,35 @@ def _items_by_run(
     return counted | {run.name: asked}
 
 
+def _matrix(eval_dir: Path, provider: LLMProviderName) -> AnswerMatrix:
+    matrix = load_answer_matrix(eval_dir / MATRIX_FILE)
+    return matrix if provider is LLMProviderName.ANTHROPIC else stub_matrix(matrix)
+
+
+def _run_files(eval_dir: Path, run: str, provider: LLMProviderName) -> RunFiles:
+    """A stub check keeps its runs and its own ledger under `answer-runs/stub/`, so it
+    never touches a real run directory or the phase ledger.
+    """
+    if provider is LLMProviderName.ANTHROPIC:
+        return RunFiles(eval_dir / RUNS_DIR / run, eval_dir / LEDGER_FILE)
+    run_dir = eval_dir / RUNS_DIR / STUB_DIR / run
+    return RunFiles(run_dir, run_dir / LEDGER_FILE.name)
+
+
 async def _ask(args: argparse.Namespace, settings: Settings, ask_runtime: AskRuntimeFactory) -> int:
-    matrix = load_answer_matrix(args.eval_dir / MATRIX_FILE)
+    matrix = _matrix(args.eval_dir, args.provider)
     run = matrix.run(args.run)
     doc_ids = {document.doc_id for document in load_corpus()}
     dataset = load_dataset(args.eval_dir, doc_ids, max_turn_chars=MAX_TURN_CHARS)
     items = _items_by_run(matrix, dataset, run, allow_heldout=args.allow_heldout)
     titles = {document.doc_id: document.title for document in load_corpus()}
-    files = RunFiles(args.eval_dir / RUNS_DIR / run.name, args.eval_dir / LEDGER_FILE)
-    options = AskOptions(resume=args.resume, retry_errors=args.retry_errors, limit=args.limit)
+    files = _run_files(args.eval_dir, run.name, args.provider)
+    options = AskOptions(
+        resume=args.resume,
+        retry_errors=args.retry_errors,
+        limit=args.limit,
+        provider=args.provider,
+    )
     async with ask_runtime(settings, args.api_url) as runtime:
         ports = AskPorts(
             backend=runtime.backend,
@@ -211,9 +242,14 @@ def _drive(
     environ: Mapping[str, str],
 ) -> int:
     eval_dir = args.eval_dir.resolve()
-    matrix = load_answer_matrix(eval_dir / MATRIX_FILE)
+    matrix = _matrix(eval_dir, args.provider)
     request = DriveRequest(
-        matrix.run(args.run), eval_dir, _ask_args(args), uid=os.getuid(), gid=os.getgid()
+        matrix.run(args.run),
+        eval_dir,
+        _ask_args(args),
+        uid=os.getuid(),
+        gid=os.getgid(),
+        provider=args.provider,
     )
     return drive(matrix, request, runner_for(eval_dir.parent), environ)
 

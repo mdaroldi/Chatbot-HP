@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from app.evaluation.answers.answer_matrix import parse_answer_matrix
+from app.core.settings import LLMProviderName
+from app.evaluation.answers.answer_matrix import parse_answer_matrix, stub_matrix
 from app.evaluation.answers.config_check import (
     CHECKED_NAMES,
     ConfigMismatchError,
@@ -210,3 +211,24 @@ def test_the_subprocess_runner_passes_the_exit_code_through_uncaptured(tmp_path:
         [sys.executable, "-c", "raise SystemExit(3)"], env={}, capture=False
     )
     assert done == Completed(3, "")
+
+
+def test_a_stub_drive_pins_the_whole_checked_env_and_asks_with_the_stub() -> None:
+    stub = stub_matrix(MATRIX)
+    expected = backend_env(stub, RUN, LLMProviderName.STUB)
+    runner = FakeRunner(printenv=printed(expected))
+    stub_request = DriveRequest(RUN, EVAL_DIR, ("--limit", "3"), 501, 20, LLMProviderName.STUB)
+
+    assert drive(stub, stub_request, runner, ENVIRON) == 0
+
+    (_, restart_env, _), _, (ask, _, _), (_, restore_env, _) = runner.calls
+    assert restart_env == ENVIRON | expected
+    assert restart_env["LLM_ANSWER_MODEL"] == "stub"
+    assert ask[-5:] == ("k3", "--limit", "3", "--provider", "stub")
+    assert restore_env == ENVIRON
+
+
+def test_a_real_drive_never_passes_a_provider_to_ask() -> None:
+    runner = FakeRunner()
+    drive(MATRIX, request(), runner, ENVIRON)
+    assert "--provider" not in runner.calls[2][0]

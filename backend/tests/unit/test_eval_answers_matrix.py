@@ -11,8 +11,10 @@ from app.evaluation.answers.answer_matrix import (
     AnswerMatrix,
     ItemSet,
     MatrixError,
+    Price,
     load_answer_matrix,
     parse_answer_matrix,
+    stub_matrix,
 )
 
 REPO_FILE = Path(__file__).parents[3] / "eval" / "answer-matrix.toml"
@@ -192,3 +194,13 @@ def test_the_repository_matrix_holds_the_owner_budget_and_run_order() -> None:
     assert {run.name for run in matrix.runs if run.reserved} == {"heldout", "improvement"}
     assert {run.name for run in matrix.runs if run.judge} == {"reference-1", "heldout"}
     assert matrix.run("reference-1").judge_repeat == 20
+
+
+def test_the_stub_matrix_prices_the_stub_model_at_zero_and_keeps_the_rest() -> None:
+    matrix = parse(BASE + REFERENCE + HELDOUT)
+    stub = stub_matrix(matrix)
+    assert (stub.models.answer, stub.models.rewrite, stub.models.judge) == ("stub",) * 3
+    assert dict(stub.prices) == {"stub": Price(input_per_mtok=0.0, output_per_mtok=0.0)}
+    assert stub.runs == matrix.runs
+    assert stub.worst_case == matrix.worst_case
+    assert stub.cap_usd == matrix.cap_usd

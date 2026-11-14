@@ -92,6 +92,7 @@ make typecheck    # mypy --strict
 make test         # unit tests with coverage gate (branch coverage, fail under 90)
 make test-int     # integration, corpus and model tests (needs Docker)
 make test-ui-int  # UI integration tests against the running stub stack (local only)
+make test-eval-int  # answer harness end to end on the stub provider (local only, no key)
 make fetch-test-assets  # download and verify the HP manuals and models for test-int (CI step)
 make models       # download and verify every pinned model into backend/models (model tests)
 make security     # bandit, pip-audit, gitleaks

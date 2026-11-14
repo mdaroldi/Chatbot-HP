@@ -13,10 +13,10 @@ from pathlib import Path
 
 import pytest
 
-from app.core.settings import Settings
+from app.core.settings import LLMProviderName, Settings
 from app.domain.retrieval import SearchHit
 from app.evaluation.answers import cli
-from app.evaluation.answers.answer_matrix import load_answer_matrix
+from app.evaluation.answers.answer_matrix import load_answer_matrix, stub_matrix
 from app.evaluation.answers.ask import AskError
 from app.evaluation.answers.budget import Kind, Ledger, charge
 from app.evaluation.answers.cli import LEDGER_FILE, RUNS_DIR, main
@@ -26,7 +26,7 @@ from app.evaluation.answers.journal import read_journal
 from app.evaluation.answers.runtime import AskRuntime
 from app.ingestion.corpus import load_corpus
 from tests.unit.conftest import LogReader
-from tests.unit.test_eval_answers_ask import FakeBackend, FakeIndex, FakeRows
+from tests.unit.test_eval_answers_ask import FakeBackend, FakeIndex, FakeRows, ready_body
 from tests.unit.test_eval_answers_budget import MATRIX, SONNET
 from tests.unit.test_eval_answers_pin import EVAL_DIR
 from tests.unit.test_eval_answers_settle import hit
@@ -160,15 +160,21 @@ def corpus_chunks(collection: str) -> CorpusChunks:
 
 
 class FakeRuntime:
-    def __init__(self, backend: FakeBackend | None = None, index: FakeIndex | None = None) -> None:
+    def __init__(
+        self,
+        backend: FakeBackend | None = None,
+        index: FakeIndex | None = None,
+        rows: FakeRows | None = None,
+    ) -> None:
         self.backend, self.index = backend or FakeBackend(), index or FakeIndex()
+        self.rows = rows or FakeRows()
         self.opened: list[str] = []
 
     @asynccontextmanager
     async def __call__(self, settings: Settings, api_url: str) -> AsyncIterator[AskRuntime]:
         assert isinstance(settings, Settings)
         self.opened.append(api_url)
-        yield AskRuntime(self.backend, self.index, FakeRows(), corpus_chunks)
+        yield AskRuntime(self.backend, self.index, self.rows, corpus_chunks)
 
 
 def run_ask(eval_dir: Path, runtime: object, *args: str) -> int:
@@ -375,3 +381,49 @@ def test_a_failed_docker_step_stops_the_drive_with_one(json_logs: LogReader) -> 
     assert code == 1
     (stopped,) = [r for r in json_logs() if r["message"] == "answer run stopped"]
     assert stopped["error"] == "DriverError"
+
+
+def test_a_stub_ask_uses_its_own_run_directory_and_ledger(eval_dir: Path) -> None:
+    stub_rows = FakeRows(model="stub")  # what the stub provider stores
+    runtime = FakeRuntime(FakeBackend(ready=ready_body(llm="stub")), rows=stub_rows)
+
+    code = run_ask(eval_dir, runtime, "--run", "reference-1", "--limit", "2", "--provider", "stub")
+
+    assert code == 0
+    stub_dir = eval_dir / RUNS_DIR / "stub" / "reference-1"
+    assert len(read_journal(stub_dir / "results.jsonl")) == 2
+    charges = Ledger(stub_dir / "ledger.jsonl").charges()
+    assert charges
+    assert {(c.model, c.cost_usd) for c in charges} == {("stub", 0.0)}
+    assert not (eval_dir / LEDGER_FILE).exists()
+    assert not (eval_dir / RUNS_DIR / "reference-1").exists()
+
+
+def test_a_stub_drive_uses_the_stub_matrix_and_tells_ask() -> None:
+    runners = StubDriveRunners()
+
+    code = run_drive(runners, "--run", "k3", "--provider", "stub")
+
+    assert code == 0
+    ask = next(call for call in runners.calls if call[2] == "run")
+    assert ask[-2:] == ("--provider", "stub")
+
+
+class StubDriveRunners(DriveRunners):
+    """Answers printenv as a backend restarted with the stub pins would."""
+
+    def __call__(self, cwd: Path) -> object:
+        stub = stub_matrix(load_answer_matrix(EVAL_DIR / "answer-matrix.toml"))
+
+        def run(argv: Sequence[str], *, env: Mapping[str, str], capture: bool) -> Completed:
+            call = tuple(argv)
+            self.calls.append(call)
+            assert capture == (call[2] != "run")
+            if call[2] == "exec":
+                expected = backend_env(stub, stub.run("k3"), LLMProviderName.STUB)
+                assert {k: env[k] for k in expected} == expected
+                return Completed(0, "".join(f"{v}\n" for v in expected.values()))
+            return Completed(0, "")
+
+        self.cwd.append(cwd)
+        return run

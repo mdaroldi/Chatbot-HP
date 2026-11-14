@@ -27,6 +27,7 @@ from typing import Protocol, cast
 
 import httpx
 
+from app.core.settings import LLMProviderName
 from app.domain.answer_dataset import EvalItem
 from app.evaluation.answers.answer_matrix import AnswerMatrix, RunSpec
 from app.evaluation.answers.budget import (
@@ -106,6 +107,7 @@ class AskOptions:
     resume: bool = False
     retry_errors: bool = False  # implies resume
     limit: int | None = None  # the pilot: a spread of the pending items
+    provider: LLMProviderName = LLMProviderName.ANTHROPIC
 
 
 @dataclass(frozen=True)
@@ -159,12 +161,12 @@ class ApiBackend:
         return await self._chat.delete_conversation(conversation_id, client_id)
 
 
-def _record(matrix: AnswerMatrix, run: RunSpec, index: IndexRef) -> Json:
+def _record(matrix: AnswerMatrix, run: RunSpec, index: IndexRef, provider: LLMProviderName) -> Json:
     return {
         "schema": CONFIG_SCHEMA,
         "run": run.name,
         "items": run.items.value,
-        "env": backend_env(matrix, run),
+        "env": backend_env(matrix, run, provider),
         "collection": index.collection,
         "build_id": index.build_id,
     }
@@ -221,8 +223,13 @@ async def ask_run(  # noqa: PLR0913, PLR0917 - the run, its inputs, files, ports
     index = await ports.index.resolve(alias)
     if index is None:
         raise AskError(f"alias {alias} has no live collection with a succeeded build")
-    check_ready(await ports.backend.ready(), collection=index.collection, build_id=index.build_id)
-    _claim_run_dir(files, _record(matrix, run, index), resume=resume)
+    check_ready(
+        await ports.backend.ready(),
+        collection=index.collection,
+        build_id=index.build_id,
+        provider=options.provider,
+    )
+    _claim_run_dir(files, _record(matrix, run, index, options.provider), resume=resume)
 
     expected = row_expectation(matrix, run, index.build_id)
     settle = Settler(

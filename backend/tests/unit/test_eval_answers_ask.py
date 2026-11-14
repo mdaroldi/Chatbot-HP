@@ -12,6 +12,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from app.core.settings import LLMProviderName
 from app.domain.answer_dataset import EvalItem
 from app.domain.chat import AnswerFlags
 from app.evaluation.answers.ask import (
@@ -437,3 +438,20 @@ async def test_the_adapter_creates_a_conversation_asks_and_deletes_through_the_a
     assert deleted is None
     assert seen[0] == ("POST", "/v1/conversations")
     assert seen[-1] == ("DELETE", "/v1/conversations/conv-1")
+
+
+async def test_a_stub_run_checks_ready_for_the_stub_and_records_the_stub_env(
+    files: RunFiles,
+) -> None:
+    backend = FakeBackend(ready=ready_body(llm="stub"))
+    stub = AskOptions(limit=1, provider=LLMProviderName.STUB)
+
+    await ask(files, ports(backend), stub)
+
+    record = json.loads(files.config.read_text(encoding="utf-8"))
+    assert record["env"]["LLM_PROVIDER"] == "stub"
+
+
+async def test_a_stub_run_against_the_real_provider_is_refused(files: RunFiles) -> None:
+    with pytest.raises(ConfigMismatchError, match="expected stub"):
+        await ask(files, options=AskOptions(provider=LLMProviderName.STUB))

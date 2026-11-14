@@ -15,7 +15,7 @@ IMAGES := hpdocs-backend:local hpdocs-frontend:local
 TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURDIR)":/src:ro \
 	-v trivy-cache:/root/.cache $(TRIVY_IMAGE)
 
-.PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int test-ui-int smoke-llm \
+.PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int test-ui-int test-eval-int smoke-llm \
 	fetch-test-assets models \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins \
 	purge eval-retrieval eval-estimate eval-answers eval load check
@@ -168,6 +168,17 @@ ANSWER_ARGS ?=
 eval-answers: ## Billed: one answer run via the host driver (needs `make up`); ANSWER_ARGS="--run reference-1 --limit 10"
 	cd $(BACKEND) && uv run --frozen python -m app.evaluation.answers drive \
 		--eval-dir "$(CURDIR)/eval" $(ANSWER_ARGS)
+
+# Local only, like test-ui-int: the answer harness end to end on the stub provider, no
+# key and no spend. The driver pins the stub and the stub matrix's models, so it runs on
+# any .env, and puts the backend back on .env after. Its files (with their own ledger)
+# live in eval/answer-runs/stub/, cleared first. The second call resumes the same run.
+test-eval-int: ## Answer harness pipeline on the stub provider (local, needs `make up`): restart, checks, ask, resume
+	rm -rf "$(CURDIR)/eval/answer-runs/stub"
+	cd $(BACKEND) && uv run --frozen python -m app.evaluation.answers drive --provider stub \
+		--eval-dir "$(CURDIR)/eval" --run reference-1 --limit 3
+	cd $(BACKEND) && uv run --frozen python -m app.evaluation.answers drive --provider stub \
+		--eval-dir "$(CURDIR)/eval" --run reference-1 --limit 2 --resume
 
 eval: ## Run the quality benchmark
 	@echo "not implemented yet"; exit 1

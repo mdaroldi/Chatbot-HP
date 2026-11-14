@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from app.core.settings import LLMProviderName
 from app.evaluation.answers.answer_matrix import AnswerMatrix, RunSpec
 from app.evaluation.answers.config_check import (
     CHECKED_NAMES,
@@ -61,6 +62,7 @@ class DriveRequest:
     ask_args: tuple[str, ...]  # passed through to `ask` (--limit, --resume, ...)
     uid: int
     gid: int
+    provider: LLMProviderName = LLMProviderName.ANTHROPIC
 
 
 def subprocess_runner(cwd: Path) -> CommandRunner:
@@ -98,7 +100,18 @@ def _ask_argv(request: DriveRequest) -> tuple[str, ...]:
         "--run",
         request.run.name,
         *request.ask_args,
+        *(() if request.provider is LLMProviderName.ANTHROPIC else ("--provider", "stub")),
     )
+
+
+def _pins(matrix: AnswerMatrix, request: DriveRequest) -> dict[str, str]:
+    """A real run pins the run settings and the provider; the models and bounds must
+    already be the backend's. A stub check also pins the stub matrix's models and
+    bounds, so it runs on any `.env`.
+    """
+    if request.provider is LLMProviderName.ANTHROPIC:
+        return overrides(request.run)
+    return backend_env(matrix, request.run, request.provider)
 
 
 def _step(runner: CommandRunner, name: str, argv: Sequence[str], env: Mapping[str, str]) -> str:
@@ -115,12 +128,13 @@ def drive(
     environ: Mapping[str, str],
 ) -> int:
     """`ask`'s exit code, once the backend is back on the caller's settings."""
-    run_env = dict(environ) | overrides(request.run)
+    run_env = dict(environ) | _pins(matrix, request)
     try:
         _step(runner, "backend restart (up)", UP, run_env)
         logger.info("backend restarted for the run", extra={"run": request.run.name})
         check_printenv(
-            backend_env(matrix, request.run), _step(runner, "printenv", PRINTENV, run_env)
+            backend_env(matrix, request.run, request.provider),
+            _step(runner, "printenv", PRINTENV, run_env),
         )
         logger.info("backend env checked", extra={"run": request.run.name})
         code = runner(_ask_argv(request), env=run_env, capture=False).returncode

@@ -108,11 +108,13 @@ def _render(value: object) -> str:
     return str(value)
 
 
-def overrides(run: RunSpec) -> dict[str, str]:
+def overrides(
+    run: RunSpec, provider: LLMProviderName = LLMProviderName.ANTHROPIC
+) -> dict[str, str]:
     """What the driver sets when it restarts the backend for this run."""
     settings = run_settings(run)
     return {
-        "LLM_PROVIDER": LLMProviderName.ANTHROPIC.value,
+        "LLM_PROVIDER": provider.value,
         "RETRIEVAL_MODE": _render(settings.mode),
         "RETRIEVAL_RERANK_ENABLED": _render(settings.rerank),
         "RETRIEVAL_TOP_K": _render(settings.top_k),
@@ -121,10 +123,12 @@ def overrides(run: RunSpec) -> dict[str, str]:
     }
 
 
-def backend_env(matrix: AnswerMatrix, run: RunSpec) -> dict[str, str]:
+def backend_env(
+    matrix: AnswerMatrix, run: RunSpec, provider: LLMProviderName = LLMProviderName.ANTHROPIC
+) -> dict[str, str]:
     """Every checked name with the value the backend must show, in `CHECKED_NAMES` order."""
     worst = matrix.worst_case
-    return overrides(run) | {
+    return overrides(run, provider) | {
         "LLM_ANSWER_MODEL": matrix.models.answer,
         "LLM_REWRITE_MODEL": matrix.models.rewrite,
         "LLM_ANSWER_MAX_TOKENS": str(worst.answer_output_tokens),
@@ -162,13 +166,19 @@ def _get(body: Mapping[str, object], *keys: str) -> object:
     return node
 
 
-def check_ready(body: Mapping[str, object], *, collection: str, build_id: str) -> None:
+def check_ready(
+    body: Mapping[str, object],
+    *,
+    collection: str,
+    build_id: str,
+    provider: LLMProviderName = LLMProviderName.ANTHROPIC,
+) -> None:
     """`collection` and `build_id` are what the run's alias resolves to in Qdrant."""
     problems = []
     if body.get("status") != "ready":
         problems.append(f"status {body.get('status')}")
-    if body.get("llm") != LLMProviderName.ANTHROPIC.value:
-        problems.append(f"llm {body.get('llm')} (expected anthropic)")
+    if body.get("llm") != provider.value:
+        problems.append(f"llm {body.get('llm')} (expected {provider.value})")
     info = _get(body, "checks", "index", "info")
     if not isinstance(info, Mapping):
         problems.append("no index info")

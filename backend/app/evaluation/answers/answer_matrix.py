@@ -9,6 +9,7 @@ sample needs a judged run of at least that many items; a run's env may set only
 `ENV_ALLOWLIST` settings, so no run can change the model or the prompt.
 """
 
+import dataclasses
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -17,6 +18,8 @@ from pathlib import Path
 from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+from app.infra.llm_stub import SERVED_MODEL as STUB_MODEL
 
 ENV_ALLOWLIST = frozenset(
     {
@@ -153,6 +156,15 @@ def _check_rows(parsed: _File) -> None:
     for model in (parsed.models.answer, parsed.models.rewrite, parsed.models.judge):
         if model not in parsed.prices:
             raise MatrixError(f"no price for {model}")
+
+
+def stub_matrix(matrix: AnswerMatrix) -> AnswerMatrix:
+    """The matrix for a stub-provider pipeline check: every model is the stub's served
+    model at $0, so the same guards, checks and files run without a key or spend.
+    """
+    models = Models(answer=STUB_MODEL, rewrite=STUB_MODEL, judge=STUB_MODEL)
+    free = Price(input_per_mtok=0.0, output_per_mtok=0.0)
+    return dataclasses.replace(matrix, models=models, prices={STUB_MODEL: free})
 
 
 def parse_answer_matrix(text: str) -> AnswerMatrix:

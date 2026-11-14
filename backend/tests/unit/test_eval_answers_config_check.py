@@ -6,6 +6,7 @@ import dataclasses
 
 import pytest
 
+from app.core.settings import LLMProviderName
 from app.domain.chat import Outcome, RefusalReason
 from app.domain.retrieval import SearchMode
 from app.evaluation.answers.answer_matrix import RunSpec, load_answer_matrix
@@ -262,3 +263,18 @@ def test_every_problem_is_reported_not_only_the_first() -> None:
         check_rows((row(1, model=HAIKU), row(2, chunk_ids=())), expectation())
     assert "row m-1" in str(caught.value)
     assert "row m-2" in str(caught.value)
+
+
+STUB = LLMProviderName.STUB
+
+
+def test_stub_overrides_and_env_pin_the_stub_provider() -> None:
+    assert overrides(REFERENCE, STUB)["LLM_PROVIDER"] == "stub"
+    assert backend_env(MATRIX, REFERENCE, STUB)["LLM_PROVIDER"] == "stub"
+    assert backend_env(MATRIX, REFERENCE, STUB)["LLM_ANSWER_MODEL"] == SONNET
+
+
+def test_ready_checks_the_provider_it_is_given() -> None:
+    check_ready(ready(llm="stub"), collection="hpdocs_chunks_x", build_id=BUILD, provider=STUB)
+    with pytest.raises(ConfigMismatchError, match="expected stub"):
+        check_ready(ready(), collection="hpdocs_chunks_x", build_id=BUILD, provider=STUB)
