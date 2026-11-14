@@ -13,6 +13,7 @@ from app.evaluation.answers.estimate import (
     Typical,
     plan,
     render,
+    run_start,
     typical_tokens,
 )
 from tests.unit.test_eval_answers_budget import HAIKU, MATRIX, OPUS, SONNET, item
@@ -117,6 +118,36 @@ def test_a_run_already_paid_for_needs_only_what_is_left() -> None:
     assert paid.cost_usd == pytest.approx(estimate)
     assert dense.needed == pytest.approx(0.0)
     assert dense.status is Status.FUNDED
+
+
+# ------------------------------------------------------------------ run start
+
+
+def test_a_run_start_holds_back_the_reserved_runs_and_counts_all_spending() -> None:
+    paid = answer("dense", 4500, 600)
+    check = run_start(THREE, THREE.run("reference-1"), ITEMS, [paid])
+    heldout = run_estimate(THREE, THREE.run("heldout"), ITEMS["heldout"])
+    reference = run_estimate(THREE, THREE.run("reference-1"), ITEMS["reference-1"])
+    assert check.run == "reference-1"
+    assert check.remaining == pytest.approx(10.0 - paid.cost_usd - heldout * 1.25)
+    assert check.needed == pytest.approx(reference * 1.25)
+
+
+def test_a_run_start_prices_the_rest_of_the_run_at_measured_tokens() -> None:
+    paid = answer("reference-1", 3000, 300)
+    measured = THREE.estimate.model_copy(
+        update={"answer_input_tokens": 3000, "answer_output_tokens": 300}
+    )
+    estimate = run_estimate(THREE, THREE.run("reference-1"), ITEMS["reference-1"], measured)
+    check = run_start(THREE, THREE.run("reference-1"), ITEMS, [paid])
+    assert check.needed == pytest.approx((estimate - paid.cost_usd) * 1.25)
+
+
+def test_a_reserved_run_does_not_hold_back_its_own_reservation() -> None:
+    check = run_start(THREE, THREE.run("heldout"), ITEMS, [])
+    heldout = run_estimate(THREE, THREE.run("heldout"), ITEMS["heldout"])
+    assert check.remaining == pytest.approx(10.0)
+    assert check.needed == pytest.approx(heldout * 1.25)
 
 
 # ------------------------------------------------------------------ render

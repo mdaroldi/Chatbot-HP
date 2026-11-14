@@ -19,11 +19,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from app.domain.answer_dataset import EvalItem
-from app.evaluation.answers.answer_matrix import AnswerMatrix, Tokens
+from app.evaluation.answers.answer_matrix import AnswerMatrix, RunSpec, Tokens
 from app.evaluation.answers.budget import (
     Charge,
     Kind,
     Spend,
+    StartCheck,
     charge,
     run_estimate,
     split_by_run,
@@ -99,6 +100,16 @@ def typical_tokens(matrix: AnswerMatrix, charges: Sequence[Charge]) -> Typical:
     return Typical(tokens, len(answers), len(judged))
 
 
+def _reserved(
+    matrix: AnswerMatrix, items: Mapping[str, Sequence[EvalItem]], tokens: Tokens
+) -> dict[str, float]:
+    return {
+        run.name: run_estimate(matrix, run, items[run.name], tokens)
+        for run in matrix.runs
+        if run.reserved
+    }
+
+
 def plan(
     matrix: AnswerMatrix,
     items: Mapping[str, Sequence[EvalItem]],
@@ -106,11 +117,7 @@ def plan(
     tokens: Tokens,
 ) -> list[PlanRow]:
     """`items` holds every run's items by run name."""
-    reserved = {
-        run.name: run_estimate(matrix, run, items[run.name], tokens)
-        for run in matrix.runs
-        if run.reserved
-    }
+    reserved = _reserved(matrix, items, tokens)
     spent = split_by_run(charges)
     committed = {name: paid.total for name, paid in spent.items()}
     rows = []
@@ -189,3 +196,25 @@ def render(
         "",
     ]
     return "\n".join(lines)
+
+
+def run_start(
+    matrix: AnswerMatrix,
+    run: RunSpec,
+    items: Mapping[str, Sequence[EvalItem]],
+    charges: Sequence[Charge],
+) -> StartCheck:
+    """The start check a run must pass now, on the numbers `make eval-estimate` shows:
+    the rest of the run at typical tokens (measured once the pilot ran), against what
+    the cap leaves after all spending and the other reserved runs' reservations.
+    """
+    tokens = typical_tokens(matrix, charges).tokens
+    spent = {name: paid.total for name, paid in split_by_run(charges).items()}
+    estimate = run_estimate(matrix, run, items[run.name], tokens)
+    return start_check(
+        matrix,
+        run,
+        estimate=max(0.0, estimate - spent.get(run.name, 0.0)),
+        spent_by_run=spent,
+        reserved=_reserved(matrix, items, tokens),
+    )
