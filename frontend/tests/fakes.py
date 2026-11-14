@@ -129,16 +129,17 @@ def detail(conversation_id: str, *messages: Message) -> ConversationDetail:
     )
 
 
-# The events one POST /messages yields, then the error it raises (if any).
-StreamScript = tuple[tuple[StreamEvent, ...], ApiError | None]
+# The events one POST /messages yields, then the error it raises (if any). Errors
+# other than ApiError stand for bugs, which only the page's guard catches.
+StreamScript = tuple[tuple[StreamEvent, ...], Exception | None]
 
 
 class FakeChatApi:
     """Implements the ChatApi Protocol. A call nobody scripted fails the test."""
 
     def __init__(self) -> None:
-        self.pages: dict[str | None, ConversationPage | ApiError] = {None: EMPTY_PAGE}
-        self.delete_errors: dict[str, ApiError] = {}
+        self.pages: dict[str | None, ConversationPage | Exception] = {None: EMPTY_PAGE}
+        self.delete_errors: dict[str, Exception] = {}
         self.created: list[Conversation | ApiError] = []
         self.details: dict[str, ConversationDetail | ApiError] = {}
         self.streams: list[StreamScript] = []
@@ -166,7 +167,7 @@ class FakeChatApi:
     def list_conversations(self, cursor: str | None = None) -> ConversationPage:
         self.calls.append(("list", cursor))
         result = self.pages[cursor]
-        if isinstance(result, ApiError):
+        if isinstance(result, Exception):
             raise result
         return result
 
@@ -196,7 +197,7 @@ class FakeChatApi:
 
     @contextmanager
     def _open(
-        self, events: tuple[StreamEvent, ...], error: ApiError | None
+        self, events: tuple[StreamEvent, ...], error: Exception | None
     ) -> Iterator[Iterator[StreamEvent]]:
         try:
             yield self._events(events, error)
@@ -206,7 +207,7 @@ class FakeChatApi:
                 self.on_stream_closed()
 
     def _events(
-        self, events: tuple[StreamEvent, ...], error: ApiError | None
+        self, events: tuple[StreamEvent, ...], error: Exception | None
     ) -> Iterator[StreamEvent]:
         if self.on_stream_start is not None:
             self.on_stream_start()

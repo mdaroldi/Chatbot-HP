@@ -8,6 +8,7 @@ import streamlit as st
 from hpdocs_ui import url_state
 from hpdocs_ui.state import UiState, initial
 from hpdocs_ui.state import url_state as state_url
+from hpdocs_ui.ui import guard
 
 _KEY = "ui"
 
@@ -39,6 +40,7 @@ def sync_url(state: UiState) -> None:
         st.query_params.from_dict(params)
 
 
+@guard.callback
 def apply[**P](
     transition: Callable[Concatenate[UiState, P], UiState], *args: P.args, **kwargs: P.kwargs
 ) -> None:

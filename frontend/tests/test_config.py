@@ -34,8 +34,10 @@ SAFE_HELPERS = frozenset({"sanitize_markdown", "escape_markdown", "conversation_
 WORDING_TABLES = frozenset(
     {"NOTICE_TEXT", "ERROR_TEXT", "REFUSAL_TEXT", "PRIVACY_TEXT", "EXAMPLE_QUESTIONS"}
 )
-# Module constants holding one fixed string each (hpdocs_ui.chat_view).
-FIXED_TEXT = frozenset({"PRIMING_TEXT", "WARNING_BADGE", "LINK_TEXT", "EXAMPLES_INTRO"})
+# Module constants holding one fixed string each (hpdocs_ui.chat_view, hpdocs_ui.errors).
+FIXED_TEXT = frozenset(
+    {"PRIMING_TEXT", "WARNING_BADGE", "LINK_TEXT", "EXAMPLES_INTRO", "GENERIC_ERROR_TEXT"}
+)
 # The one function allowed to call markdown(): it renders answers, always sanitized.
 ANSWER_RENDERER = ("chat.py", "render_answer_text")
 # Reviewed exceptions: attributes that only ever hold fixed wording.
@@ -261,3 +263,58 @@ def test_the_sidebar_starts_expanded_so_its_notices_are_seen() -> None:
     (config,) = configs
     options = {k.arg: ast.literal_eval(k.value) for k in config.keywords}
     assert options["initial_sidebar_state"] == "expanded"
+
+
+# Widget callbacks run before the script, outside the page guard, so each one must be
+# guarded itself (Streamlit would log its exception with the message).
+CALLBACK_KEYWORDS = frozenset({"on_click", "on_submit", "on_change"})
+
+
+def unguarded_callbacks(sources: list[str]) -> list[str]:
+    """Callbacks not defined with @guard.callback in the given sources, and an app
+    that does not run its page through guard.run_page.
+    """
+    trees = [ast.parse(source) for source in sources]
+    guarded = {
+        node.name
+        for tree in trees
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and any(ast.unparse(d) in {"guard.callback", "callback"} for d in node.decorator_list)
+    }
+    found = []
+    for tree in trees:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.keyword) or node.arg not in CALLBACK_KEYWORDS:
+                continue
+            value = node.value
+            name = value.attr if isinstance(value, ast.Attribute) else getattr(value, "id", None)
+            if name not in guarded:
+                found.append(ast.unparse(value))
+    return found
+
+
+def test_the_callback_check_flags_unguarded_callbacks() -> None:
+    plain = "def f(): pass\nst.button('a', on_click=f)\nst.chat_input(on_submit=m.g)\n"
+    guarded = "@guard.callback\ndef f(): pass\nst.button('a', on_click=f, args=(1,))\n"
+
+    assert unguarded_callbacks([plain]) == ["f", "m.g"]
+    assert unguarded_callbacks([guarded]) == []
+    assert unguarded_callbacks(["@other\ndef f(): pass\nst.button('a', on_change=f)"]) == ["f"]
+
+
+def test_every_widget_callback_is_guarded() -> None:
+    sources = [source.read_text() for source in UI_SOURCES]
+    callbacks = sum(source.count("on_click=") + source.count("on_submit=") for source in sources)
+    assert callbacks >= 10
+    assert unguarded_callbacks(sources) == []
+
+
+def test_the_page_runs_inside_the_guard() -> None:
+    tree = ast.parse((FRONTEND / "app.py").read_text())
+    top_level_calls = [
+        ast.unparse(node.value.func)
+        for node in tree.body
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+    ]
+    assert top_level_calls == ["st.set_page_config", "wiring.quiet_http_logs", "guard.run_page"]

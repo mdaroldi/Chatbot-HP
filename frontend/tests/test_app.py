@@ -4,6 +4,7 @@ Every state is reached through the fake client and real clicks, never by setting
 session state, so these tests exercise the same path a browser does.
 """
 
+import logging
 import pathlib
 from collections.abc import Callable, Iterator
 from itertools import accumulate
@@ -1281,3 +1282,193 @@ def test_a_pending_answer_refresh_is_disabled_while_an_answer_streams(
         if kind == "button" and str(getattr(proto, "label")) == "Refresh"  # noqa: B009
     ]
     assert refresh == [True]
+
+
+# --- the top-level guard and the canary log audit (commit 9b) --------------------
+
+CANARY = "CANARY-9b-3c1d7a"
+CANARY_CID = "cid-CANARY-9b-0042"
+GENERIC = "Something went wrong. Try again."
+# Streamlit's loggers do not propagate, so the audit hooks each one directly.
+AUDITED_PREFIXES = ("streamlit", "hpdocs_ui", "httpx", "httpcore")
+
+Logged = Callable[[], str]
+
+
+@pytest.fixture
+def logged(caplog: pytest.LogCaptureFixture, capfd: pytest.CaptureFixture[str]) -> Iterator[Logged]:
+    """Everything logged at DEBUG and up, with tracebacks, plus whatever reached the
+    process's stdout and stderr (Streamlit's console handler writes to stderr).
+    """
+    caplog.set_level(logging.DEBUG)
+    names = [
+        name for name in logging.root.manager.loggerDict if name.split(".")[0] in AUDITED_PREFIXES
+    ]
+    hooked = [logging.getLogger(name) for name in {"streamlit", *names}]
+    levels = [(logger, logger.level) for logger in hooked]
+    for logger in hooked:
+        logger.addHandler(caplog.handler)
+        logger.setLevel(logging.DEBUG)
+    assert "streamlit.error_util" in names  # where uncaught script errors are logged
+    output: list[str] = []
+    formatter = logging.Formatter()
+
+    def text() -> str:
+        captured = capfd.readouterr()
+        output.extend((captured.out, captured.err))
+        records = [
+            "\n".join(
+                (
+                    record.getMessage(),
+                    formatter.formatException(record.exc_info) if record.exc_info else "",
+                    record.stack_info or "",
+                )
+            )
+            for record in caplog.records
+        ]
+        return "\n".join((*records, *output))
+
+    yield text
+    for logger, level in levels:
+        logger.removeHandler(caplog.handler)
+        logger.setLevel(level)
+
+
+def page_text(log: list[ForwardMsg | str]) -> str:
+    return "\n".join(str(item) for item in log)
+
+
+def open_broken(fake: FakeChatApi) -> AppTest:
+    """The page with its first read failing, so it never reaches the status check."""
+    app = AppTest.from_file(str(APP), default_timeout=30)
+    app.query_params["cid"] = CID
+    app.run()
+    assert not app.exception
+    assert fake.client_ids
+    return app
+
+
+def test_the_audit_sees_what_streamlit_logs_for_an_unguarded_error(logged: Logged) -> None:
+    def unguarded() -> None:
+        raise RuntimeError("CANARY-9b-3c1d7a")
+
+    app = AppTest.from_function(unguarded)
+    app.run()
+
+    assert app.exception
+    assert CANARY in logged()
+
+
+@pytest.mark.usefixtures("fetch")
+def test_a_bug_in_the_page_shows_the_generic_wording_and_logs_only_its_type(
+    fake: FakeChatApi, sent: Sent, logged: Logged
+) -> None:
+    fake.pages[None] = RuntimeError(CANARY)
+
+    app = open_broken(fake)
+
+    assert main_errors(app) == [GENERIC]
+    assert CANARY not in page_text(sent.log)
+    text = logged()
+    assert CANARY not in text
+    assert "RuntimeError" in text
+    assert fake.count("list") == 2  # one rerun to draw an enabled page, then no loop
+    app.run()
+    assert main_errors(app) == [GENERIC]
+
+
+@pytest.mark.usefixtures("fetch")
+def test_after_a_passing_bug_the_page_recovers_and_the_wording_goes(fake: FakeChatApi) -> None:
+    fake.pages[None] = RuntimeError(CANARY)
+    app = open_broken(fake)
+    assert main_errors(app) == [GENERIC]
+
+    fake.pages[None] = page(conversation(A))
+    app.run()
+
+    assert main_errors(app) == []
+    assert [key for key, _ in conversation_buttons(app)] == [A]
+
+
+def test_a_bug_in_a_callback_shows_the_generic_wording_and_the_page_still_works(
+    open_app: OpenApp, fake: FakeChatApi, sent: Sent, logged: Logged
+) -> None:
+    fake.pages[None] = page(conversation(A), conversation(B))
+    fake.delete_errors[B] = RuntimeError(CANARY)
+    app = open_app(cid=CID)
+    click(app, f"delete-{B}")
+
+    click(app, f"confirm-delete-{B}")
+
+    assert main_errors(app) == [GENERIC]
+    assert [key for key, _ in conversation_buttons(app)] == [A, B]
+    assert CANARY not in page_text(sent.log)
+    assert CANARY not in logged()
+    app.run()
+    assert main_errors(app) == []
+
+
+def test_a_bug_while_an_answer_streams_leaves_an_enabled_page(
+    open_app: OpenApp, fake: FakeChatApi, sent: Sent, logged: Logged
+) -> None:
+    fake.created = [conversation(A, None)]
+    fake.streams = [(tokens("Press the"), RuntimeError(CANARY))]
+    app = open_app(cid=CID)
+
+    ask(app, "How do I print?")
+
+    assert main_errors(app) == [GENERIC]
+    assert not app.chat_input(key="question").disabled
+    assert not [b for b in app.button if b.disabled]
+    assert (fake.count("stream"), fake.streams_closed) == (1, 1)
+    assert CANARY not in page_text(sent.log)
+    assert CANARY not in logged()
+
+
+def test_canary_never_reaches_the_logs_in_any_flow(
+    open_app: OpenApp, fake: FakeChatApi, fetch: FakeFetch, logged: Logged
+) -> None:
+    fetch.results = up("anthropic")
+    hostile = f"{CANARY} ![x](http://evil.invalid/{CANARY}.png)"
+    answer: tuple[StreamEvent, ...] = (
+        *tokens(f"Press OK {CANARY} [S1]."),
+        source_event(),
+        done(f"OK {CANARY} [S1]."),
+    )
+    fake.pages[None] = page(conversation(A, CANARY), conversation(B, CANARY))
+    fake.created = [
+        ApiError("bad_response", status=201),
+        conversation(C, CANARY),
+    ]
+    fake.streams = [
+        (answer, None),
+        ((), ApiError("rate_limited", status=429, request_id="req-12345678")),
+        (tokens(CANARY), ApiError("llm_error", status=200)),
+        ((), ApiError("bad_response", status=200)),
+        (tokens(CANARY), RuntimeError(CANARY)),
+    ]
+    fake.details[A] = detail(A, asked(CANARY), answered(CANARY, citations=("S1",)))
+    fake.details[B] = ApiError("backend_unreachable")
+    fake.delete_errors[A] = ApiError("internal_error", status=500)
+    fake.delete_errors[B] = RuntimeError(CANARY)
+    fake.pages["cursor"] = RuntimeError(CANARY)
+
+    app = open_app(cid=CANARY_CID)
+    ask(app, hostile)  # create answers bad_response
+    ask(app, hostile)  # streams the answer
+    for _ in range(4):
+        ask(app, hostile)
+    click(app, f"open-{A}")
+    click(app, f"open-{B}")
+    for conversation_id in (A, B):
+        click(app, f"delete-{conversation_id}")
+        click(app, f"confirm-delete-{conversation_id}")
+    fake.pages[None] = RuntimeError(CANARY)
+    click(app, "new-conversation")
+
+    assert fake.questions == [hostile] * 5
+    assert set(fake.client_ids) == {CANARY_CID}
+    text = logged()
+    assert CANARY not in text
+    assert CANARY_CID not in text
+    assert "evil.invalid" not in text

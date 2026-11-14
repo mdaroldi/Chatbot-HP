@@ -14,7 +14,7 @@ from hpdocs_ui.chat_view import conversation_label
 from hpdocs_ui.errors import ApiError
 from hpdocs_ui.settings import FrontendSettings
 from hpdocs_ui.state import NOTICE_TEXT, UiState
-from hpdocs_ui.ui import notices, session
+from hpdocs_ui.ui import guard, notices, session
 from hpdocs_ui.view import StatusView, describe
 
 _NOT_FOUND = "conversation_not_found"
@@ -132,6 +132,7 @@ def _conversation_row(
     )
 
 
+@guard.callback
 def _load_more(api: ChatApi) -> None:
     state = session.get()
     try:
@@ -142,6 +143,7 @@ def _load_more(api: ChatApi) -> None:
     session.put(ui.list_loaded(state, page, more=True))
 
 
+@guard.callback
 def _delete(api: ChatApi, conversation_id: str) -> None:
     state = session.get()
     try:

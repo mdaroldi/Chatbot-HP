@@ -25,7 +25,7 @@ from hpdocs_ui.chat_view import (
 from hpdocs_ui.errors import ApiError
 from hpdocs_ui.sanitize import escape_markdown, sanitize_markdown
 from hpdocs_ui.settings import FrontendSettings
-from hpdocs_ui.ui import notices, session
+from hpdocs_ui.ui import guard, notices, session
 from hpdocs_ui.view import Provider
 
 QUESTION_KEY = "question"
@@ -139,6 +139,7 @@ def render_input(settings: FrontendSettings, *, sending: bool) -> None:
     )
 
 
+@guard.callback
 def _submit() -> None:
     # On submit, the input's value is the text just sent.
     text: str = st.session_state[QUESTION_KEY]
