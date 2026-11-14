@@ -571,8 +571,10 @@ are not redistributed.
 - **Chat UI:** a second click on an example question before the disabled page
   reaches the browser can send it twice; a tab closed while the answer is still
   being prepared is noticed only at the first token (one model call wasted); after a
-  reload, an interrupted or stopped answer no longer says why
-  ([ADR 0011](docs/adr/0011-chat-ui.md)).
+  reload, an interrupted or stopped answer no longer says why; the backend status is
+  checked once per session, so a failed send in an already open page shows "The chat
+  service can't be reached right now." and the copyable question but no Retry until
+  the page is reloaded ([ADR 0011](docs/adr/0011-chat-ui.md)).
 - The frontend image is about 830 MB, mostly Streamlit's own dependencies. The
   backend image carries the ingestion stack (pdfplumber, fastembed, onnxruntime) and
   the baked models (152 MB): 618 MiB unpacked and 300 MB compressed

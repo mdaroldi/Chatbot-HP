@@ -161,6 +161,9 @@ never reach the logs (CLAUDE.md).
     one LLM call is wasted.
   - After a reload, a failed or cancelled answer no longer says why it stopped.
   - Escapes can show as backslashes inside a fence indented 1 to 3 spaces.
+  - The backend status is checked once per session. A failed send in a page that is
+    already open shows "The chat service can't be reached right now." and the
+    copyable question, but no Retry until the page is reloaded.
   - The UI integration test is not in CI yet.
 - Changing a field the page reads needs the frontend model and the stack test
   updated together.
