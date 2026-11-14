@@ -807,7 +807,9 @@ def test_a_pre_token_rate_limit_raises_before_any_event() -> None:
         (httpx.ConnectError, BACKEND_UNREACHABLE),
         (httpx.ConnectTimeout, BACKEND_UNREACHABLE),
         (httpx.ReadTimeout, STREAM_TIMEOUT),
-        (httpx.WriteTimeout, STREAM_TIMEOUT),
+        # The question never fully left: the service is unreachable, not slow to answer.
+        (httpx.WriteTimeout, BACKEND_UNREACHABLE),
+        (httpx.PoolTimeout, BACKEND_UNREACHABLE),
         (httpx.RemoteProtocolError, BACKEND_UNREACHABLE),
     ],
 )

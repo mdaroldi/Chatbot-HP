@@ -258,7 +258,10 @@ def _is_event_stream(response: httpx.Response) -> bool:
 
 
 def _transport_code(exc: httpx.TransportError) -> str:
-    if isinstance(exc, httpx.TimeoutException) and not isinstance(exc, httpx.ConnectTimeout):
+    """Only a read timeout means the answer was slow; a connect, write or pool timeout
+    means the question never reached the service.
+    """
+    if isinstance(exc, httpx.ReadTimeout):
         return STREAM_TIMEOUT
     return BACKEND_UNREACHABLE
 
