@@ -2,6 +2,13 @@
 
 import pathlib
 import tomllib
+from collections.abc import Iterator
+
+import pytest
+from streamlit import config as streamlit_config
+from streamlit.proto.NewSession_pb2 import Config
+from streamlit.runtime.app_session import _get_toolbar_mode
+from streamlit.testing.v1 import AppTest
 
 FRONTEND = pathlib.Path(__file__).resolve().parents[1]
 CONFIG = FRONTEND / ".streamlit" / "config.toml"
@@ -18,6 +25,48 @@ def test_usage_stats_are_off_and_server_is_headless() -> None:
 
     assert config["browser"]["gatherUsageStats"] is False
     assert config["server"]["headless"] is True
+
+
+@pytest.fixture
+def loaded_by_streamlit(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """The project config as Streamlit itself loads it ($CWD/.streamlit/config.toml),
+    so a value the pinned Streamlit does not know shows up as a failure here.
+    """
+    monkeypatch.chdir(FRONTEND)
+    streamlit_config.get_config_options(force_reparse=True)
+    yield
+    monkeypatch.undo()
+    streamlit_config.get_config_options(force_reparse=True)
+
+
+def test_toolbar_hides_deploy_and_the_developer_menu() -> None:
+    assert load_config()["client"]["toolbarMode"] == "minimal"
+
+
+@pytest.mark.usefixtures("loaded_by_streamlit")
+def test_pinned_streamlit_accepts_the_minimal_toolbar() -> None:
+    # Streamlit's own mapping from the option to the browser message; it raises on
+    # a value this version does not know.
+    assert _get_toolbar_mode() == Config.ToolbarMode.MINIMAL
+
+
+def test_error_details_are_hidden_from_the_browser() -> None:
+    assert load_config()["client"]["showErrorDetails"] == "none"
+
+
+@pytest.mark.usefixtures("loaded_by_streamlit")
+def test_an_uncaught_error_shows_no_message_type_or_traceback_in_the_page() -> None:
+    app = AppTest.from_string("raise RuntimeError('detail-canary')").run()
+
+    shown = app.exception[0]
+    assert "detail-canary" not in shown.message
+    assert shown.stack_trace == []
+    assert "RuntimeError" not in shown.type
+
+
+@pytest.mark.usefixtures("loaded_by_streamlit")
+def test_pinned_streamlit_loads_usage_stats_off() -> None:
+    assert streamlit_config.get_option("browser.gatherUsageStats") is False
 
 
 def test_xsrf_and_cors_protection_keep_their_secure_defaults() -> None:

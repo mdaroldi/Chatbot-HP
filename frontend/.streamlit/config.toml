@@ -4,5 +4,13 @@
 # Do not send usage statistics to Streamlit.
 gatherUsageStats = false
 
+[client]
+# Hide Deploy and the developer options (rerun, clear cache, settings) from viewers.
+toolbarMode = "minimal"
+# Uncaught errors show a generic message in the browser: no exception message, type
+# or traceback. Streamlit still writes them to the server log, so the app must not
+# let exceptions escape.
+showErrorDetails = "none"
+
 [server]
 headless = true
