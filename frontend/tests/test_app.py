@@ -13,9 +13,11 @@ import streamlit as st
 from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
 from streamlit.runtime.forward_msg_queue import ForwardMsgQueue
 from streamlit.testing.v1 import AppTest
+from streamlit.testing.v1.element_tree import Block, Node
 
 from hpdocs_ui import status, wiring
-from hpdocs_ui.chat_view import PRIMING_TEXT
+from hpdocs_ui.api import Message, SourcesEvent, StreamEvent
+from hpdocs_ui.chat_view import NOTICE_TEXT, PRIMING_TEXT, REFUSAL_TEXT, WARNING_BADGE
 from hpdocs_ui.errors import ApiError
 from hpdocs_ui.identifiers import trusted_identifier
 from hpdocs_ui.sanitize import escape_markdown, sanitize_markdown
@@ -30,9 +32,13 @@ from tests.fakes import (
     C,
     FakeChatApi,
     FakeFetch,
+    answered,
+    asked,
     conversation,
+    detail,
     done,
     page,
+    source,
     tokens,
 )
 from tests.test_sanitize import assert_safe
@@ -176,6 +182,19 @@ def main_errors(app: AppTest) -> list[str]:
     return [str(e.value) for e in app.main.error]
 
 
+def drawn(node: Node) -> list[tuple[str, str]]:
+    """Everything a node draws, in order, as (type, proto) pairs."""
+    found = [(node.type, str(node.proto))]
+    if isinstance(node, Block):
+        for child in node.children.values():
+            found.extend(drawn(child))
+    return found
+
+
+def roles(app: AppTest) -> list[str]:
+    return [str(m.name) for m in app.chat_message]
+
+
 def click(app: AppTest, key: str) -> AppTest:
     app.button(key=key).click().run()
     assert not app.exception
@@ -273,6 +292,7 @@ def test_the_url_keeps_a_valid_client_and_its_conversation_in_canonical_form(
 ) -> None:
     fake.pages[None] = page(conversation(A))
 
+    fake.details[A] = detail(A)
     app = open_app(cid=CID, conv=A.upper())
 
     assert (app.query_params["cid"], app.query_params["conv"]) == (CID, A)
@@ -312,9 +332,10 @@ def test_the_list_is_fetched_once_until_something_changes_it(
     app = open_app(cid=CID)
 
     app.run()
+    fake.details[A] = detail(A)
     click(app, f"open-{A}")
 
-    assert fake.calls == [("list", None)]
+    assert [call for call in fake.calls if call[0] == "list"] == [("list", None)]
 
 
 def test_load_more_appends_the_next_page_and_disappears_at_the_end(
@@ -370,6 +391,7 @@ def test_selecting_a_conversation_marks_it_and_writes_it_to_the_url(
     app = open_app(cid=CID)
     assert not is_selected(app, A)
 
+    fake.details[B] = detail(B)
     click(app, f"open-{B}")
 
     assert app.query_params["conv"] == B
@@ -380,13 +402,14 @@ def test_new_conversation_clears_the_selection_from_the_url(
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
     fake.pages[None] = page(conversation(A))
+    fake.details[A] = detail(A)
     app = open_app(cid=CID, conv=A)
 
     click(app, "new-conversation")
 
     assert "conv" not in app.query_params
     assert not is_selected(app, A)
-    assert fake.calls == [("list", None)]
+    assert [call for call in fake.calls if call[0] == "list"] == [("list", None)]
 
 
 # --- delete ----------------------------------------------------------------------
@@ -396,6 +419,7 @@ def test_delete_asks_for_confirmation_and_cancel_keeps_the_conversation(
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
     fake.pages[None] = page(conversation(A))
+    fake.details[A] = detail(A)
     app = open_app(cid=CID, conv=A)
 
     click(app, f"delete-{A}")
@@ -415,6 +439,7 @@ def test_a_confirmed_delete_of_the_selected_conversation_removes_it_and_refetche
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
     fake.pages[None] = page(conversation(A), conversation(B))
+    fake.details[A] = detail(A)
     app = open_app(cid=CID, conv=A)
     click(app, f"delete-{A}")
     fake.pages[None] = page(conversation(B))
@@ -432,6 +457,7 @@ def test_deleting_another_conversation_keeps_the_selection(
     open_app: OpenApp, fake: FakeChatApi
 ) -> None:
     fake.pages[None] = page(conversation(A), conversation(B))
+    fake.details[A] = detail(A)
     app = open_app(cid=CID, conv=A)
     click(app, f"delete-{B}")
     fake.pages[None] = page(conversation(A))
@@ -448,6 +474,7 @@ def test_a_delete_answering_not_found_drops_the_conversation_with_the_not_found_
 ) -> None:
     fake.pages[None] = page(conversation(A), conversation(B))
     fake.delete_errors[A] = ApiError("conversation_not_found", status=404)
+    fake.details[A] = detail(A)
     app = open_app(cid=CID, conv=A)
     click(app, f"delete-{A}")
     fake.pages[None] = page(conversation(B))
@@ -465,6 +492,7 @@ def test_a_failed_delete_keeps_the_conversation_and_shows_the_fixed_wording(
 ) -> None:
     fake.pages[None] = page(conversation(A))
     fake.delete_errors[A] = ApiError("backend_unreachable")
+    fake.details[A] = detail(A)
     app = open_app(cid=CID, conv=A)
     click(app, f"delete-{A}")
 
@@ -622,11 +650,12 @@ def test_a_question_in_the_open_conversation_creates_nothing(
 ) -> None:
     fake.pages[None] = page(conversation(A))
     fake.streams = [((*tokens("Hi."), done("Hi.")), None)]
+    fake.details[A] = detail(A)
     app = open_app(cid=CID, conv=A)
 
     ask(app, "How do I print?")
 
-    assert [call for call in fake.calls if call[0] != "list"] == [("stream", A)]
+    assert [call for call in fake.calls if call[0] != "list"] == [("get", A), ("stream", A)]
     assert app.query_params["conv"] == A
 
 
@@ -689,6 +718,7 @@ def test_a_send_answering_not_found_drops_the_conversation_and_keeps_the_questio
 ) -> None:
     fake.pages[None] = page(conversation(A), conversation(B))
     fake.streams = [((), ApiError("conversation_not_found", status=404))]
+    fake.details[A] = detail(A)
     app = open_app(cid=CID, conv=A)
     fake.pages[None] = page(conversation(B))
 
@@ -719,3 +749,207 @@ def test_the_last_error_is_cleared_by_the_next_question(
 
     assert main_errors(app) == []
     assert not app.code
+
+
+# --- the thread ------------------------------------------------------------------
+
+
+def test_a_finished_answer_is_shown_once_however_often_the_page_reruns(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.created = [conversation(A, None)]
+    fake.streams = [((*tokens("Press ", "OK [S1]."), source_event(), done("Press OK [S1].")), None)]
+    app = open_app(cid=CID)
+
+    ask(app, "How do I print?")
+    app.run()
+    app.run()
+
+    assert fake.count("stream") == 1
+    assert roles(app) == ["user", "assistant"]
+    user, answer = app.chat_message
+    assert [t.value for t in user.text] == ["How do I print?"]
+    assert [m.value for m in answer.markdown] == [sanitize_markdown("Press OK [S1].")]
+    assert fake.count("get") == 0  # the streamed answer needs no read back
+
+
+def source_event() -> SourcesEvent:
+    return SourcesEvent(sources=(source(),))
+
+
+# Each case: what the stream gave, and what GET returns for the same stored turn.
+PARITY: dict[str, tuple[tuple[tuple[StreamEvent, ...], ApiError | None], Message]] = {
+    "completed": (
+        ((*tokens("Press OK [S1]."), source_event(), done("Press OK [S1].")), None),
+        answered("Press OK [S1].", citations=("S1",), sources=(source(),)),
+    ),
+    "uncited": (
+        ((*tokens("Press OK."), source_event(), done("Press OK.", uncited=True)), None),
+        answered("Press OK.", sources=(source(),)),
+    ),
+    "refused": (
+        (
+            (*tokens("BACKEND"), SourcesEvent(sources=()), done("x", reason="model_refused")),
+            None,
+        ),
+        answered("BACKEND-REFUSAL", "refused", reason="model_refused"),
+    ),
+    "failed": (
+        (tokens("Press the"), ApiError("llm_error", status=200)),
+        answered("Press the", "failed"),
+    ),
+}
+
+
+@pytest.mark.parametrize("case", PARITY)
+def test_a_reload_draws_the_same_thread_as_the_stream_did(
+    open_app: OpenApp, fake: FakeChatApi, case: str
+) -> None:
+    script, stored = PARITY[case]
+    fake.created = [conversation(A, None)]
+    fake.streams = [script]
+    streamed = ask(open_app(cid=CID), "How do I *print*?")
+    fake.details[A] = detail(A, asked("How do I *print*?"), stored)
+
+    reloaded = open_app(cid=CID, conv=A)
+
+    assert fake.calls.count(("get", A)) == 1
+    assert roles(reloaded) == ["user", "assistant"]
+    assert [drawn(m) for m in reloaded.chat_message] == [drawn(m) for m in streamed.chat_message]
+
+
+@pytest.mark.parametrize(
+    ("stored", "notice"),
+    [
+        (answered("Press OK."), NOTICE_TEXT["uncited"]),
+        (answered("Press the", "failed"), NOTICE_TEXT["failed"]),
+        (answered("Press", "cancelled"), NOTICE_TEXT["cancelled"]),
+        (answered("", "pending"), NOTICE_TEXT["pending"]),
+    ],
+)
+def test_an_answer_that_is_not_a_cited_completion_carries_its_notice(
+    open_app: OpenApp, fake: FakeChatApi, stored: Message, notice: str
+) -> None:
+    fake.details[A] = detail(A, asked("How?"), stored)
+
+    app = open_app(cid=CID, conv=A)
+
+    _, answer = app.chat_message
+    shown = [str(e.value) for e in (*answer.info, *answer.warning)]
+    assert shown == [notice]
+
+
+def test_a_refusal_shows_the_fixed_wording_and_no_notice(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.details[A] = detail(
+        A, asked("Who won?"), answered("BACKEND-REFUSAL", "refused", reason="below_threshold")
+    )
+
+    app = open_app(cid=CID, conv=A)
+
+    _, answer = app.chat_message
+    assert [m.value for m in answer.markdown] == [REFUSAL_TEXT["below_threshold"]]
+    assert not answer.info
+    assert not answer.warning
+    assert not answer.expander
+
+
+def test_sources_are_listed_under_their_answer_with_warnings_and_plain_snippets(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    hostile = "**Load** ![i](http://evil.invalid/i.png) <b>"
+    fake.details[A] = detail(
+        A,
+        asked(hostile),
+        answered(
+            "Press OK [S1] [S2].",
+            citations=("S1", "S2"),
+            sources=(
+                source("S1", snippet=hostile),
+                source("S2", title=hostile, section_path=(), has_warning=True, snippet="Hot."),
+            ),
+        ),
+    )
+
+    app = open_app(cid=CID, conv=A)
+
+    user, answer = app.chat_message
+    assert [t.value for t in user.text] == [hostile]
+    assert not user.markdown
+    (expander,) = answer.expander
+    assert expander.label == "Sources"
+    assert [c.value for c in expander.caption] == [
+        escape_markdown("[S1] HP ENVY 6000 User Guide \u203a Print \u203a Print documents, p. 38"),
+        escape_markdown(f"[S2] {hostile}, p. 38"),
+    ]
+    assert [t.value for t in expander.text] == [hostile, "Hot."]
+    badges = [m.value for m in expander.markdown if WARNING_BADGE in str(m.value)]
+    assert len(badges) == 1
+
+
+def test_a_thread_is_read_once_when_its_conversation_is_selected(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.pages[None] = page(conversation(A), conversation(B))
+    fake.details[A] = detail(A, asked("First?"), answered("One [S1].", citations=("S1",)))
+    fake.details[B] = detail(B, asked("Second?"), answered("Two [S1].", citations=("S1",)))
+    app = open_app(cid=CID, conv=A)
+    app.run()
+
+    click(app, f"open-{B}")
+    app.run()
+
+    assert [call for call in fake.calls if call[0] == "get"] == [("get", A), ("get", B)]
+    assert [t.value for t in app.chat_message[0].text] == ["Second?"]
+
+
+def test_a_thread_gone_clears_the_selection_with_the_not_found_notice(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.pages[None] = page(conversation(B))
+    fake.details[A] = ApiError("conversation_not_found", status=404)
+
+    app = open_app(cid=CID, conv=A)
+
+    assert "conv" not in app.query_params
+    assert sidebar_text(app) == ["This conversation doesn't exist or was deleted."]
+    assert not app.chat_message
+    assert [key for key, _ in conversation_buttons(app)] == [B]
+    app.run()
+    # Read after the thread, so the list read in the first run is already current.
+    assert fake.count("list") == 1
+
+
+def test_a_failed_thread_read_shows_its_wording_and_is_read_again_on_the_next_run(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.details[A] = ApiError("backend_unreachable", request_id="req-12345678")
+    app = open_app(cid=CID, conv=A)
+
+    assert main_errors(app) == ["The chat service can't be reached right now."]
+    assert [c.value for c in app.caption] == [escape_markdown("Request ID: req-12345678")]
+    assert not app.chat_message
+    assert app.query_params["conv"] == A
+
+    fake.details[A] = detail(A, asked("First?"), answered("One [S1].", citations=("S1",)))
+    app.run()
+
+    assert main_errors(app) == []
+    assert roles(app) == ["user", "assistant"]
+    assert fake.count("get") == 2
+
+
+def test_a_new_answer_is_drawn_after_the_thread_already_loaded(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.details[A] = detail(A, asked("First?"), answered("One [S1].", citations=("S1",)))
+    fake.streams = [((*tokens("Two [S1]."), source_event(), done("Two [S1].")), None)]
+    app = open_app(cid=CID, conv=A)
+
+    ask(app, "Second?")
+
+    assert roles(app) == ["user", "assistant", "user", "assistant"]
+    questions = [t.value for m in app.chat_message if m.name == "user" for t in m.text]
+    assert questions == ["First?", "Second?"]
+    assert fake.count("get") == 1

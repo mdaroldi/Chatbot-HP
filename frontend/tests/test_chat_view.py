@@ -33,6 +33,7 @@ from hpdocs_ui.chat_view import (
     error_view,
     message_view,
     page_label,
+    source_heading,
     source_view,
     thread_view,
 )
@@ -496,3 +497,29 @@ def test_a_conversation_label_is_its_title_escaped_for_a_button() -> None:
 @pytest.mark.parametrize("title", [None, "", " \n\t "])
 def test_a_conversation_without_a_title_has_a_fixed_label(title: str | None) -> None:
     assert conversation_label(_titled(title)) == UNTITLED == "Untitled conversation"
+
+
+def test_a_source_heading_names_tag_document_section_and_pages() -> None:
+    view = SourceView(
+        tag="S2",
+        document_title="OMEN 17 Service Guide",
+        section="Removal \u203a Battery",
+        pages="p. 54",
+        has_warning=False,
+        snippet="",
+    )
+
+    assert source_heading(view) == "[S2] OMEN 17 Service Guide \u203a Removal \u203a Battery, p. 54"
+
+
+def test_a_source_heading_without_a_section_keeps_document_and_pages() -> None:
+    view = SourceView(
+        tag="S1",
+        document_title="Guide",
+        section="",
+        pages="PDF page 3",
+        has_warning=True,
+        snippet="",
+    )
+
+    assert source_heading(view) == "[S1] Guide, PDF page 3"

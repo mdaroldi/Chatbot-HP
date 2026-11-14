@@ -15,11 +15,14 @@ state = session.start()
 sending = state.outbox is not None
 api = wiring.build_api(settings, state.client_id)
 
+# The thread first: a conversation found gone makes the list stale, fetched next.
+load_error = chat.load_thread(api)
 sidebar.load_list(api)
 backend = sidebar.check_status(settings)
 sidebar.render(api, backend, disabled=sending)
 
 st.title("HP Docs Chatbot")
+chat.render_thread(load_error)
 chat.render_send_error()
 chat.render_input(settings, sending=sending)
 chat.send(api)

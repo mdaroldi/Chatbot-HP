@@ -33,7 +33,7 @@ SAFE_HELPERS = frozenset({"sanitize_markdown", "escape_markdown", "conversation_
 # Tables of fixed wording, indexed by a code or state.
 WORDING_TABLES = frozenset({"NOTICE_TEXT", "ERROR_TEXT", "REFUSAL_TEXT"})
 # Module constants holding one fixed string each (hpdocs_ui.chat_view).
-FIXED_TEXT = frozenset({"PRIMING_TEXT"})
+FIXED_TEXT = frozenset({"PRIMING_TEXT", "WARNING_BADGE"})
 # The one function allowed to call markdown(): it renders answers, always sanitized.
 ANSWER_RENDERER = ("chat.py", "render_answer_text")
 # Reviewed exceptions: attributes that only ever hold fixed wording.
@@ -184,6 +184,7 @@ def test_the_rendering_check_flags_unsafe_text(snippet: str) -> None:
         "st.error(error.text)",
         "st.text(anything)",
         "slot.caption(PRIMING_TEXT)",
+        "st.badge(WARNING_BADGE, color='orange')",
     ],
 )
 def test_the_rendering_check_accepts_safe_text(snippet: str) -> None:

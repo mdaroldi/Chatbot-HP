@@ -10,6 +10,11 @@ from hpdocs_ui.api import (
     ConversationPage,
     Done,
     Flags,
+    Message,
+    Outcome,
+    Pages,
+    RefusalReason,
+    Source,
     StreamEvent,
     Token,
 )
@@ -37,7 +42,13 @@ def tokens(*texts: str) -> tuple[Token, ...]:
     return tuple(Token(text=text) for text in texts)
 
 
-def done(content: str, conversation_id: str = A, *, uncited: bool = False) -> Done:
+def done(
+    content: str,
+    conversation_id: str = A,
+    *,
+    uncited: bool = False,
+    reason: RefusalReason | None = None,
+) -> Done:
     flags = Flags(
         late_refusal_marker=False,
         uncited=uncited,
@@ -49,12 +60,72 @@ def done(content: str, conversation_id: str = A, *, uncited: bool = False) -> Do
         conversation_id=conversation_id,
         user_message_id="user-message",
         message_id="assistant-message",
-        outcome="completed",
+        outcome="completed" if reason is None else "refused",
+        refusal=reason is not None,
+        refusal_reason=reason,
+        content=content,
+        citations=() if uncited or reason else ("S1",),
+        flags=flags,
+    )
+
+
+def source(
+    tag: str = "S1",
+    *,
+    title: str = "HP ENVY 6000 User Guide",
+    section_path: tuple[str, ...] = ("Print", "Print documents"),
+    has_warning: bool = False,
+    snippet: str = "Load paper, then press OK.",
+) -> Source:
+    return Source(
+        tag=tag,
+        document_id="envy-6000",
+        document_title=title,
+        section_path=section_path,
+        pages=Pages(pdf_start=40, pdf_end=40, printed_start=38, printed_end=38),
+        has_warning=has_warning,
+        snippet=snippet,
+    )
+
+
+def asked(content: str) -> Message:
+    return Message(
+        id="user-message",
+        role="user",
+        content=content,
+        created_at=NOW,
+        outcome=None,
         refusal=False,
         refusal_reason=None,
+        citations=(),
+        sources=(),
+    )
+
+
+def answered(
+    content: str,
+    outcome: Outcome = "completed",
+    *,
+    reason: RefusalReason | None = None,
+    citations: tuple[str, ...] = (),
+    sources: tuple[Source, ...] = (),
+) -> Message:
+    return Message(
+        id="assistant-message",
+        role="assistant",
         content=content,
-        citations=() if uncited else ("S1",),
-        flags=flags,
+        created_at=NOW,
+        outcome=outcome,
+        refusal=outcome == "refused",
+        refusal_reason=reason,
+        citations=citations,
+        sources=sources,
+    )
+
+
+def detail(conversation_id: str, *messages: Message) -> ConversationDetail:
+    return ConversationDetail(
+        id=conversation_id, title="Title", created_at=NOW, updated_at=NOW, messages=messages
     )
 
 

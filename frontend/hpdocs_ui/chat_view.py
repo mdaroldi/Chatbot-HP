@@ -123,6 +123,12 @@ def source_view(source: Source) -> SourceView:
     )
 
 
+def source_heading(source: SourceView) -> str:
+    """One line naming where the excerpt comes from, as a reader would look it up."""
+    parts = [f"[{source.tag}] {source.document_title}", source.section]
+    return f"{SECTION_SEPARATOR.join(part for part in parts if part)}, {source.pages}"
+
+
 def message_view(message: Message) -> MessageView:
     if message.role == "user":
         return MessageView(role="user", text=message.content, state=None, sources=())

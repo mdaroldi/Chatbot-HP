@@ -12,13 +12,23 @@ from streamlit.delta_generator import DeltaGenerator
 
 from hpdocs_ui import state as ui
 from hpdocs_ui.api import ChatApi, StreamEvent, Token
-from hpdocs_ui.chat_view import PRIMING_TEXT
+from hpdocs_ui.chat_view import (
+    NOTICE_TEXT,
+    PRIMING_TEXT,
+    WARNING_BADGE,
+    ErrorView,
+    MessageView,
+    error_view,
+    source_heading,
+    thread_view,
+)
 from hpdocs_ui.errors import ApiError
 from hpdocs_ui.sanitize import escape_markdown, sanitize_markdown
 from hpdocs_ui.settings import FrontendSettings
 from hpdocs_ui.ui import session
 
 QUESTION_KEY = "question"
+_NOT_FOUND = "conversation_not_found"
 
 
 def render_answer_text(slot: DeltaGenerator, text: str) -> None:
@@ -28,10 +38,63 @@ def render_answer_text(slot: DeltaGenerator, text: str) -> None:
     slot.markdown(sanitize_markdown(text))
 
 
+def load_thread(api: ChatApi) -> ErrorView | None:
+    """The selected conversation's thread, read once; a failed read is shown and the
+    thread stays unloaded, so the next run reads it again.
+    """
+    state = session.get()
+    conversation_id = state.conversation_id
+    if conversation_id is None or not state.needs_thread:
+        return None
+    try:
+        detail = api.get_conversation(conversation_id)
+    except ApiError as error:
+        if error.code == _NOT_FOUND:
+            gone = ui.thread_missing(state)
+            session.put(gone)
+            session.sync_url(gone)  # this run's URL was written before the read
+            return None
+        return error_view(error)
+    session.put(ui.thread_loaded(state, conversation_id, thread_view(detail)))
+    return None
+
+
+def render_thread(load_error: ErrorView | None) -> None:
+    if load_error is not None:
+        _error(load_error)
+    for message in session.get().thread or ():
+        if message.role == "user":
+            with st.chat_message("user"):
+                st.text(message.text)
+        else:
+            with st.chat_message("assistant"):
+                _answer(message)
+
+
+def _answer(message: MessageView) -> None:
+    render_answer_text(st.empty(), message.text)
+    state = message.state
+    if state == "pending":
+        st.info(NOTICE_TEXT[state])
+    elif state is not None and state in NOTICE_TEXT:
+        st.warning(NOTICE_TEXT[state])
+    if not message.sources:
+        return
+    with st.expander("Sources"):
+        for source in message.sources:
+            st.caption(escape_markdown(source_heading(source)))
+            if source.has_warning:
+                st.badge(WARNING_BADGE, icon=":material/warning:", color="orange")
+            st.text(source.snippet)
+
+
 def render_send_error() -> None:
     error = session.get().send_error
-    if error is None:
-        return
+    if error is not None:
+        _error(error)
+
+
+def _error(error: ErrorView) -> None:
     st.error(error.text)
     if error.request_id is not None:
         st.caption(escape_markdown(f"Request ID: {error.request_id}"))
