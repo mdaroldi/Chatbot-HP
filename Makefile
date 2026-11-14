@@ -94,6 +94,7 @@ images: ## Build the backend and frontend images (no .env needed, unlike compose
 scan-images: ## Trivy image scan: fail on fixable HIGH/CRITICAL vulnerabilities
 	for image in $(IMAGES); do \
 		$(TRIVY) image --quiet --skip-version-check --severity HIGH,CRITICAL \
+			--secret-config /src/trivy-secret.yaml \
 			--ignore-unfixed --exit-code 1 $$image || exit 1; \
 	done
 

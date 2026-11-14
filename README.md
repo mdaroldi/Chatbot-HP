@@ -454,8 +454,10 @@ integration job as a required check in the branch protection settings.
   validation errors omit the submitted input.
 - **Containers** run as non-root numeric users, with all capabilities dropped,
   `no-new-privileges` and a read-only root filesystem. Base images are pinned by
-  digest and scanned with Trivy; dependencies are locked and audited with
-  pip-audit; Dependabot proposes updates weekly.
+  digest and scanned with Trivy (vulnerabilities and secrets); dependencies are locked
+  and audited with pip-audit; Dependabot proposes updates weekly. The secret scan has
+  one exception ([trivy-secret.yaml](trivy-secret.yaml)): the GCP service-account rule
+  skips the Anthropic SDK's package, whose docstrings contain the literal it matches.
 - **Corpus**: the HP PDFs are copyrighted by HP and are not in this repository.
   Ingestion downloads them from their public URLs, accepts only those two, and verifies
   pinned checksums. Your copies stay in the local `corpus-cache` volume (and, for
