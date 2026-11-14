@@ -14,6 +14,7 @@ from app.domain.prompt import (
     answer_messages,
     answer_turn,
     estimate_tokens,
+    render_excerpt,
     select_history,
 )
 from app.domain.retrieval import RetrievedChunk, SearchHit
@@ -118,6 +119,18 @@ def test_each_excerpt_gets_one_tag_in_rank_order() -> None:
         ("S3", "three"),
     ]
     assert turn.text.count('tag="') == 3
+
+
+def test_the_turn_is_built_from_the_public_excerpt_renderer() -> None:
+    """The answer benchmark rebuilds excerpts from stored chunk ids with this renderer,
+    so what it scores is byte for byte what the model was given.
+    """
+    first, second = chunk(1, "one", has_warning=True), chunk(2, "two & <b>")
+    turn = answer_turn("How?", [first, second], TITLES)
+
+    rendered = render_excerpt("S1", first.hit, TITLES) + render_excerpt("S2", second.hit, TITLES)
+
+    assert turn.text.startswith(f"<excerpts>\n{rendered}</excerpts>")
 
 
 def test_tags_follow_the_order_given_not_the_stored_rank() -> None:

@@ -17,7 +17,7 @@ from app.domain.chat import REFUSAL_MARKER, Message, Role
 from app.domain.citations import strip_citations
 from app.domain.ingestion import PageRange
 from app.domain.llm import PromptMessage
-from app.domain.retrieval import RetrievedChunk
+from app.domain.retrieval import RetrievedChunk, SearchHit
 
 # No tokenizer on the request path: budgets are estimates, stored usage is real.
 CHARS_PER_TOKEN = 3
@@ -79,8 +79,10 @@ def _pages(pages: PageRange) -> str:
     return str(start) if start == end else f"{start}-{end}"
 
 
-def _excerpt(tag: str, chunk: RetrievedChunk, titles: Mapping[str, str]) -> str:
-    hit = chunk.hit
+def render_excerpt(tag: str, hit: SearchHit, titles: Mapping[str, str]) -> str:
+    """One `<excerpt>` element; public so the answer benchmark can rebuild, from stored
+    chunk ids, exactly the excerpts the model was given.
+    """
     title = titles.get(hit.doc_id)
     if title is None:
         raise ValueError(f"no title for document {hit.doc_id}")
@@ -99,7 +101,7 @@ def answer_turn(
     """The latest user turn: the excerpts tagged S1, S2, ... in the order given (the
     retrieval rank), then the question.
     """
-    body = "".join(_excerpt(f"S{n}", chunk, titles) for n, chunk in enumerate(chunks, 1))
+    body = "".join(render_excerpt(f"S{n}", chunk.hit, titles) for n, chunk in enumerate(chunks, 1))
     return PromptMessage(Role.USER, f"<excerpts>\n{body}</excerpts>\n\n{_question(question)}")
 
 
