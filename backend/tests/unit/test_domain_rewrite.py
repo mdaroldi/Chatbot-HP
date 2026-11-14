@@ -210,3 +210,38 @@ def test_a_line_that_merely_contains_a_colon_is_not_a_preamble() -> None:
     check = check_rewrite("error code: E3 on the printer\nwhat does it mean")
 
     assert check.rejection is RewriteRejection.MULTILINE
+
+
+# --- Regression: the real rewrite model padded the query (smoke test, 2026-11-14) -----
+
+# Synthetic text with the observed shape: one clean line that resolves an unnamed
+# product by naming both manuals and adds a second question, 32 words in all.
+PADDED = (
+    "How often should the fan be cleaned on the Demo Alpha 6000 All-in-One or Demo Beta "
+    "17.3 inch Gaming Laptop, and what maintenance interval do the manuals recommend for "
+    "fan dust removal?"
+)
+
+
+def test_a_padded_one_line_query_is_still_rejected_by_the_word_cap() -> None:
+    check = check_rewrite(PADDED)
+
+    assert "\n" not in PADDED
+    assert len(PADDED) <= REWRITE_MAX_CHARS  # under the character cap: words decide
+    assert (check.rejection, check.words) == (RewriteRejection.TOO_MANY_WORDS, 32)
+
+
+def test_the_rules_forbid_adding_what_the_conversation_does_not_say() -> None:
+    rules = rewrite_system_prompt([])
+
+    assert "Add only what the conversation says the message refers to" in rules
+    assert "If the conversation does not say which product, leave the product out" in rules
+    assert "Ask one thing" in rules
+
+
+def test_the_rules_ask_for_the_bare_query_in_the_message_language() -> None:
+    rules = rewrite_system_prompt([])
+
+    assert "in the language of the message" in rules
+    assert "no quotes, labels or preamble" in rules
+    assert "never an answer" in rules
