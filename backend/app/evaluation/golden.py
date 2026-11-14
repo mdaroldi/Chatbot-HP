@@ -69,7 +69,8 @@ def _table(raw: object, where: str) -> Mapping[str, object]:
     return raw
 
 
-def _anchor(raw: object, where: str, doc_ids: Set[str]) -> Anchor:
+def parse_anchor(raw: object, where: str, doc_ids: Set[str]) -> Anchor:
+    """One anchor table; public so the answer datasets validate anchors by the same rules."""
     table = _table(raw, where)
     _check_keys(table, _ANCHOR_KEYS, where)
     for key in ("doc_id", "facts"):
@@ -161,7 +162,7 @@ def _anchors(
         return ()
     if not raw:
         raise _fail(GoldenRule.MISSING_ANCHORS, f"{where}: an in-scope question needs anchors")
-    return tuple(_anchor(item, f"{where} anchors[{n}]", doc_ids) for n, item in enumerate(raw))
+    return tuple(parse_anchor(item, f"{where} anchors[{n}]", doc_ids) for n, item in enumerate(raw))
 
 
 def _question(raw: object, position: int, doc_ids: Set[str]) -> GoldenQuestion:
