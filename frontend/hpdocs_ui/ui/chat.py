@@ -25,7 +25,8 @@ from hpdocs_ui.chat_view import (
 from hpdocs_ui.errors import ApiError
 from hpdocs_ui.sanitize import escape_markdown, sanitize_markdown
 from hpdocs_ui.settings import FrontendSettings
-from hpdocs_ui.ui import session
+from hpdocs_ui.ui import notices, session
+from hpdocs_ui.view import Provider
 
 QUESTION_KEY = "question"
 _NOT_FOUND = "conversation_not_found"
@@ -59,10 +60,16 @@ def load_thread(api: ChatApi) -> ErrorView | None:
     return None
 
 
-def render_thread(load_error: ErrorView | None) -> None:
+def render_thread(load_error: ErrorView | None, *, provider: Provider, sending: bool) -> None:
+    """The thread, or the empty state when it is known to be empty (not when it could
+    not be read).
+    """
     if load_error is not None:
         _error(load_error)
+        return
     thread = session.get().thread or ()
+    if not thread:
+        notices.empty_state(provider, disabled=sending)
     # Only the latest answer opens its sources, so its citations show without a click.
     latest = max((i for i, m in enumerate(thread) if m.role == "assistant"), default=None)
     for index, message in enumerate(thread):
@@ -71,14 +78,16 @@ def render_thread(load_error: ErrorView | None) -> None:
                 st.text(message.text)
         else:
             with st.chat_message("assistant"):
-                _answer(message, latest=index == latest)
+                _answer(message, index=index, latest=index == latest, sending=sending)
 
 
-def _answer(message: MessageView, *, latest: bool) -> None:
+def _answer(message: MessageView, *, index: int, latest: bool, sending: bool) -> None:
     render_answer_text(st.empty(), message.text)
     state = message.state
     if state == "pending":
+        # The input stays enabled: a crash leftover stays pending until the next turn.
         st.info(NOTICE_TEXT[state])
+        _refresh_button(f"refresh-answer-{index}", disabled=sending)
     elif state is not None and state in NOTICE_TEXT:
         st.warning(NOTICE_TEXT[state])
     if not message.sources:
@@ -104,6 +113,20 @@ def _error(error: ErrorView) -> None:
     if error.question is not None:
         # A code block shows the text as typed, with a copy button.
         st.code(error.question, language=None, wrap_lines=True)
+    if error.refresh:
+        # Shown only after a send failed, so never while another answer streams.
+        _refresh_button("refresh-busy", disabled=False)
+
+
+def _refresh_button(key: str, *, disabled: bool) -> None:
+    st.button(
+        "Refresh",
+        key=key,
+        icon=":material/refresh:",
+        disabled=disabled,
+        on_click=session.apply,
+        args=(ui.refresh_thread,),
+    )
 
 
 def render_input(settings: FrontendSettings, *, sending: bool) -> None:

@@ -1,5 +1,7 @@
 """Behavior of describe(): what the status page says for each backend state."""
 
+import pytest
+
 from hpdocs_ui.status import BackendStatus
 from hpdocs_ui.view import StatusView, describe
 
@@ -83,3 +85,41 @@ def test_ready_response_without_checks_object_shows_no_dependency_lines() -> Non
     view = describe(ok({"status": "ok"}), BackendStatus(True, 200, None, None))
 
     assert view == StatusView(level="success", headline="Backend is up and ready.", lines=())
+
+
+# --- the language model provider, for the privacy notice -------------------------
+
+
+@pytest.mark.parametrize("llm", ["anthropic", "stub"])
+def test_the_provider_comes_from_readiness_even_when_not_ready(llm: str) -> None:
+    ready = describe(ok({"status": "ok"}), ok({**READY_BODY, "llm": llm}))
+    not_ready = describe(ok({"status": "ok"}), ok({"status": "not_ready", "llm": llm}, 503))
+
+    assert (ready.provider, not_ready.provider) == (llm, llm)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        READY_BODY,
+        {**READY_BODY, "llm": "openai"},
+        {**READY_BODY, "llm": "Anthropic"},
+        {**READY_BODY, "llm": ["anthropic"]},
+        {**READY_BODY, "llm": None},
+    ],
+)
+def test_a_missing_or_unknown_provider_is_unknown(body: dict[str, object]) -> None:
+    assert describe(ok({"status": "ok"}), ok(body)).provider == "unknown"
+
+
+def test_the_provider_is_read_even_when_health_fails() -> None:
+    body = {**READY_BODY, "llm": "anthropic"}
+
+    assert describe(DOWN, ok(body)).provider == "anthropic"
+    assert describe(ok({}, 500), ok(body)).provider == "anthropic"
+
+
+def test_the_provider_is_unknown_when_readiness_is_unreachable() -> None:
+    assert describe(ok({"status": "ok"}), DOWN).provider == "unknown"
+    unreadable = BackendStatus(reachable=True, http_status=503, body=None, request_id=None)
+    assert describe(ok({"status": "ok"}), unreadable).provider == "unknown"

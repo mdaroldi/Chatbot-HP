@@ -29,6 +29,7 @@ from hpdocs_ui.api import (
 )
 from hpdocs_ui.errors import STREAM_TIMEOUT, ApiError, error_text, shown_request_id
 from hpdocs_ui.sanitize import escape_markdown
+from hpdocs_ui.view import Provider
 
 AnswerState = Literal["answered", "uncited", "refused", "pending", "failed", "cancelled"]
 
@@ -59,12 +60,36 @@ NOTICE_TEXT: Mapping[AnswerState, str] = {
 }
 
 WARNING_BADGE = "WARNING/CAUTION"
+
+# Where questions go (ADR 0010: recent history is sent too), by the provider /ready names.
+PRIVACY_TEXT: Mapping[Provider, str] = {
+    "anthropic": (
+        "Your questions, recent messages and the manual excerpts found for them are sent "
+        "to the Anthropic API to write the answers."
+    ),
+    "stub": "Answers come from the built-in test model; nothing is sent to Anthropic.",
+    "unknown": (
+        "When the cloud model is on, your questions, recent messages and the manual "
+        "excerpts found for them are sent to the Anthropic API to write the answers."
+    ),
+}
+# The client ID in the URL is the only key to the conversations.
+LINK_TEXT = "This page's link opens your conversations. Don't share it."
+EXAMPLES_INTRO = "Ask about the HP ENVY 6000 printer or the OMEN 17 laptop, or try one of these:"
+# Three answerable from the manuals and one that is not, to show the refusal.
+EXAMPLE_QUESTIONS: tuple[str, ...] = (
+    "How do I remove the bottom cover of the OMEN 17?",
+    "What does error E4 mean on the HP ENVY 6000?",
+    "What is the spare part number for the OMEN 17 bottom cover?",
+    "Who won the 2022 World Cup?",
+)
 # Typographic separators, written as escapes so the source stays ASCII.
 PAGE_RANGE_DASH = "\u2013"  # en dash
 SECTION_SEPARATOR = " \u203a "  # single right-pointing angle quotation mark
 
 # A provider refusal after text was shown; the backend stores it as provider_refused.
 _ANSWER_WITHDRAWN = "answer_withdrawn"
+_BUSY = "conversation_busy"
 _STREAM_OK = 200
 
 
@@ -99,6 +124,8 @@ class ErrorView:
     text: str
     request_id: str | None
     question: str | None
+    # A busy conversation: reading the thread again shows the answer once it is done.
+    refresh: bool = False
 
 
 def page_label(pages: Pages) -> str:
@@ -165,7 +192,10 @@ def answer_from_stream(events: Sequence[StreamEvent], error: ApiError | None) ->
 
 def error_view(error: ApiError, *, question: str | None = None) -> ErrorView:
     return ErrorView(
-        text=error_text(error), request_id=shown_request_id(error.request_id), question=question
+        text=error_text(error),
+        request_id=shown_request_id(error.request_id),
+        question=question,
+        refresh=error.code == _BUSY,
     )
 
 

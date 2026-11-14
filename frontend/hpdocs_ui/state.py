@@ -151,7 +151,8 @@ def thread_missing(state: UiState) -> UiState:
 
 
 def refresh_thread(state: UiState) -> UiState:
-    return replace(state, thread_for=None)
+    """Read the thread again; a busy error it answers is cleared with it."""
+    return replace(state, thread_for=None, send_error=None)
 
 
 def notice_shown(state: UiState) -> UiState:

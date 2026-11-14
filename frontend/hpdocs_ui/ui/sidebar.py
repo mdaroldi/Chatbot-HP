@@ -14,7 +14,7 @@ from hpdocs_ui.chat_view import conversation_label
 from hpdocs_ui.errors import ApiError
 from hpdocs_ui.settings import FrontendSettings
 from hpdocs_ui.state import NOTICE_TEXT, UiState
-from hpdocs_ui.ui import session
+from hpdocs_ui.ui import notices, session
 from hpdocs_ui.view import StatusView, describe
 
 _NOT_FOUND = "conversation_not_found"
@@ -50,6 +50,7 @@ def render(api: ChatApi, backend: StatusView, *, disabled: bool) -> None:
     """Every button is disabled while an answer streams: a click would stop it."""
     state = session.get()
     with st.sidebar:
+        notices.privacy_and_link(backend.provider)
         _notice(state)
         st.button(
             "New conversation",

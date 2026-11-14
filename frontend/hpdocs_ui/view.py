@@ -1,12 +1,14 @@
 """Pure mapping from backend status results to what the page displays."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http import HTTPStatus
 from typing import Literal
 
 from hpdocs_ui.status import BackendStatus
 
 Level = Literal["success", "warning", "error"]
+# Where the answers are written, as /ready names it; anything else is unknown.
+Provider = Literal["anthropic", "stub", "unknown"]
 
 
 @dataclass(frozen=True)
@@ -14,10 +16,19 @@ class StatusView:
     level: Level
     headline: str
     lines: tuple[str, ...]
+    provider: Provider = "unknown"
 
 
 def describe(health: BackendStatus, ready: BackendStatus) -> StatusView:
-    """Fixed headlines only; backend data appears only as validated short fields."""
+    """Fixed headlines only; backend data appears only as validated short fields.
+
+    The provider is read from /ready whatever the health check said: the privacy
+    notice must not claim more than the backend reported.
+    """
+    return replace(_levels(health, ready), provider=_provider(ready.body))
+
+
+def _levels(health: BackendStatus, ready: BackendStatus) -> StatusView:
     if not health.reachable:
         return StatusView("error", "Backend is unreachable.", ())
     if health.http_status != HTTPStatus.OK:
@@ -46,3 +57,12 @@ def _dependency_lines(body: dict[str, object] | None) -> tuple[str, ...]:
 
 def _request_id_line(request_id: str | None) -> tuple[str, ...]:
     return (f"Request ID: {request_id}",) if request_id else ()
+
+
+def _provider(body: dict[str, object] | None) -> Provider:
+    llm = body.get("llm") if body else None
+    if llm == "anthropic":
+        return "anthropic"
+    if llm == "stub":
+        return "stub"
+    return "unknown"

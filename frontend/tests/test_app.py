@@ -40,6 +40,7 @@ from tests.fakes import (
     page,
     source,
     tokens,
+    up,
 )
 from tests.test_sanitize import assert_safe
 
@@ -180,6 +181,14 @@ def ask(app: AppTest, question: str) -> AppTest:
 
 def main_errors(app: AppTest) -> list[str]:
     return [str(e.value) for e in app.main.error]
+
+
+def main_captions(app: AppTest) -> list[str]:
+    return [str(c.value) for c in app.main.caption]
+
+
+def request_ids(app: AppTest) -> list[str]:
+    return [c for c in main_captions(app) if c.startswith("Request ID")]
 
 
 def drawn(node: Node) -> list[tuple[str, str]]:
@@ -582,7 +591,8 @@ def test_every_widget_is_disabled_while_the_answer_streams_and_enabled_after(
         if "disabled" in getattr(proto, "DESCRIPTOR").fields_by_name  # noqa: B009 - untyped proto
     ]
     kinds = [kind for kind, _ in widgets]
-    assert kinds.count("button") == 7  # new, open, delete, confirm, cancel, more, refresh
+    # new, open, delete, confirm, cancel, more, refresh status, and the four examples
+    assert kinds.count("button") == 11
     assert kinds.count("chat_input") == 1
     assert all(disabled for _, disabled in widgets)
     assert not app.chat_input(key="question").disabled
@@ -677,7 +687,7 @@ def test_a_failed_create_sends_nothing_and_keeps_the_question_to_copy(
     assert fake.count("stream") == 0
     assert main_errors(app) == [wording]
     assert [c.value for c in app.code] == ["How do I print?"]
-    assert [c.value for c in app.caption] == [escape_markdown("Request ID: req-12345678")]
+    assert request_ids(app) == [escape_markdown("Request ID: req-12345678")]
     assert not app.chat_message
     assert "conv" not in app.query_params
 
@@ -695,7 +705,7 @@ def test_a_send_refused_before_the_first_token_keeps_the_question_out_of_the_thr
         "The language model is unavailable right now. Try again in a moment."
     ]
     assert [c.value for c in app.code] == ["How do I print?"]
-    assert not app.caption  # no request ID to show
+    assert request_ids(app) == []  # no request ID to show
     assert not app.chat_message
     assert app.query_params["conv"] == A  # the conversation exists; the question can be resent
 
@@ -928,7 +938,7 @@ def test_a_failed_thread_read_shows_its_wording_and_is_read_again_on_the_next_ru
     app = open_app(cid=CID, conv=A)
 
     assert main_errors(app) == ["The chat service can't be reached right now."]
-    assert [c.value for c in app.caption] == [escape_markdown("Request ID: req-12345678")]
+    assert main_captions(app) == [escape_markdown("Request ID: req-12345678")]
     assert not app.chat_message
     assert app.query_params["conv"] == A
 
@@ -990,3 +1000,284 @@ def test_earlier_sources_stay_closed_when_the_latest_answer_has_none(
     app = open_app(cid=CID, conv=A)
 
     assert sources_open(app) == [False]
+
+
+# --- notices, the empty state and the error states (commit 9a) -------------------
+
+EXAMPLES = [
+    "How do I remove the bottom cover of the OMEN 17?",
+    "What does error E4 mean on the HP ENVY 6000?",
+    "What is the spare part number for the OMEN 17 bottom cover?",
+    "Who won the 2022 World Cup?",
+]
+ANTHROPIC_PRIVACY = (
+    "Your questions, recent messages and the manual excerpts found for them are sent "
+    "to the Anthropic API to write the answers."
+)
+STUB_PRIVACY = "Answers come from the built-in test model; nothing is sent to Anthropic."
+UNKNOWN_PRIVACY = (
+    "When the cloud model is on, your questions, recent messages and the manual excerpts "
+    "found for them are sent to the Anthropic API to write the answers."
+)
+LINK_NOTICE = "This page's link opens your conversations. Don't share it."
+PRIVACY = {"anthropic": ANTHROPIC_PRIVACY, "stub": STUB_PRIVACY, None: UNKNOWN_PRIVACY}
+
+
+def example_buttons(app: AppTest) -> list[str]:
+    return [str(b.label) for b in app.main.button if b.key and b.key.startswith("example-")]
+
+
+@pytest.mark.parametrize("llm", ["anthropic", "stub", None, "something-else"])
+def test_the_sidebar_says_where_questions_go_and_that_the_link_is_private(
+    open_app: OpenApp, fetch: FakeFetch, llm: str | None
+) -> None:
+    fetch.results = up(llm)
+
+    app = open_app(cid=CID)
+
+    expected = PRIVACY.get(llm, UNKNOWN_PRIVACY)
+    assert [str(c.value) for c in app.sidebar.caption][:2] == [expected, LINK_NOTICE]
+
+
+def test_the_privacy_notice_follows_the_provider_after_a_status_refresh(
+    open_app: OpenApp, fetch: FakeFetch
+) -> None:
+    fetch.results = DOWN
+    app = open_app(cid=CID)
+    assert str(app.sidebar.caption[0].value) == UNKNOWN_PRIVACY
+
+    fetch.results = up("stub")
+    click(app, "refresh-status")
+
+    assert str(app.sidebar.caption[0].value) == STUB_PRIVACY
+
+
+@pytest.mark.parametrize("llm", ["anthropic", "stub", None])
+def test_the_empty_state_offers_the_four_examples_and_repeats_the_privacy_line(
+    open_app: OpenApp, fetch: FakeFetch, llm: str | None
+) -> None:
+    fetch.results = up(llm)
+
+    app = open_app(cid=CID)
+
+    assert example_buttons(app) == EXAMPLES
+    assert PRIVACY[llm] in main_captions(app)
+    assert not app.chat_message
+
+
+@pytest.mark.parametrize("index", range(len(EXAMPLES)))
+def test_an_example_is_sent_like_a_typed_question_and_the_empty_state_goes(
+    open_app: OpenApp, fake: FakeChatApi, index: int
+) -> None:
+    fake.created = [conversation(A, None)]
+    fake.streams = [((*tokens("Remove the screws."), done("Remove the screws.")), None)]
+    app = open_app(cid=CID)
+
+    click(app, f"example-{index}")
+    app.run()
+
+    assert fake.questions == [EXAMPLES[index]]
+    assert (fake.count("create"), fake.count("stream")) == (1, 1)
+    assert [t.value for t in app.chat_message[0].text] == [EXAMPLES[index]]
+    assert example_buttons(app) == []
+    assert app.query_params["conv"] == A
+
+
+def test_an_empty_conversation_shows_the_examples_but_a_failed_read_does_not(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.details[A] = detail(A)
+    fake.details[B] = ApiError("backend_unreachable")
+
+    assert example_buttons(open_app(cid=CID, conv=A)) == EXAMPLES
+    assert example_buttons(open_app(cid=CID, conv=B)) == []
+
+
+def test_the_examples_are_disabled_while_an_answer_streams(
+    open_app: OpenApp, fake: FakeChatApi, sent: Sent
+) -> None:
+    fake.created = [conversation(A, None)]
+    fake.streams = [((*tokens("Hi."), done("Hi.")), None)]
+    app = open_app(cid=CID)
+    sent.log.clear()
+    sent.watch(fake)
+
+    click(app, "example-3")
+
+    sending = sent.log[: sent.log.index("stream closed")]
+    labels = {
+        str(getattr(proto, "label")): bool(getattr(proto, "disabled"))  # noqa: B009 - untyped proto
+        for _, kind, proto in elements(sending)
+        if kind == "button"
+    }
+    assert {label: labels[label] for label in EXAMPLES} == dict.fromkeys(EXAMPLES, True)
+
+
+def test_error_state_backend_down_offers_retry_which_checks_again(
+    open_app: OpenApp, fake: FakeChatApi, fetch: FakeFetch
+) -> None:
+    fetch.results = DOWN
+    fake.pages[None] = ApiError("backend_unreachable")
+    app = open_app(cid=CID)
+
+    assert "The chat service can't be reached right now." in main_errors(app)
+    assert app.button(key="retry-backend").label == "Retry"
+
+    fetch.results = UP
+    fake.pages[None] = page(conversation(A))
+    click(app, "retry-backend")
+
+    assert main_errors(app) == []
+    assert not [b for b in app.button if b.key == "retry-backend"]
+    assert [key for key, _ in conversation_buttons(app)] == [A]
+    assert len(fetch.calls) == 4
+
+
+def test_error_state_a_backend_that_is_up_offers_no_retry(
+    open_app: OpenApp, fetch: FakeFetch
+) -> None:
+    fetch.results = NOT_READY
+
+    app = open_app(cid=CID)
+
+    assert main_errors(app) == []
+    assert not [b for b in app.button if b.key == "retry-backend"]
+
+
+@pytest.mark.parametrize(
+    ("error", "wording"),
+    [
+        (
+            ApiError("rate_limited", status=429, retry_after_seconds=7),
+            "You're sending requests too quickly. Try again in 7 seconds.",
+        ),
+        (
+            ApiError("rate_limited", status=429),
+            "You're sending requests too quickly. Try again in a moment.",
+        ),
+        (
+            ApiError("llm_unavailable", status=503),
+            "The language model is unavailable right now. Try again in a moment.",
+        ),
+        (
+            ApiError("llm_timeout", status=503),
+            "The language model took too long to answer. Try again.",
+        ),
+        (ApiError("llm_error", status=502), "The language model couldn't answer this question."),
+        (
+            ApiError("models_not_ready", status=503),
+            "The search models are still loading. Try again in a minute.",
+        ),
+        (
+            ApiError("retrieval_unavailable", status=503),
+            "Searching the manuals is unavailable right now.",
+        ),
+        (
+            ApiError("validation_error", status=422),
+            "This message can't be sent: it is empty or too long.",
+        ),
+        (ApiError("unknown_document", status=500), "Something went wrong. Try again."),
+        (ApiError("internal_error", status=500), "Something went wrong. Try again."),
+        (ApiError("stream_timeout"), "The answer took too long and was stopped."),
+    ],
+)
+def test_error_state_before_the_first_token_shows_fixed_wording_and_the_question(
+    open_app: OpenApp, fake: FakeChatApi, error: ApiError, wording: str
+) -> None:
+    fake.details[A] = detail(A, asked("First?"), answered("One [S1].", citations=("S1",)))
+    fake.streams = [((), error)]
+    app = open_app(cid=CID, conv=A)
+
+    ask(app, "How do I print?")
+
+    assert main_errors(app) == [wording]
+    assert [c.value for c in app.code] == ["How do I print?"]
+    assert roles(app) == ["user", "assistant"]
+    assert not [b for b in app.button if b.key == "refresh-busy"]
+
+
+@pytest.mark.parametrize(
+    ("code", "wording"),
+    [
+        ("llm_unavailable", "The language model is unavailable right now. Try again in a moment."),
+        ("llm_timeout", "The language model took too long to answer. Try again."),
+        ("internal_error", "Something went wrong. Try again."),
+    ],
+)
+def test_error_state_mid_stream_keeps_the_partial_answer_marked_interrupted(
+    open_app: OpenApp, fake: FakeChatApi, code: str, wording: str
+) -> None:
+    fake.created = [conversation(A, None)]
+    fake.streams = [(tokens("Press the"), ApiError(code, status=200))]
+    app = open_app(cid=CID)
+
+    ask(app, "How do I print?")
+
+    _, answer = app.chat_message
+    assert [m.value for m in answer.markdown] == ["Press the"]
+    assert [str(w.value) for w in answer.warning] == [NOTICE_TEXT["failed"]]
+    assert main_errors(app) == [wording]
+
+
+def test_error_state_busy_offers_refresh_which_rereads_the_thread(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.details[A] = detail(A, asked("First?"), answered("", "pending"))
+    fake.streams = [((), ApiError("conversation_busy", status=409, request_id="req-12345678"))]
+    app = open_app(cid=CID, conv=A)
+
+    ask(app, "Second?")
+
+    assert main_errors(app) == [
+        "An answer for this conversation is still being written. "
+        "Wait for it to finish, then refresh."
+    ]
+    assert escape_markdown("Request ID: req-12345678") in main_captions(app)
+    assert fake.count("stream") == 1
+
+    fake.details[A] = detail(A, asked("First?"), answered("One [S1].", citations=("S1",)))
+    click(app, "refresh-busy")
+
+    assert main_errors(app) == []
+    assert fake.count("get") == 2
+    assert fake.count("stream") == 1
+    _, answer = app.chat_message
+    assert [m.value for m in answer.markdown] == ["One [S1]."]
+
+
+def test_a_pending_answer_offers_refresh_which_rereads_the_thread(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.details[A] = detail(A, asked("First?"), answered("", "pending"))
+    app = open_app(cid=CID, conv=A)
+    _, answer = app.chat_message
+    assert [str(i.value) for i in answer.info] == [NOTICE_TEXT["pending"]]
+    assert not app.chat_input(key="question").disabled
+
+    fake.details[A] = detail(A, asked("First?"), answered("One [S1].", citations=("S1",)))
+    click(app, "refresh-answer-1")
+
+    assert fake.count("get") == 2
+    _, answer = app.chat_message
+    assert not answer.info
+    assert not [b for b in app.button if (b.key or "").startswith("refresh-answer")]
+
+
+def test_a_pending_answer_refresh_is_disabled_while_an_answer_streams(
+    open_app: OpenApp, fake: FakeChatApi, sent: Sent
+) -> None:
+    fake.details[A] = detail(A, asked("First?"), answered("", "pending"))
+    fake.streams = [((*tokens("Hi."), done("Hi.")), None)]
+    app = open_app(cid=CID, conv=A)
+    sent.log.clear()
+    sent.watch(fake)
+
+    ask(app, "Second?")
+
+    sending = sent.log[: sent.log.index("stream closed")]
+    refresh = [
+        bool(getattr(proto, "disabled"))  # noqa: B009 - untyped proto
+        for _, kind, proto in elements(sending)
+        if kind == "button" and str(getattr(proto, "label")) == "Refresh"  # noqa: B009
+    ]
+    assert refresh == [True]

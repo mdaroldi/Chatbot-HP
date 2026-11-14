@@ -241,3 +241,10 @@ NOT_READY = {
 }
 DOWN_STATUS = BackendStatus(reachable=False, http_status=None, body=None, request_id=None)
 DOWN = {"/health": DOWN_STATUS, "/ready": DOWN_STATUS}
+
+
+def up(llm: object) -> dict[str, BackendStatus]:
+    """The backend up and ready, its /ready naming the language model provider."""
+    ready = UP["/ready"]
+    body = {**(ready.body or {}), "llm": llm}
+    return {"/health": UP["/health"], "/ready": BackendStatus(True, 200, body, ready.request_id)}

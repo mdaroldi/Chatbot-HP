@@ -434,3 +434,13 @@ def test_the_backend_status_is_kept_until_a_refresh_asks_for_it_again() -> None:
     assert checked.backend == view
     assert refresh_status(checked).backend is None
     assert refresh_status(checked).thread == (ANSWER,)
+
+
+def test_refresh_thread_clears_the_last_error_it_answers() -> None:
+    busy = not_sent(selected(), "Q?", ApiError("conversation_busy", status=409))
+    assert busy.send_error is not None
+
+    state = refresh_thread(busy)
+
+    assert state.send_error is None
+    assert state.needs_thread

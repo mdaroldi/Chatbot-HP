@@ -4,7 +4,7 @@ import streamlit as st
 
 from hpdocs_ui import wiring
 from hpdocs_ui.settings import FrontendSettings
-from hpdocs_ui.ui import chat, session, sidebar
+from hpdocs_ui.ui import chat, notices, session, sidebar
 
 st.set_page_config(page_title="HP Docs Chatbot", initial_sidebar_state="expanded")
 wiring.quiet_http_logs()
@@ -22,7 +22,8 @@ backend = sidebar.check_status(settings)
 sidebar.render(api, backend, disabled=sending)
 
 st.title("HP Docs Chatbot")
-chat.render_thread(load_error)
+notices.backend_down(backend, disabled=sending)
+chat.render_thread(load_error, provider=backend.provider, sending=sending)
 chat.render_send_error()
 chat.render_input(settings, sending=sending)
 chat.send(api)

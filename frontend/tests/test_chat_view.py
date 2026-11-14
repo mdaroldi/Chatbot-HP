@@ -480,6 +480,12 @@ def test_an_error_view_keeps_the_question_so_it_can_be_resent() -> None:
     )
 
 
+def test_only_a_busy_conversation_offers_to_refresh_its_thread() -> None:
+    assert error_view(ApiError("conversation_busy", status=409)).refresh
+    for code in ("llm_timeout", "rate_limited", "conversation_not_found", "internal_error"):
+        assert not error_view(ApiError(code, status=503)).refresh, code
+
+
 # --- conversation labels ---------------------------------------------------------
 
 
