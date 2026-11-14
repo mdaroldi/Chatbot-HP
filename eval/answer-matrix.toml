@@ -98,6 +98,12 @@ name = "naive"
 items = "answers-dev"
 env = { QDRANT_COLLECTION_ALIAS = "hpdocs_chunks_naive" }
 
+# Owner: right after the naive row; about $0.17, it tests the rewrite trap (descriptive).
+[[runs]]
+name = "rewrite-off"
+items = "multi-turn-dev"
+env = { CHAT_REWRITE_HISTORY_TURNS = "0" }
+
 [[runs]]
 name = "k3"
 items = "answers-dev"
@@ -112,8 +118,3 @@ env = { RETRIEVAL_MODE = "sparse", RETRIEVAL_RERANK_ENABLED = "false" }
 name = "k8"
 items = "answers-dev"
 env = { RETRIEVAL_TOP_K = "8" }
-
-[[runs]]
-name = "rewrite-off"
-items = "multi-turn-dev"
-env = { CHAT_REWRITE_HISTORY_TURNS = "0" }

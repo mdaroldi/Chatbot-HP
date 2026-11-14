@@ -184,10 +184,10 @@ def test_the_repository_matrix_holds_the_owner_budget_and_run_order() -> None:
         "hybrid-no-rerank",
         "dense",
         "naive",
+        "rewrite-off",
         "k3",
         "sparse",
         "k8",
-        "rewrite-off",
     ]
     assert {run.name for run in matrix.runs if run.reserved} == {"heldout", "improvement"}
     assert {run.name for run in matrix.runs if run.judge} == {"reference-1", "heldout"}
