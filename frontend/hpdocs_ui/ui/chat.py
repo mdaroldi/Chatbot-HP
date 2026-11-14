@@ -62,16 +62,19 @@ def load_thread(api: ChatApi) -> ErrorView | None:
 def render_thread(load_error: ErrorView | None) -> None:
     if load_error is not None:
         _error(load_error)
-    for message in session.get().thread or ():
+    thread = session.get().thread or ()
+    # Only the latest answer opens its sources, so its citations show without a click.
+    latest = max((i for i, m in enumerate(thread) if m.role == "assistant"), default=None)
+    for index, message in enumerate(thread):
         if message.role == "user":
             with st.chat_message("user"):
                 st.text(message.text)
         else:
             with st.chat_message("assistant"):
-                _answer(message)
+                _answer(message, latest=index == latest)
 
 
-def _answer(message: MessageView) -> None:
+def _answer(message: MessageView, *, latest: bool) -> None:
     render_answer_text(st.empty(), message.text)
     state = message.state
     if state == "pending":
@@ -80,7 +83,7 @@ def _answer(message: MessageView) -> None:
         st.warning(NOTICE_TEXT[state])
     if not message.sources:
         return
-    with st.expander("Sources"):
+    with st.expander("Sources", expanded=latest):
         for source in message.sources:
             st.caption(escape_markdown(source_heading(source)))
             if source.has_warning:

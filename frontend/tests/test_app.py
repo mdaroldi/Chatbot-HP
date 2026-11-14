@@ -953,3 +953,40 @@ def test_a_new_answer_is_drawn_after_the_thread_already_loaded(
     questions = [t.value for m in app.chat_message if m.name == "user" for t in m.text]
     assert questions == ["First?", "Second?"]
     assert fake.count("get") == 1
+
+
+def sources_open(app: AppTest) -> list[bool]:
+    return [bool(e.proto.expanded) for e in app.expander if e.label == "Sources"]
+
+
+def test_only_the_latest_answer_opens_its_sources_after_a_stream_and_after_a_reload(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    first = answered("One [S1].", citations=("S1",), sources=(source(),))
+    fake.details[A] = detail(A, asked("First?"), first)
+    fake.streams = [((*tokens("Two [S1]."), source_event(), done("Two [S1].")), None)]
+    streamed = ask(open_app(cid=CID, conv=A), "Second?")
+    second = answered("Two [S1].", citations=("S1",), sources=(source(),))
+    fake.details[A] = detail(A, asked("First?"), first, asked("Second?"), second)
+
+    reloaded = open_app(cid=CID, conv=A)
+
+    assert sources_open(streamed) == [False, True]
+    assert sources_open(reloaded) == [False, True]
+    assert [drawn(m) for m in reloaded.chat_message] == [drawn(m) for m in streamed.chat_message]
+
+
+def test_earlier_sources_stay_closed_when_the_latest_answer_has_none(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.details[A] = detail(
+        A,
+        asked("First?"),
+        answered("One [S1].", citations=("S1",), sources=(source(),)),
+        asked("Who won?"),
+        answered("BACKEND-REFUSAL", "refused", reason="below_threshold"),
+    )
+
+    app = open_app(cid=CID, conv=A)
+
+    assert sources_open(app) == [False]
