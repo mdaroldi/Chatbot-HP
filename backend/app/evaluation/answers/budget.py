@@ -267,3 +267,32 @@ def require_start(check: StartCheck) -> None:
             f"run {check.run} needs ${check.needed:.4f} with margin, "
             f"${check.remaining:.4f} is left after reservations"
         )
+
+
+# ---------------------------------------------------------------- spend report
+
+
+@dataclass(frozen=True)
+class Spend:
+    """Money charged so far: measured tokens, and bounds charged where the backend stores
+    no usage (`estimated`); the console bill should match measured plus at most this.
+    """
+
+    measured: float
+    estimated: float
+
+    @property
+    def total(self) -> float:
+        return self.measured + self.estimated
+
+
+def split_spend(charges: Sequence[Charge]) -> Spend:
+    return Spend(
+        measured=sum(made.cost_usd for made in charges if not made.estimated),
+        estimated=sum(made.cost_usd for made in charges if made.estimated),
+    )
+
+
+def split_by_run(charges: Sequence[Charge]) -> dict[str, Spend]:
+    runs = dict.fromkeys(made.run for made in charges)
+    return {run: split_spend([made for made in charges if made.run == run]) for run in runs}

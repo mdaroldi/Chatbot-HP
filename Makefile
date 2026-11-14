@@ -18,7 +18,7 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 .PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int test-ui-int smoke-llm \
 	fetch-test-assets models \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins \
-	purge eval-retrieval eval load check
+	purge eval-retrieval eval-estimate eval load check
 
 help: ## List available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -154,6 +154,10 @@ eval-retrieval: ## Retrieval benchmark via compose (needs `make up`); EVAL_ARGS=
 		--volume "$(CURDIR)/eval:/eval" \
 		--env GIT_SHA="$$(git rev-parse HEAD)$$(git diff --quiet HEAD || echo -dirty)" \
 		--entrypoint python backend -m app.evaluation $(EVAL_ARGS)
+
+# Files only (matrix, frozen datasets, git-ignored ledger): no stack, no key, no spend.
+eval-estimate: ## Answer benchmark budget plan: run estimates, funded runs, spend measured/estimated
+	cd $(BACKEND) && uv run --frozen python -m app.evaluation.answers estimate --eval-dir ../eval
 
 eval: ## Run the quality benchmark
 	@echo "not implemented yet"; exit 1

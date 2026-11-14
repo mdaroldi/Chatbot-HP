@@ -24,6 +24,7 @@ from app.evaluation.answers.budget import (
     Ledger,
     LedgerError,
     RunNotFundedError,
+    Spend,
     UnsoundBoundError,
     charge,
     check_measured,
@@ -32,6 +33,8 @@ from app.evaluation.answers.budget import (
     judge_cost,
     require_start,
     run_estimate,
+    split_by_run,
+    split_spend,
     start_check,
 )
 from tests.unit.test_eval_answers_matrix import BASE, HELDOUT, REFERENCE
@@ -278,3 +281,29 @@ def test_what_a_reserved_run_already_spent_comes_off_its_reservation() -> None:
 
     # Reservation left: 2.0 x 1.25 - 1.0 = 1.5; remaining 10 - 2 - 1.5 = 6.5.
     assert check.remaining == pytest.approx(6.5)
+
+
+# ------------------------------------------------------------------ measured vs estimated
+
+
+def test_spend_is_split_into_measured_and_estimated_charges() -> None:
+    measured = answer_charge()
+    bound = charge(MATRIX, "reference-1", "q-1", Kind.REWRITE, HAIKU, 4000, 100, estimated=True)
+    other = charge(MATRIX, "reference-2", "q-1", Kind.ANSWER, SONNET, 2000, 50)
+
+    total = split_spend([measured, bound, other])
+
+    assert total == Spend(
+        measured=pytest.approx(measured.cost_usd + other.cost_usd),  # type: ignore[arg-type]
+        estimated=pytest.approx(bound.cost_usd),  # type: ignore[arg-type]
+    )
+    assert total.total == pytest.approx(measured.cost_usd + other.cost_usd + bound.cost_usd)
+    assert split_by_run([measured, bound, other]) == {
+        "reference-1": Spend(measured.cost_usd, bound.cost_usd),
+        "reference-2": Spend(other.cost_usd, 0.0),
+    }
+
+
+def test_no_charges_spend_nothing() -> None:
+    assert split_spend([]) == Spend(0.0, 0.0)
+    assert split_by_run([]) == {}

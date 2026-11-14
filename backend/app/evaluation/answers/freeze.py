@@ -7,8 +7,15 @@ scored once, for the final configuration only, and only when explicitly asked fo
 (Phase 5 rule 8).
 """
 
-from app.domain.answer_dataset import Dataset, DatasetFile, DatasetNotFrozenError, EvalItem
+from app.domain.answer_dataset import (
+    Dataset,
+    DatasetFile,
+    DatasetNotFrozenError,
+    EvalItem,
+    Slice,
+)
 from app.domain.evaluation import Split
+from app.evaluation.answers.answer_matrix import ItemSet
 from app.evaluation.runner import HeldoutRefusedError
 
 # retrieval-v1: the Phase 2 freeze (ADR 0009; test_eval_golden_pin.py pins the same).
@@ -53,3 +60,17 @@ def select_items(
         raise HeldoutRefusedError("the held-out split needs --allow-heldout")
     require_frozen(dataset, pins)
     return dataset.in_split(split)
+
+
+def run_items(dataset: Dataset, item_set: ItemSet, *, allow_heldout: bool) -> tuple[EvalItem, ...]:
+    """A matrix run's items, in dataset order, through the freeze gate and the held-out
+    guard: answers-dev is the answers-v1 dev questions, multi-turn-dev that dev slice.
+    """
+    if item_set is ItemSet.HELDOUT:
+        return select_items(dataset, Split.HELDOUT, allow_heldout=allow_heldout)
+    dev = select_items(dataset, Split.DEV, allow_heldout=False)
+    if item_set is ItemSet.ANSWERS_DEV:
+        return tuple(item for item in dev if item.slice is None)
+    if item_set is ItemSet.MULTI_TURN_DEV:
+        return tuple(item for item in dev if item.slice is Slice.MULTI_TURN)
+    return dev

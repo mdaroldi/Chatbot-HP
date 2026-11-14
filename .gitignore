@@ -35,6 +35,9 @@ loadtest/results/
 # Chunk review from `make inspect-chunks`: holds document text, never commit it
 /ingest-review/
 eval/reports/runs/
+# Answer benchmark runs: the spend ledger, results journals and traces, which hold
+# stored answers' rows and HP excerpt text (Phase 5): never commit them
+/eval/answer-runs/
 
 # OS and editors
 .DS_Store

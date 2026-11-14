@@ -101,6 +101,7 @@ make model-pins   # regenerate backend/models.toml and print the diff (manual, r
 make smoke-llm    # manual, billed: real-model latency, stops and rewrite outcome (needs the key)
 make purge        # delete conversations past CHAT_RETENTION_DAYS now (via compose)
 make eval-retrieval  # retrieval benchmark via compose (EVAL_ARGS=preflight | run ...)
+make eval-estimate   # answer benchmark budget plan and spend (measured / estimated), no key
 make eval         # run the quality benchmark
 make load         # run the load test
 make check        # lint + typecheck + test + security (run before every commit)

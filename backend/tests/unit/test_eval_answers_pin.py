@@ -17,8 +17,9 @@ from app.domain.answer_dataset import REGEX_PREFIX, Attack, Dataset, DatasetFile
 from app.domain.chat import REFUSAL_TEXT
 from app.domain.evaluation import Split
 from app.domain.prompt import ANSWER_SYSTEM_PROMPT
+from app.evaluation.answers.answer_matrix import ItemSet
 from app.evaluation.answers.dataset import ANSWERS_FILE, SLICES_FILE, load_dataset
-from app.evaluation.answers.freeze import FROZEN, require_frozen, select_items
+from app.evaluation.answers.freeze import FROZEN, require_frozen, run_items, select_items
 from app.evaluation.answers.matching import normalize_answer
 from app.evaluation.normalize import normalize
 from app.evaluation.runner import HeldoutRefusedError
@@ -129,3 +130,31 @@ def test_no_forbidden_pattern_matches_the_fixed_refusal_text(dataset: Dataset) -
     ]
 
     assert hits == []
+
+
+@pytest.mark.parametrize(
+    ("item_set", "count"),
+    [
+        (ItemSet.DEV, 105),
+        (ItemSet.ANSWERS_DEV, 56),
+        (ItemSet.MULTI_TURN_DEV, 10),
+        (ItemSet.HELDOUT, 30),
+    ],
+)
+def test_each_item_set_selects_its_frozen_items(
+    dataset: Dataset, item_set: ItemSet, count: int
+) -> None:
+    items = run_items(dataset, item_set, allow_heldout=True)
+    assert len(items) == count
+    dev_order = [i.id for i in select_items(dataset, Split.DEV, allow_heldout=False)]
+    if item_set is ItemSet.ANSWERS_DEV:
+        assert all(i.slice is None and i.split is Split.DEV for i in items)
+    if item_set is ItemSet.MULTI_TURN_DEV:
+        assert all(i.slice is Slice.MULTI_TURN and i.split is Split.DEV for i in items)
+    if item_set is not ItemSet.HELDOUT:
+        assert [i.id for i in items] == [i for i in dev_order if i in {x.id for x in items}]
+
+
+def test_the_heldout_item_set_needs_the_explicit_flag(dataset: Dataset) -> None:
+    with pytest.raises(HeldoutRefusedError):
+        run_items(dataset, ItemSet.HELDOUT, allow_heldout=False)
