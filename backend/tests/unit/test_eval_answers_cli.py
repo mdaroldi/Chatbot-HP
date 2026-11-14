@@ -1,5 +1,6 @@
-"""The answer benchmark CLI (`python -m app.evaluation.answers`); here its `estimate`
-command, which `make eval-estimate` runs on the host before and between runs.
+"""The answer benchmark CLI (`python -m app.evaluation.answers`): `estimate`, which
+`make eval-estimate` runs on the host before and between runs; `ask`, a run inside the
+backend image (fake runtime); and `drive`, its host side (fake command runner).
 """
 
 import dataclasses
@@ -15,9 +16,12 @@ import pytest
 from app.core.settings import Settings
 from app.domain.retrieval import SearchHit
 from app.evaluation.answers import cli
+from app.evaluation.answers.answer_matrix import load_answer_matrix
 from app.evaluation.answers.ask import AskError
 from app.evaluation.answers.budget import Kind, Ledger, charge
 from app.evaluation.answers.cli import LEDGER_FILE, RUNS_DIR, main
+from app.evaluation.answers.config_check import backend_env
+from app.evaluation.answers.driver import Completed
 from app.evaluation.answers.journal import read_journal
 from app.evaluation.answers.runtime import AskRuntime
 from app.ingestion.corpus import load_corpus
@@ -288,3 +292,86 @@ def test_a_resume_with_nothing_left_exits_with_zero_and_asks_nothing(
     assert (last["asked"], last["recorded"]) == (0, 10)
     assert "valid" not in last
     assert (eval_dir / rerun / "config.json").exists()
+
+
+# ------------------------------------------------------------------ drive
+
+
+class DriveRunners:
+    """A runner factory whose runner answers every docker step as the backend would."""
+
+    def __init__(self, ask_code: int = 0, fail_up: bool = False) -> None:
+        self.ask_code, self.fail_up = ask_code, fail_up
+        self.cwd: list[Path] = []
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, cwd: Path) -> object:
+        self.cwd.append(cwd)
+        matrix = load_answer_matrix(EVAL_DIR / "answer-matrix.toml")
+
+        def run(argv: Sequence[str], *, env: Mapping[str, str], capture: bool) -> Completed:
+            call = tuple(argv)
+            self.calls.append(call)
+            assert capture == (call[2] != "run")  # only the harness streams its logs
+            if call[2] == "up":
+                return Completed(1 if self.fail_up else 0, "")
+            if call[2] == "exec":
+                expected = backend_env(matrix, matrix.run(env_run(env)))
+                return Completed(0, "".join(f"{v}\n" for v in expected.values()))
+            return Completed(self.ask_code, "")
+
+        return run
+
+
+def env_run(env: Mapping[str, str]) -> str:
+    return "k3" if env.get("RETRIEVAL_TOP_K") == "3" else "reference-1"
+
+
+def run_drive(runners: DriveRunners, *args: str) -> int:
+    return main(
+        ["drive", "--eval-dir", str(EVAL_DIR), *args],
+        stdout=io.StringIO(),
+        drive_runner=runners,  # type: ignore[arg-type]  # a fake factory
+        environ={"PATH": "/usr/bin"},
+    )
+
+
+def test_drive_runs_compose_from_the_repo_root_and_passes_ask_options_through() -> None:
+    runners = DriveRunners()
+
+    code = run_drive(
+        runners, "--run", "k3", "--limit", "10", "--resume", "--retry-errors", "--allow-heldout"
+    )
+
+    assert code == 0
+    assert runners.cwd == [REPO.resolve()]
+    ask = next(call for call in runners.calls if call[2] == "run")
+    assert f"{EVAL_DIR.resolve()}:/eval" in ask
+    assert ask[ask.index("ask") :] == (
+        "ask",
+        "--run",
+        "k3",
+        "--limit",
+        "10",
+        "--resume",
+        "--retry-errors",
+        "--allow-heldout",
+    )
+
+
+def test_drive_passes_only_the_options_given() -> None:
+    runners = DriveRunners()
+    run_drive(runners, "--run", "reference-1")
+    ask = next(call for call in runners.calls if call[2] == "run")
+    assert ask[-3:] == ("ask", "--run", "reference-1")
+
+
+def test_drive_exits_with_the_ask_exit_code() -> None:
+    assert run_drive(DriveRunners(ask_code=1), "--run", "k3") == 1
+
+
+def test_a_failed_docker_step_stops_the_drive_with_one(json_logs: LogReader) -> None:
+    code = run_drive(DriveRunners(fail_up=True), "--run", "k3")
+    assert code == 1
+    (stopped,) = [r for r in json_logs() if r["message"] == "answer run stopped"]
+    assert stopped["error"] == "DriverError"

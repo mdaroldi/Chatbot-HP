@@ -10,6 +10,10 @@
   continues a run directory, `--retry-errors` re-asks errored items, and
   `--allow-heldout` is accepted for the heldout run only. Exit 1 also when the run is
   invalid (more than 5% errors).
+- `drive --run NAME --eval-dir DIR` is the host side (`make eval-answers`): it restarts
+  the backend for the run, checks its env, runs `ask` in a harness container with the
+  same run options and restores the defaults (`driver.drive`). It never opens a
+  database, so it needs no settings.
 
 Run files live in `answer-runs/` under the eval directory, which is git-ignored: the
 ledger, and per run the config record, the results journal and the traces (stored
@@ -23,9 +27,10 @@ infrastructure failure logs its type only.
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import TextIO
@@ -51,6 +56,13 @@ from app.evaluation.answers.budget import (
 )
 from app.evaluation.answers.config_check import ConfigMismatchError
 from app.evaluation.answers.dataset import load_dataset
+from app.evaluation.answers.driver import (
+    CommandRunner,
+    DriveRequest,
+    DriverError,
+    drive,
+    subprocess_runner,
+)
 from app.evaluation.answers.estimate import plan, render, typical_tokens
 from app.evaluation.answers.excerpts import ExcerptError
 from app.evaluation.answers.freeze import run_items
@@ -64,6 +76,7 @@ _STOPS = (
     AskError,
     BudgetExceededError,
     ConfigMismatchError,
+    DriverError,
     ExcerptError,
     JournalError,
     RunNotFundedError,
@@ -92,14 +105,21 @@ def _parser() -> argparse.ArgumentParser:
         "--eval-dir", type=Path, default=DEFAULT_EVAL_DIR, help="the eval/ directory"
     )
     estimate.add_argument("--ledger", type=Path, help="default: answer-runs/ledger.jsonl")
-    ask = commands.add_parser("ask", help="ask one run of the matrix (inside the backend image)")
-    ask.add_argument("--run", required=True, help="the matrix run name")
+    run_options = argparse.ArgumentParser(add_help=False)
+    run_options.add_argument("--run", required=True, help="the matrix run name")
+    run_options.add_argument("--resume", action="store_true", help="continue a run directory")
+    run_options.add_argument("--retry-errors", action="store_true", help="re-ask errored items")
+    run_options.add_argument("--limit", type=int, help="ask a spread of N pending items (pilot)")
+    run_options.add_argument("--allow-heldout", action="store_true", help="the heldout run only")
+    ask = commands.add_parser(
+        "ask", parents=[run_options], help="ask one run of the matrix (inside the backend image)"
+    )
     ask.add_argument("--eval-dir", type=Path, default=DEFAULT_EVAL_DIR, help="the eval/ directory")
     ask.add_argument("--api-url", default=DEFAULT_API_URL, help="the backend API base URL")
-    ask.add_argument("--resume", action="store_true", help="continue an existing run directory")
-    ask.add_argument("--retry-errors", action="store_true", help="re-ask items that errored")
-    ask.add_argument("--limit", type=int, help="ask only a spread of N pending items (pilot)")
-    ask.add_argument("--allow-heldout", action="store_true", help="the heldout run only")
+    drive = commands.add_parser(
+        "drive", parents=[run_options], help="drive one run from the host (restart, check, ask)"
+    )
+    drive.add_argument("--eval-dir", type=Path, required=True, help="the eval/ directory")
     return parser
 
 
@@ -174,6 +194,30 @@ async def _ask(args: argparse.Namespace, settings: Settings, ask_runtime: AskRun
     return 0
 
 
+def _ask_args(args: argparse.Namespace) -> tuple[str, ...]:
+    """The run options given to `drive`, passed on to `ask` unchanged."""
+    flags = [
+        ("--limit", str(args.limit)) if args.limit is not None else (),
+        ("--resume",) if args.resume else (),
+        ("--retry-errors",) if args.retry_errors else (),
+        ("--allow-heldout",) if args.allow_heldout else (),
+    ]
+    return tuple(part for flag in flags for part in flag)
+
+
+def _drive(
+    args: argparse.Namespace,
+    runner_for: Callable[[Path], CommandRunner],
+    environ: Mapping[str, str],
+) -> int:
+    eval_dir = args.eval_dir.resolve()
+    matrix = load_answer_matrix(eval_dir / MATRIX_FILE)
+    request = DriveRequest(
+        matrix.run(args.run), eval_dir, _ask_args(args), uid=os.getuid(), gid=os.getgid()
+    )
+    return drive(matrix, request, runner_for(eval_dir.parent), environ)
+
+
 def _failure(exc: Exception) -> tuple[int, str, dict[str, str]]:
     """Exit code, fixed message and log fields for a failed command."""
     if isinstance(exc, _RefusedError):
@@ -204,12 +248,16 @@ def main(
     *,
     stdout: TextIO = sys.stdout,
     ask_runtime: AskRuntimeFactory = open_ask_runtime,
+    drive_runner: Callable[[Path], CommandRunner] = subprocess_runner,
+    environ: Mapping[str, str] = os.environ,
 ) -> int:
     args = _parser().parse_args(argv)
     configure_logging("INFO")
     try:
         if args.command == "ask":
             return asyncio.run(_ask(args, get_settings(), ask_runtime))
+        if args.command == "drive":
+            return _drive(args, drive_runner, environ)
         return _estimate(args, stdout)
     except Exception as exc:  # every failure maps to an exit code and one log line
         code, message, extra = _failure(exc)

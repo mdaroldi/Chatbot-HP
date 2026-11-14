@@ -1,0 +1,134 @@
+"""The host-side half of an answer run (`drive` command): the harness container cannot
+run docker, so the host restarts the backend for the run and puts it back after.
+
+1. Restart the backend with `overrides(run)` over the caller's environment (compose
+   interpolates `${VAR:-default}`, and the shell wins over `.env`), waiting until
+   healthy.
+2. `printenv` the checked names in the backend container (never the key) and compare
+   them with `backend_env`: the run's settings, the real provider, and the matrix's
+   models and token bounds, on which the budget's hard stop rests.
+3. Run `ask` in a one-off backend container on the compose networks, as the caller's
+   user with `eval/` mounted. It gets the stub provider and an empty key: the harness
+   never calls a model, so it never holds the key.
+4. Always restart the backend with the caller's environment alone. A failed restore
+   after a finished run is an error; it never replaces the error that stopped a run.
+
+Commands are fixed argument lists run without a shell.
+"""
+
+import logging
+import subprocess  # nosec B404 - fixed docker compose commands, no shell
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
+
+from app.evaluation.answers.answer_matrix import AnswerMatrix, RunSpec
+from app.evaluation.answers.config_check import (
+    CHECKED_NAMES,
+    backend_env,
+    check_printenv,
+    overrides,
+)
+
+logger = logging.getLogger(__name__)
+
+_COMPOSE = ("docker", "compose")
+UP = (*_COMPOSE, "up", "--detach", "--no-deps", "--no-build", "--wait", "backend")
+PRINTENV = (*_COMPOSE, "exec", "-T", "backend", "printenv", *CHECKED_NAMES)
+
+
+class DriverError(Exception):
+    """A docker step failed; the message names the step, never its output."""
+
+
+@dataclass(frozen=True)
+class Completed:
+    returncode: int
+    stdout: str  # empty unless captured
+
+
+class CommandRunner(Protocol):
+    def __call__(
+        self, argv: Sequence[str], *, env: Mapping[str, str], capture: bool
+    ) -> Completed: ...
+
+
+@dataclass(frozen=True)
+class DriveRequest:
+    run: RunSpec
+    eval_dir: Path  # absolute, on the host
+    ask_args: tuple[str, ...]  # passed through to `ask` (--limit, --resume, ...)
+    uid: int
+    gid: int
+
+
+def subprocess_runner(cwd: Path) -> CommandRunner:
+    """Commands run in the repository root, where compose finds its file and `.env`."""
+
+    def run(argv: Sequence[str], *, env: Mapping[str, str], capture: bool) -> Completed:
+        done = subprocess.run(  # noqa: S603 - fixed command, no shell  # nosec B603
+            list(argv), cwd=cwd, env=dict(env), capture_output=capture, text=True, check=False
+        )
+        return Completed(done.returncode, done.stdout if capture else "")
+
+    return run
+
+
+def _ask_argv(request: DriveRequest) -> tuple[str, ...]:
+    return (
+        *_COMPOSE,
+        "run",
+        "--rm",
+        "--no-deps",
+        "--user",
+        f"{request.uid}:{request.gid}",
+        "--volume",
+        f"{request.eval_dir}:/eval",
+        "--env",
+        "LLM_PROVIDER=stub",
+        "--env",
+        "ANTHROPIC_API_KEY=",
+        "--entrypoint",
+        "python",
+        "backend",
+        "-m",
+        "app.evaluation.answers",
+        "ask",
+        "--run",
+        request.run.name,
+        *request.ask_args,
+    )
+
+
+def _step(runner: CommandRunner, name: str, argv: Sequence[str], env: Mapping[str, str]) -> str:
+    done = runner(argv, env=env, capture=True)
+    if done.returncode != 0:
+        raise DriverError(f"{name} failed with exit code {done.returncode}")
+    return done.stdout
+
+
+def drive(
+    matrix: AnswerMatrix,
+    request: DriveRequest,
+    runner: CommandRunner,
+    environ: Mapping[str, str],
+) -> int:
+    """`ask`'s exit code, once the backend is back on the caller's settings."""
+    run_env = dict(environ) | overrides(request.run)
+    try:
+        _step(runner, "backend restart (up)", UP, run_env)
+        logger.info("backend restarted for the run", extra={"run": request.run.name})
+        check_printenv(
+            backend_env(matrix, request.run), _step(runner, "printenv", PRINTENV, run_env)
+        )
+        logger.info("backend env checked", extra={"run": request.run.name})
+        code = runner(_ask_argv(request), env=run_env, capture=False).returncode
+    finally:
+        restored = runner(UP, env=dict(environ), capture=True).returncode == 0
+        if not restored:
+            logger.error("backend not restored to its defaults; run make up")
+    if not restored:
+        raise DriverError("backend restore failed after the run")
+    logger.info("backend restored to its defaults", extra={"run": request.run.name})
+    return code

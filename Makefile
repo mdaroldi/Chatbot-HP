@@ -18,7 +18,7 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 .PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int test-ui-int smoke-llm \
 	fetch-test-assets models \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins \
-	purge eval-retrieval eval-estimate eval load check
+	purge eval-retrieval eval-estimate eval-answers eval load check
 
 help: ## List available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -158,6 +158,16 @@ eval-retrieval: ## Retrieval benchmark via compose (needs `make up`); EVAL_ARGS=
 # Files only (matrix, frozen datasets, git-ignored ledger): no stack, no key, no spend.
 eval-estimate: ## Answer benchmark budget plan: run estimates, funded runs, spend measured/estimated
 	cd $(BACKEND) && uv run --frozen python -m app.evaluation.answers estimate --eval-dir ../eval
+
+# Answer benchmark (ADR 0012), billed with LLM_PROVIDER=anthropic: the host driver
+# restarts the backend with the run's settings, checks its env (printenv, never the
+# key), runs `ask` in a harness container without the key, then restores the defaults.
+# ANSWER_ARGS: --run NAME [--limit N] [--resume] [--retry-errors] [--allow-heldout].
+ANSWER_ARGS ?=
+
+eval-answers: ## Billed: one answer run via the host driver (needs `make up`); ANSWER_ARGS="--run reference-1 --limit 10"
+	cd $(BACKEND) && uv run --frozen python -m app.evaluation.answers drive \
+		--eval-dir "$(CURDIR)/eval" $(ANSWER_ARGS)
 
 eval: ## Run the quality benchmark
 	@echo "not implemented yet"; exit 1
