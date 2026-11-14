@@ -71,7 +71,7 @@ class FakeBackend:
         errors: Mapping[str, str] | None = None,
     ) -> None:
         self.body = ready_body() if ready is None else ready
-        self.errors = errors or {}
+        self.errors = {} if errors is None else errors
         self.log: list[str] = []
 
     async def ready(self) -> Mapping[str, object]:
@@ -96,9 +96,10 @@ class FakeRows:
 
     def __init__(self, **changes: object) -> None:
         self.changes = changes
+        self.clients: list[str] = []
 
     async def answers(self, conversation_id: str, client_id: str) -> tuple[StoredAnswer, ...]:
-        assert client_id.startswith("client-")  # the item's own client id
+        self.clients.append(client_id)
         item_id = conversation_id.removeprefix("conv-")
         fields: dict[str, object] = {
             "message_id": f"m-{item_id}",
@@ -181,10 +182,12 @@ async def test_a_run_asks_every_item_and_saves_results_charges_traces_and_config
 ) -> None:
     backend = FakeBackend()
     index = FakeIndex()
+    rows = FakeRows()
 
-    outcome = await ask(files, ports(backend, index=index))
+    outcome = await ask(files, ports(backend, rows, index))
 
     assert index.asked == ["hpdocs_chunks"]
+    assert rows.clients == [f"client-{n}" for n in range(1, 6)]  # each item's own client
     assert backend.log[0] == "ready"
     assert backend.log[1:4] == [
         "answer q-1 client-1",

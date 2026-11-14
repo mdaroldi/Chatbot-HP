@@ -2,19 +2,30 @@
 command, which `make eval-estimate` runs on the host before and between runs.
 """
 
+import dataclasses
 import io
 import json
 import runpy
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
 
+from app.core.settings import Settings
+from app.domain.retrieval import SearchHit
 from app.evaluation.answers import cli
+from app.evaluation.answers.ask import AskError
 from app.evaluation.answers.budget import Kind, Ledger, charge
 from app.evaluation.answers.cli import LEDGER_FILE, RUNS_DIR, main
+from app.evaluation.answers.journal import read_journal
+from app.evaluation.answers.runtime import AskRuntime
+from app.ingestion.corpus import load_corpus
 from tests.unit.conftest import LogReader
+from tests.unit.test_eval_answers_ask import FakeBackend, FakeIndex, FakeRows
 from tests.unit.test_eval_answers_budget import MATRIX, SONNET
 from tests.unit.test_eval_answers_pin import EVAL_DIR
+from tests.unit.test_eval_answers_settle import hit
 
 REPO = EVAL_DIR.parent
 
@@ -112,3 +123,168 @@ def test_the_module_runs_the_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SystemExit) as exited:
         runpy.run_module("app.evaluation.answers", run_name="__main__")
     assert exited.value.code == 7
+
+
+# ------------------------------------------------------------------ ask
+
+
+@pytest.fixture
+def eval_dir(tmp_path: Path) -> Path:
+    """A copy of eval/: ask writes the ledger and the run directory under it."""
+    (tmp_path / "golden").mkdir()
+    for name in (
+        "answer-matrix.toml",
+        "golden/retrieval-v1.toml",
+        "golden/answers-v1.toml",
+        "golden/slices-v1.toml",
+    ):
+        (tmp_path / name).write_bytes((EVAL_DIR / name).read_bytes())
+    return tmp_path
+
+
+class CorpusChunks:
+    """Hits from a real corpus document: the CLI renders them with the corpus titles."""
+
+    async def hits(self, chunk_ids: Sequence[str]) -> Mapping[str, SearchHit]:
+        doc_id = load_corpus()[0].doc_id
+        return {i: dataclasses.replace(hit(i), doc_id=doc_id) for i in chunk_ids}
+
+
+def corpus_chunks(collection: str) -> CorpusChunks:
+    assert collection.startswith("hpdocs_chunks")
+    return CorpusChunks()
+
+
+class FakeRuntime:
+    def __init__(self, backend: FakeBackend | None = None, index: FakeIndex | None = None) -> None:
+        self.backend, self.index = backend or FakeBackend(), index or FakeIndex()
+        self.opened: list[str] = []
+
+    @asynccontextmanager
+    async def __call__(self, settings: Settings, api_url: str) -> AsyncIterator[AskRuntime]:
+        assert isinstance(settings, Settings)
+        self.opened.append(api_url)
+        yield AskRuntime(self.backend, self.index, FakeRows(), corpus_chunks)
+
+
+def run_ask(eval_dir: Path, runtime: object, *args: str) -> int:
+    return main(
+        ["ask", "--eval-dir", str(eval_dir), *args],
+        stdout=io.StringIO(),
+        ask_runtime=runtime,  # type: ignore[arg-type]  # a fake factory
+    )
+
+
+def test_ask_runs_a_pilot_of_the_repo_reference_run_and_logs_its_health(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    runtime = FakeRuntime()
+
+    code = run_ask(eval_dir, runtime, "--run", "reference-1", "--limit", "3")
+
+    assert code == 0
+    assert runtime.opened == ["http://backend:8000"]
+    results = read_journal(eval_dir / RUNS_DIR / "reference-1" / "results.jsonl")
+    assert len(results) == 3
+    assert len({r.client_id for r in results}) == 3  # a fresh client id per item
+    assert len(Ledger(eval_dir / LEDGER_FILE).charges()) >= 3
+    (done,) = [r for r in json_logs() if r["message"] == "answer run done"]
+    assert (done["run"], done["asked"], done["recorded"], done["valid"]) == (
+        "reference-1",
+        3,
+        3,
+        True,
+    )
+
+
+def test_ask_takes_the_api_url_it_is_given(eval_dir: Path) -> None:
+    runtime = FakeRuntime()
+    run_ask(eval_dir, runtime, "--run", "reference-1", "--limit", "1", "--api-url", "http://x")
+    assert runtime.opened == ["http://x"]
+
+
+class _ErrorsForAll(dict[str, str]):
+    """Every item fails with a read timeout."""
+
+    def __contains__(self, key: object) -> bool:
+        return True
+
+    def __getitem__(self, key: str) -> str:
+        return "read_timeout"
+
+
+def test_an_invalid_run_exits_with_one(eval_dir: Path, json_logs: LogReader) -> None:
+    runtime = FakeRuntime(FakeBackend(errors=_ErrorsForAll()))
+
+    code = run_ask(eval_dir, runtime, "--run", "reference-1", "--limit", "2")
+
+    assert code == 1
+    (done,) = [r for r in json_logs() if r["message"] == "answer run is invalid"]
+    assert done["errors_by_code"] == {"read_timeout": 2}
+
+
+def test_allow_heldout_on_another_run_is_refused_with_two(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    runtime = FakeRuntime()
+    code = run_ask(eval_dir, runtime, "--run", "reference-1", "--allow-heldout")
+    assert code == 2
+    assert runtime.opened == []
+    assert "--allow-heldout is for the heldout run only" in messages(json_logs)
+
+
+def test_the_heldout_run_without_allow_heldout_is_refused_with_two(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    runtime = FakeRuntime()
+    code = run_ask(eval_dir, runtime, "--run", "heldout")
+    assert code == 2
+    assert runtime.opened == []
+    assert "the held-out split needs --allow-heldout" in messages(json_logs)
+
+
+def test_an_unknown_run_fails_with_one(eval_dir: Path, json_logs: LogReader) -> None:
+    code = run_ask(eval_dir, FakeRuntime(), "--run", "nope")
+    assert code == 1
+    assert "answer matrix is invalid" in messages(json_logs)
+
+
+def test_a_stopped_run_fails_with_one_naming_the_reason(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    code = run_ask(eval_dir, FakeRuntime(index=FakeIndex(None)), "--run", "reference-1")
+    assert code == 1
+    (stopped,) = [r for r in json_logs() if r["message"] == "answer run stopped"]
+    assert stopped["error"] == AskError.__name__
+    assert "hpdocs_chunks" in stopped["detail"]
+
+
+def test_an_unexpected_failure_fails_with_one_and_logs_only_its_type(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    def broken(_settings: Settings, _api_url: str) -> object:
+        raise ConnectionError("secret detail")
+
+    code = run_ask(eval_dir, broken, "--run", "reference-1")
+
+    assert code == 1
+    (failed,) = [r for r in json_logs() if r["message"] == "answer run failed"]
+    assert failed["error"] == "ConnectionError"
+    assert "secret" not in json.dumps(json_logs())
+
+
+def test_a_resume_with_nothing_left_exits_with_zero_and_asks_nothing(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    rerun = RUNS_DIR / "rewrite-off"
+    assert run_ask(eval_dir, FakeRuntime(), "--run", "rewrite-off") == 0
+    backend = FakeBackend()
+
+    code = run_ask(eval_dir, FakeRuntime(backend), "--run", "rewrite-off", "--resume")
+
+    assert code == 0
+    assert backend.log == []
+    last = [r for r in json_logs() if r["message"] == "answer run done"][-1]
+    assert (last["asked"], last["recorded"]) == (0, 10)
+    assert "valid" not in last
+    assert (eval_dir / rerun / "config.json").exists()
