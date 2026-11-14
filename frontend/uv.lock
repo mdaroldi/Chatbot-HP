@@ -288,6 +288,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "bandit" },
+    { name = "markdown-it-py" },
     { name = "mypy" },
     { name = "pip-audit" },
     { name = "pytest" },
@@ -305,6 +306,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "bandit", specifier = ">=1.9.4" },
+    { name = "markdown-it-py", specifier = ">=4.3.0" },
     { name = "mypy", specifier = ">=2.4.1" },
     { name = "pip-audit", specifier = ">=2.10.1" },
     { name = "pytest", specifier = ">=9.2.0" },
