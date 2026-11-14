@@ -289,6 +289,20 @@ The Streamlit page at http://localhost:8501 talks to the API only over HTTP
   `http://backend:8000`; it is wiring, not configuration, so it is not in
   `.env.example`.
 
+### Screenshots
+
+A cited answer with its sources open:
+
+![Answer to "How do I remove the bottom cover of the OMEN 17?" citing S1, with the Sources panel open](docs/img/chat-answer.png)
+
+An out-of-scope question refused with the fixed wording:
+
+![The question "Who won the 2022 World Cup?" answered with "I couldn't find this in the HP ENVY 6000 or OMEN 17 manuals"](docs/img/chat-refusal.png)
+
+The page reloaded while the backend is down, with the Retry button:
+
+![The message "The chat service can't be reached right now." with a Retry button](docs/img/chat-error.png)
+
 ## Configuration
 
 Everything is configured through environment variables (`.env` for Compose).
