@@ -13,6 +13,7 @@ import pytest
 import yaml
 
 from app.core.settings import Settings
+from tests.unit.test_env_example import FRONTEND_PREFIX, example_values
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
 COMPOSE = REPO / "docker-compose.yml"
@@ -567,3 +568,24 @@ def test_compose_defaults_equal_the_settings_defaults(
 
     assert ("retrieval_mode" if service == "backend" else "embedding_bm25_avg_len") in defaults
     assert differing == []
+
+
+def test_frontend_gets_its_ui_settings_with_the_env_example_defaults(
+    services: dict[str, Service],
+) -> None:
+    environment = services["frontend"]["environment"]
+    expected = {
+        key: f"${{{key}:-{value}}}"
+        for key, value in example_values().items()
+        if key.startswith(FRONTEND_PREFIX)
+    }
+    assert expected
+    assert {k: v for k, v in environment.items() if k.startswith(FRONTEND_PREFIX)} == expected
+
+
+def test_frontend_never_receives_the_anthropic_key_or_the_database(
+    services: dict[str, Service],
+) -> None:
+    environment = services["frontend"]["environment"]
+
+    assert not [key for key in environment if key.startswith(("ANTHROPIC", "LLM_", "POSTGRES"))]

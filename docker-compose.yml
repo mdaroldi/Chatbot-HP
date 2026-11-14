@@ -188,6 +188,9 @@ services:
       BACKEND_URL: http://backend:8000
       # Also off in the image's .streamlit/config.toml; either holds alone.
       STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
+      UI_STREAM_READ_TIMEOUT_SECONDS: ${UI_STREAM_READ_TIMEOUT_SECONDS:-60}
+      UI_STREAM_TOTAL_TIMEOUT_SECONDS: ${UI_STREAM_TOTAL_TIMEOUT_SECONDS:-185}
+      UI_MESSAGE_MAX_CHARS: ${UI_MESSAGE_MAX_CHARS:-1000}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-8501}:8501"
     networks: [edge]
