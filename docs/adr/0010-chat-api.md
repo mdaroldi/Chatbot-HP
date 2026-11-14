@@ -317,4 +317,14 @@ it appears in no log line.
   answer, and rendering `sources`. Phase 5: answer quality (judge prompts, the
   uncited and refusal rates, the long-query effect, whether `[S<n>]` stripping in
   history is enough). Phase 6: the limiter across replicas, the first-token latency
-  of the answer model and whether the default should move to `claude-sonnet-5-5`.
+  of the answer model (the default moved to `claude-sonnet-5-5`; see the update below).
+
+## Update (Phase 4 close, 2026-11-14): default answer model
+
+- The owner chose **`claude-sonnet-5-5`** as the default `LLM_ANSWER_MODEL` (in
+  `.env.example`, the compose fallback and the settings default); `LLM_REWRITE_MODEL`
+  stays `claude-haiku-5-5`.
+- Evidence: `make smoke-llm` measured a time to first token p50 of 614 ms over 5 runs on
+  Sonnet 5.5, well under the ~6 s rule above. Opus 5.5 was not measured.
+- Opus is reserved as the LLM judge in Phase 5, so the judge is a different model from
+  the one that writes the answers.

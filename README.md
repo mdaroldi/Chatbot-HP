@@ -367,7 +367,7 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `LLM_CONNECT_TIMEOUT_SECONDS` | `5.0` | Deadline to connect to the model API. |
 | `LLM_FIRST_TOKEN_TIMEOUT_SECONDS` | `30.0` | Deadline from the request to the first answer text (thinking included). |
 | `LLM_MAX_RETRIES` | `2` | Client retries of 408, 409, 429, 5xx and connection errors, only before a stream opens. |
-| `LLM_ANSWER_MODEL` | `claude-opus-5-5` | Model that writes the answers (Anthropic model ID). |
+| `LLM_ANSWER_MODEL` | `claude-sonnet-5-5` | Model that writes the answers (Anthropic model ID). |
 | `LLM_ANSWER_EFFORT` | `low` | Effort sent with each answer request: `low`, `medium`, `high`, `xhigh` or `max`; empty sends none. |
 | `LLM_ANSWER_MAX_TOKENS` | `2048` | Output cap per answer, thinking included; a long cited procedure needs about 600. |
 | `LLM_REWRITE_MODEL` | `claude-haiku-5-5` | Model that rewrites follow-ups into standalone search queries. |

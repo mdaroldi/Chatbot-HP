@@ -617,7 +617,7 @@ def test_a_blank_relevance_threshold_means_not_calibrated(
 def test_llm_defaults_are_the_approved_models_and_budgets() -> None:
     settings = Settings()
 
-    assert (settings.llm_answer_model, settings.llm_answer_effort) == ("claude-opus-5-5", "low")
+    assert (settings.llm_answer_model, settings.llm_answer_effort) == ("claude-sonnet-5-5", "low")
     assert settings.llm_answer_max_tokens == 2048
     assert (settings.llm_rewrite_model, settings.llm_rewrite_effort) == ("claude-haiku-5-5", "low")
     assert settings.llm_rewrite_max_tokens == 100

@@ -329,7 +329,7 @@ class Settings(BaseSettings):
         "before a stream opens.",
     )
     llm_answer_model: str = Field(
-        default="claude-opus-5-5",
+        default="claude-sonnet-5-5",
         min_length=1,
         description="Model that writes the answers (Anthropic model ID).",
     )
