@@ -6,6 +6,7 @@ from typing import Literal
 import pytest
 
 from hpdocs_ui.api import (
+    Conversation,
     ConversationDetail,
     Done,
     Flags,
@@ -22,11 +23,13 @@ from hpdocs_ui.chat_view import (
     NOTICE_TEXT,
     REFUSAL_TEXT,
     UNKNOWN_REFUSAL_TEXT,
+    UNTITLED,
     WARNING_BADGE,
     ErrorView,
     MessageView,
     SourceView,
     answer_from_stream,
+    conversation_label,
     error_view,
     message_view,
     page_label,
@@ -34,6 +37,7 @@ from hpdocs_ui.chat_view import (
     thread_view,
 )
 from hpdocs_ui.errors import ApiError
+from hpdocs_ui.sanitize import escape_markdown
 
 NOW = datetime(2026, 11, 14, 9, 0, tzinfo=UTC)
 # What the backend streams and stores for every refusal; the page never shows it.
@@ -473,3 +477,22 @@ def test_an_error_view_keeps_the_question_so_it_can_be_resent() -> None:
         "You're sending requests too quickly. Try again in 3 seconds.",
         "Q?",
     )
+
+
+# --- conversation labels ---------------------------------------------------------
+
+
+def _titled(title: str | None) -> Conversation:
+    when = datetime(2026, 11, 14, tzinfo=UTC)
+    return Conversation(id="c", title=title, created_at=when, updated_at=when)
+
+
+def test_a_conversation_label_is_its_title_escaped_for_a_button() -> None:
+    title = "How do I *scan* [S1]?"
+
+    assert conversation_label(_titled(title)) == escape_markdown(title)
+
+
+@pytest.mark.parametrize("title", [None, "", " \n\t "])
+def test_a_conversation_without_a_title_has_a_fixed_label(title: str | None) -> None:
+    assert conversation_label(_titled(title)) == UNTITLED == "Untitled conversation"

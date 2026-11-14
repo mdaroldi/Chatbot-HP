@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from hpdocs_ui.api import (
+    Conversation,
     ConversationDetail,
     Done,
     Message,
@@ -27,6 +28,7 @@ from hpdocs_ui.api import (
     Token,
 )
 from hpdocs_ui.errors import STREAM_TIMEOUT, ApiError, error_text, shown_request_id
+from hpdocs_ui.sanitize import escape_markdown
 
 AnswerState = Literal["answered", "uncited", "refused", "pending", "failed", "cancelled"]
 
@@ -41,6 +43,8 @@ REFUSAL_TEXT: Mapping[RefusalReason, str] = {
     "provider_refused": "The model declined to answer this question.",
 }
 UNKNOWN_REFUSAL_TEXT = "I can't answer this question from the manuals."
+# A conversation is titled after its first question; until then it has this label.
+UNTITLED = "Untitled conversation"
 
 NOTICE_TEXT: Mapping[AnswerState, str] = {
     "uncited": "This answer cites no source from the manuals; check it against the documents.",
@@ -179,3 +183,8 @@ _STATE: Mapping[Outcome, AnswerState] = {
     "cancelled": "cancelled",
     "refused": "refused",
 }
+
+
+def conversation_label(conversation: Conversation) -> str:
+    """The title for a button, which renders Markdown: escaped, on one line."""
+    return escape_markdown(conversation.title or "") or UNTITLED

@@ -1,5 +1,6 @@
 """Static guarantees for the Streamlit app: privacy, safety, no stale status."""
 
+import ast
 import pathlib
 import tomllib
 from collections.abc import Iterator
@@ -12,7 +13,30 @@ from streamlit.testing.v1 import AppTest
 
 FRONTEND = pathlib.Path(__file__).resolve().parents[1]
 CONFIG = FRONTEND / ".streamlit" / "config.toml"
-SOURCES = [FRONTEND / "app.py", *sorted((FRONTEND / "hpdocs_ui").glob("*.py"))]
+SOURCES = [FRONTEND / "app.py", *sorted((FRONTEND / "hpdocs_ui").rglob("*.py"))]
+# The Streamlit layer: the only code allowed to import streamlit.
+UI_SOURCES = [FRONTEND / "app.py", *sorted((FRONTEND / "hpdocs_ui" / "ui").rglob("*.py"))]
+
+# Streamlit calls whose first argument (or label/body) is rendered as Markdown.
+RENDERING = frozenset(
+    {
+        "markdown", "write", "caption", "info", "warning", "error", "success", "button",
+        "expander", "badge", "title", "header", "subheader", "toast", "popover", "tabs",
+        "checkbox", "toggle", "radio", "selectbox", "multiselect", "text_input",
+        "text_area", "chat_input", "download_button", "link_button", "page_link",
+        "form_submit_button", "metric", "status", "pills", "segmented_control", "help",
+        "chat_message",
+    }
+)  # fmt: skip
+# Calls that return Markdown-safe text: the sanitizer, the escaper, fixed wording.
+SAFE_HELPERS = frozenset({"sanitize_markdown", "escape_markdown", "conversation_label"})
+# Tables of fixed wording, indexed by a code or state.
+WORDING_TABLES = frozenset({"NOTICE_TEXT", "ERROR_TEXT", "REFUSAL_TEXT"})
+# Reviewed exceptions: attributes that only ever hold fixed wording.
+EXCEPTIONS = {
+    "view.headline": "StatusView.headline, fixed headlines from view.describe()",
+    "error.text": "ErrorView.text, from errors.error_text()",
+}
 
 
 def load_config() -> dict[str, dict[str, object]]:
@@ -87,3 +111,104 @@ def test_status_results_are_never_cached() -> None:
         text = source.read_text()
         assert "cache_data" not in text, source.name
         assert "cache_resource" not in text, source.name
+
+
+def _rendered_argument(call: ast.Call) -> ast.expr | None:
+    for keyword in call.keywords:
+        if keyword.arg in {"label", "body"}:
+            return keyword.value
+    return call.args[0] if call.args else None
+
+
+def _is_safe(node: ast.expr) -> bool:
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str)
+    if isinstance(node, ast.Call):
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+        return name in SAFE_HELPERS
+    if isinstance(node, ast.Subscript):
+        return isinstance(node.value, ast.Name) and node.value.id in WORDING_TABLES
+    return ast.unparse(node) in EXCEPTIONS
+
+
+def rendering_violations(source: str) -> list[str]:
+    """Each Markdown-rendering call whose text is not a literal, a safe helper's
+    result, fixed wording or a reviewed exception; and each rendering function used
+    as a value (a dispatch table would hide its calls from this check).
+    """
+    tree = ast.parse(source)
+    called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in RENDERING and id(node) not in called:
+            found.append(f"uncalled {ast.unparse(node)}")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr not in RENDERING:
+                continue
+            argument = _rendered_argument(node)
+            if argument is not None and not _is_safe(argument):
+                found.append(ast.unparse(node))
+    return found
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "st.markdown(text)",
+        "st.sidebar.button(f'{title}')",
+        "col.info(message.text)",
+        "st.button(label=title)",
+        "RENDER = {'ok': st.success}",
+        "st.error(OTHER_TABLE[code])",
+    ],
+)
+def test_the_rendering_check_flags_unsafe_text(snippet: str) -> None:
+    assert rendering_violations(snippet)
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "st.markdown(sanitize_markdown(text))",
+        "st.button(escape_markdown(title), key=k)",
+        "st.sidebar.info(NOTICE_TEXT[notice])",
+        "st.button('Delete', key=k)",
+        "st.error(error.text)",
+        "st.text(anything)",
+    ],
+)
+def test_the_rendering_check_accepts_safe_text(snippet: str) -> None:
+    assert rendering_violations(snippet) == []
+
+
+def test_every_markdown_rendering_call_gets_safe_text() -> None:
+    assert len(UI_SOURCES) >= 2
+    for source in UI_SOURCES:
+        assert rendering_violations(source.read_text()) == [], source.name
+
+
+def test_only_the_streamlit_layer_imports_streamlit() -> None:
+    for source in SOURCES:
+        if source in UI_SOURCES:
+            continue
+        for node in ast.walk(ast.parse(source.read_text())):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            assert not [n for n in names if n.split(".")[0] == "streamlit"], source.name
+
+
+def test_the_sidebar_starts_expanded_so_its_notices_are_seen() -> None:
+    tree = ast.parse((FRONTEND / "app.py").read_text())
+    configs = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and getattr(n.func, "attr", None) == "set_page_config"
+    ]
+
+    (config,) = configs
+    options = {k.arg: ast.literal_eval(k.value) for k in config.keywords}
+    assert options["initial_sidebar_state"] == "expanded"

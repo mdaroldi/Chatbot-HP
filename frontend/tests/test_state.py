@@ -18,15 +18,19 @@ from hpdocs_ui.state import (
     new_conversation,
     notice_shown,
     queue,
+    refresh_status,
     refresh_thread,
     select,
     send_finished,
+    sidebar_failed,
+    status_checked,
     take_outbox,
     thread_loaded,
     thread_missing,
     url_state,
 )
 from hpdocs_ui.url_state import UrlState
+from hpdocs_ui.view import StatusView
 
 NOW = datetime(2026, 11, 14, 9, 0, tzinfo=UTC)
 CID = "client-0001"
@@ -367,3 +371,45 @@ def test_a_delete_answering_not_found_for_another_conversation_keeps_the_selecti
     assert (state.conversation_id, state.thread) == (A, (ANSWER,))
     assert [c.id for c in state.conversations] == [A]
     assert (state.notice, state.confirm_delete, state.list_stale) == ("not_found", None, True)
+
+
+# --- sidebar errors and backend status -------------------------------------------
+
+UNREACHABLE = ApiError("backend_unreachable")
+
+
+def test_a_failed_sidebar_call_shows_its_wording_and_drops_the_delete_confirmation() -> None:
+    state = sidebar_failed(ask_delete(selected(), A), UNREACHABLE)
+
+    assert state.sidebar_error == ErrorView(
+        text="The chat service can't be reached right now.", request_id=None, question=None
+    )
+    assert state.confirm_delete is None
+    # A failed list stays stale, so the next run fetches it again.
+    assert state.list_stale
+    assert (state.conversation_id, state.thread) == (A, (ANSWER,))
+
+
+def test_the_sidebar_error_is_cleared_by_the_next_sidebar_action() -> None:
+    failed = sidebar_failed(selected(), UNREACHABLE)
+    actions = [
+        list_loaded(failed, ConversationPage(items=(), next_cursor=None), more=False),
+        ask_delete(failed, A),
+        select(failed, B),
+        new_conversation(failed),
+        deleted(failed, A),
+        already_deleted(failed, B),
+    ]
+
+    assert [state.sidebar_error for state in actions] == [None] * len(actions)
+
+
+def test_the_backend_status_is_kept_until_a_refresh_asks_for_it_again() -> None:
+    view = StatusView("success", "Backend is up and ready.", ())
+
+    checked = status_checked(selected(), view)
+
+    assert initial(UrlState(CID, A)).backend is None
+    assert checked.backend == view
+    assert refresh_status(checked).backend is None
+    assert refresh_status(checked).thread == (ANSWER,)

@@ -12,7 +12,7 @@ import pytest
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
-from hpdocs_ui.sanitize import sanitize_markdown
+from hpdocs_ui.sanitize import escape_markdown, sanitize_markdown
 
 _PARSER = MarkdownIt("commonmark").enable(["table", "strikethrough"])
 _FORBIDDEN = {"image", "link_open", "html_inline", "html_block"}
@@ -169,3 +169,42 @@ def test_a_fence_not_at_column_zero_makes_every_fence_plain_text(text: str) -> N
 
     assert "<" not in sanitized
     assert "```" not in sanitized.replace("\\`", "")
+
+
+# --- escape_markdown: backend text in labels (titles on buttons) ------------------
+
+LABELS = [
+    *HOSTILE,
+    "# Heading",
+    "1. step",
+    "- item",
+    "> quote",
+    "    indented code",
+    "~~gone~~ **bold** _it_ `code`",
+    ":red[colour] :material/delete: :smile:",
+    "a\\b \\*c\\*",
+    "&amp; &#60; &copy;",
+    "line one\nline two\r\n\tthree",
+    "ünïcödé — ok",
+]
+
+
+@pytest.mark.parametrize("label", LABELS)
+def test_an_escaped_label_renders_as_its_own_text_and_nothing_else(label: str) -> None:
+    escaped = escape_markdown(label)
+    blocks = _PARSER.parse(escaped)
+    flat = " ".join(label.split())
+
+    if not flat:
+        assert blocks == []
+        return
+    assert [t.type for t in blocks] == ["paragraph_open", "inline", "paragraph_close"]
+    children = blocks[1].children or []
+    assert {t.type for t in children} <= {"text", "text_special"}, escaped
+    assert "".join(t.content for t in children) == flat
+    # GFM autolinks read the source, so the escaped source itself must not autolink.
+    assert not _AUTOLINK.search(escaped), escaped
+
+
+def test_an_escaped_label_is_one_line() -> None:
+    assert escape_markdown("a\n\nb\r\nc") == "a b c"

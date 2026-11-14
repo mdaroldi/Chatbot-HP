@@ -34,6 +34,7 @@ _EMAIL = re.compile(r"[A-Za-z0-9._+-]+@[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+")
 _URL_START = frozenset("hHwW")
 _ESCAPABLE = frozenset(string.punctuation)
 _ESCAPED = {"<": "&lt;", "$": "\\$"}
+_PUNCTUATION = re.compile("[" + re.escape(string.punctuation) + "]")
 
 
 def sanitize_markdown(text: str) -> str:
@@ -164,3 +165,12 @@ def _autolink(line: str, index: int, *, has_at: bool) -> str | None:
     if has_at and (email := _EMAIL.match(line, index)):
         return email[0]
     return None
+
+
+def escape_markdown(text: str) -> str:
+    """Backend text for a one-line label (a button): every ASCII punctuation mark is
+    backslash-escaped, which CommonMark renders as the mark itself, so nothing in it
+    can form an image, link, emphasis, code or HTML; the escaped `:` `/` `.` `@` also
+    break GFM's bare-URL and e-mail autolinks. Whitespace runs become one space.
+    """
+    return _PUNCTUATION.sub(r"\\\g<0>", " ".join(text.split()))

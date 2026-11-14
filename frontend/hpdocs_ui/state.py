@@ -16,6 +16,7 @@ from hpdocs_ui.api import Conversation, ConversationPage, StreamEvent
 from hpdocs_ui.chat_view import ErrorView, MessageView, answer_from_stream, error_view
 from hpdocs_ui.errors import ERROR_TEXT, ApiError
 from hpdocs_ui.url_state import UrlState
+from hpdocs_ui.view import StatusView
 
 _NOT_FOUND = "conversation_not_found"
 
@@ -42,6 +43,10 @@ class UiState:
     # The last failed send, shown until the next send or selection.
     send_error: ErrorView | None = None
     confirm_delete: str | None = None
+    # The last failed list or delete call, shown in the sidebar until the next one.
+    sidebar_error: ErrorView | None = None
+    # From /health and /ready, once per session or on refresh.
+    backend: StatusView | None = None
 
     @property
     def needs_thread(self) -> bool:
@@ -113,6 +118,7 @@ def select(state: UiState, conversation_id: str) -> UiState:
         thread_for=None,
         send_error=None,
         confirm_delete=None,
+        sidebar_error=None,
     )
 
 
@@ -125,6 +131,7 @@ def new_conversation(state: UiState) -> UiState:
         thread_for=None,
         send_error=None,
         confirm_delete=None,
+        sidebar_error=None,
     )
 
 
@@ -146,11 +153,17 @@ def notice_shown(state: UiState) -> UiState:
 
 def list_loaded(state: UiState, page: ConversationPage, *, more: bool) -> UiState:
     items = (*state.conversations, *page.items) if more else page.items
-    return replace(state, conversations=items, next_cursor=page.next_cursor, list_stale=False)
+    return replace(
+        state,
+        conversations=items,
+        next_cursor=page.next_cursor,
+        list_stale=False,
+        sidebar_error=None,
+    )
 
 
 def ask_delete(state: UiState, conversation_id: str) -> UiState:
-    return replace(state, confirm_delete=conversation_id)
+    return replace(state, confirm_delete=conversation_id, sidebar_error=None)
 
 
 def cancel_delete(state: UiState) -> UiState:
@@ -171,5 +184,25 @@ def _gone(state: UiState, conversation_id: str, notice: Notice) -> UiState:
         state = new_conversation(state)
     remaining = tuple(c for c in state.conversations if c.id != conversation_id)
     return replace(
-        state, conversations=remaining, confirm_delete=None, notice=notice, list_stale=True
+        state,
+        conversations=remaining,
+        confirm_delete=None,
+        notice=notice,
+        list_stale=True,
+        sidebar_error=None,
     )
+
+
+def sidebar_failed(state: UiState, error: ApiError) -> UiState:
+    """The list stays as it was (and stays stale if it never loaded, so the next run
+    fetches it again).
+    """
+    return replace(state, sidebar_error=error_view(error), confirm_delete=None)
+
+
+def status_checked(state: UiState, view: StatusView) -> UiState:
+    return replace(state, backend=view)
+
+
+def refresh_status(state: UiState) -> UiState:
+    return replace(state, backend=None)
