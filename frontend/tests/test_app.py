@@ -5,15 +5,20 @@ session state, so these tests exercise the same path a browser does.
 """
 
 import pathlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from itertools import accumulate
 
 import pytest
+import streamlit as st
+from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
+from streamlit.runtime.forward_msg_queue import ForwardMsgQueue
 from streamlit.testing.v1 import AppTest
 
 from hpdocs_ui import status, wiring
+from hpdocs_ui.chat_view import PRIMING_TEXT
 from hpdocs_ui.errors import ApiError
 from hpdocs_ui.identifiers import trusted_identifier
-from hpdocs_ui.sanitize import escape_markdown
+from hpdocs_ui.sanitize import escape_markdown, sanitize_markdown
 from hpdocs_ui.settings import FrontendSettings
 from tests.fakes import (
     CID,
@@ -26,8 +31,11 @@ from tests.fakes import (
     FakeChatApi,
     FakeFetch,
     conversation,
+    done,
     page,
+    tokens,
 )
+from tests.test_sanitize import assert_safe
 
 APP = pathlib.Path(__file__).resolve().parents[1] / "app.py"
 BACKEND = "http://backend.test:8000"
@@ -70,6 +78,102 @@ def open_app(fake: FakeChatApi, fetch: FakeFetch) -> OpenApp:
         return app
 
     return open_
+
+
+class Sent:
+    """Every message the page sends towards the browser, in order.
+
+    AppTest keeps only the last version of each element, and Streamlit's queue merges
+    updates to one element; recording at the queue's entry sees every intermediate
+    state a browser could be shown. Strings in the log are markers set by the test.
+    """
+
+    def __init__(self) -> None:
+        self.log: list[ForwardMsg | str] = []
+
+    def mark(self, label: str) -> None:
+        self.log.append(label)
+
+    def watch(self, fake: FakeChatApi) -> None:
+        """Marks where the page opens and closes the answer stream."""
+        fake.on_stream_start = lambda: self.mark("stream started")
+        fake.on_stream_closed = lambda: self.mark("stream closed")
+
+
+# The proto is untyped (protobuf ships no stubs); fields are read with getattr.
+Element = tuple[tuple[int, ...], str, object]
+
+
+def elements(log: list[ForwardMsg | str]) -> Iterator[Element]:
+    """(delta path, element kind, element proto) of each element drawn."""
+    for item in log:
+        if not isinstance(item, ForwardMsg) or item.WhichOneof("type") != "delta":
+            continue
+        if item.delta.WhichOneof("type") != "new_element":
+            continue
+        element = item.delta.new_element
+        kind = element.WhichOneof("type")
+        assert kind is not None
+        yield tuple(item.metadata.delta_path), kind, getattr(element, kind)
+
+
+def bubbles(log: list[ForwardMsg | str]) -> list[tuple[str, tuple[int, ...]]]:
+    """(role, delta path) of each chat message block opened."""
+    found = []
+    for item in log:
+        if isinstance(item, ForwardMsg) and item.WhichOneof("type") == "delta":
+            block = item.delta.add_block
+            if item.delta.WhichOneof("type") == "add_block" and block.HasField("chat_message"):
+                found.append((block.chat_message.name, tuple(item.metadata.delta_path)))
+    return found
+
+
+def texts_in(log: list[ForwardMsg | str], role: str) -> list[str]:
+    """The plain and Markdown texts drawn inside the chat messages of one role."""
+    paths = [path for name, path in bubbles(log) if name == role]
+    return [
+        str(getattr(proto, "body", ""))
+        for path, kind, proto in elements(log)
+        if kind in {"text", "markdown"} and any(path[: len(p)] == p for p in paths)
+    ]
+
+
+def answer_updates(log: list[ForwardMsg | str]) -> list[str]:
+    """Every body drawn into the answer's text slot, from the priming caption on (the
+    placeholder itself draws an empty element first).
+    """
+    drawn = [
+        (path, str(getattr(proto, "body", "")))
+        for path, kind, proto in elements(log)
+        if kind != "empty"
+    ]
+    (slot,) = {path for path, body in drawn if body == PRIMING_TEXT}
+    return [body for path, body in drawn if path == slot]
+
+
+@pytest.fixture
+def sent(monkeypatch: pytest.MonkeyPatch) -> Sent:
+    recorder = Sent()
+    enqueue = ForwardMsgQueue.enqueue
+
+    def record(queue: ForwardMsgQueue, msg: ForwardMsg) -> None:
+        copy = ForwardMsg()
+        copy.CopyFrom(msg)
+        recorder.log.append(copy)
+        enqueue(queue, msg)
+
+    monkeypatch.setattr(ForwardMsgQueue, "enqueue", record)
+    return recorder
+
+
+def ask(app: AppTest, question: str) -> AppTest:
+    app.chat_input(key="question").set_value(question).run()
+    assert not app.exception
+    return app
+
+
+def main_errors(app: AppTest) -> list[str]:
+    return [str(e.value) for e in app.main.error]
 
 
 def click(app: AppTest, key: str) -> AppTest:
@@ -383,3 +487,235 @@ def test_a_notice_is_shown_once(open_app: OpenApp, fake: FakeChatApi) -> None:
     app.run()
 
     assert sidebar_text(app) == []
+
+
+# --- sending a question ----------------------------------------------------------
+
+# An image split across tokens: some prefixes hold half an image, one a whole one.
+EVIL_TOKENS = ("Press ", "!", "[x", "](http://evil", ".invalid/a.png)", " then OK [S1].")
+
+
+def test_every_update_of_the_streaming_answer_shows_the_sanitized_text_so_far(
+    open_app: OpenApp, fake: FakeChatApi, sent: Sent
+) -> None:
+    fake.created = [conversation(A, None)]
+    fake.streams = [((*tokens(*EVIL_TOKENS), done("Press OK [S1].")), None)]
+    sent.watch(fake)
+    app = open_app(cid=CID)
+
+    ask(app, "How do I print?")
+
+    prefixes = list(accumulate(EVIL_TOKENS))
+    with pytest.raises(AssertionError):
+        assert_safe(prefixes[4])  # control: unsanitized, this prefix is an image
+    updates = answer_updates(sent.log[: sent.log.index("stream closed")])
+    # Streamlit strips a Markdown body before sending it.
+    assert updates == [PRIMING_TEXT, *(sanitize_markdown(p).strip() for p in prefixes)]
+    for body in updates:
+        assert_safe(body)
+    assert "evil.invalid" not in "".join(
+        str(getattr(proto, "src", "")) for _, _, proto in elements(sent.log)
+    )
+
+
+def test_the_question_and_the_priming_caption_are_drawn_before_the_answer_is_read(
+    open_app: OpenApp, fake: FakeChatApi, sent: Sent
+) -> None:
+    fake.created = [conversation(A, None)]
+    fake.streams = [((*tokens("Hi."), done("Hi.")), None)]
+    sent.watch(fake)
+    app = open_app(cid=CID)
+
+    ask(app, "  How do I *print*?  ")
+
+    before = sent.log[: sent.log.index("stream started")]
+    assert texts_in(before, "user") == ["How do I *print*?"]
+    assert texts_in(before, "assistant") == [PRIMING_TEXT]
+    assert fake.questions == ["How do I *print*?"]
+
+
+def test_every_widget_is_disabled_while_the_answer_streams_and_enabled_after(
+    open_app: OpenApp, fake: FakeChatApi, sent: Sent
+) -> None:
+    fake.pages[None] = page(conversation(B), next_cursor="cursor-1")
+    fake.created = [conversation(A, None)]
+    fake.streams = [((*tokens("Hi."), done("Hi.")), None)]
+    app = open_app(cid=CID)
+    click(app, f"delete-{B}")  # the inline confirmation adds two more buttons
+    sent.log.clear()
+    sent.watch(fake)
+
+    ask(app, "How do I print?")
+
+    sending = sent.log[: sent.log.index("stream closed")]
+    widgets = [
+        (kind, bool(getattr(proto, "disabled")))  # noqa: B009 - untyped proto
+        for _, kind, proto in elements(sending)
+        if "disabled" in getattr(proto, "DESCRIPTOR").fields_by_name  # noqa: B009 - untyped proto
+    ]
+    kinds = [kind for kind, _ in widgets]
+    assert kinds.count("button") == 7  # new, open, delete, confirm, cancel, more, refresh
+    assert kinds.count("chat_input") == 1
+    assert all(disabled for _, disabled in widgets)
+    assert not app.chat_input(key="question").disabled
+    assert not [b for b in app.button if b.disabled]
+
+
+def test_a_question_is_posted_once_however_often_the_page_reruns(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.created = [conversation(A, None)]
+    fake.streams = [((*tokens("Hi."), done("Hi.")), None)]
+    app = open_app(cid=CID)
+
+    ask(app, "How do I print?")
+    app.run()
+    app.run()
+
+    assert not app.exception
+    assert (fake.count("create"), fake.count("stream")) == (1, 1)
+    assert fake.questions == ["How do I print?"]
+    assert fake.streams_closed == 1
+
+
+def test_a_blank_question_sends_nothing(open_app: OpenApp, fake: FakeChatApi) -> None:
+    app = open_app(cid=CID)
+
+    ask(app, "   ")
+
+    assert (fake.count("create"), fake.count("stream")) == (0, 0)
+
+
+def test_the_input_refuses_text_longer_than_the_backend_accepts(
+    open_app: OpenApp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("UI_MESSAGE_MAX_CHARS", "321")
+
+    app = open_app(cid=CID)
+
+    assert app.chat_input(key="question").max_chars == 321
+
+
+def test_the_first_question_creates_the_conversation_and_puts_it_in_the_url_first(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.created = [conversation(A, None)]
+    fake.streams = [((*tokens("Hi."), done("Hi.")), None)]
+    url_when_reading: list[dict[str, str]] = []
+    fake.on_stream_start = lambda: url_when_reading.append(st.query_params.to_dict())
+    app = open_app(cid=CID)
+    fake.pages[None] = page(conversation(A, "How do I print?"))
+
+    ask(app, "How do I print?")
+
+    # A reload while the answer streams finds the conversation in the URL.
+    assert url_when_reading == [{"cid": CID, "conv": A}]
+    assert [call for call in fake.calls if call[0] != "list"] == [("create", None), ("stream", A)]
+    assert app.query_params["conv"] == A
+    assert conversation_buttons(app) == [(A, escape_markdown("How do I print?"))]
+    assert is_selected(app, A)
+    assert fake.count("list") == 2
+
+
+def test_a_question_in_the_open_conversation_creates_nothing(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.pages[None] = page(conversation(A))
+    fake.streams = [((*tokens("Hi."), done("Hi.")), None)]
+    app = open_app(cid=CID, conv=A)
+
+    ask(app, "How do I print?")
+
+    assert [call for call in fake.calls if call[0] != "list"] == [("stream", A)]
+    assert app.query_params["conv"] == A
+
+
+@pytest.mark.parametrize(
+    ("code", "status_code", "wording"),
+    [
+        ("backend_unreachable", None, "The chat service can't be reached right now."),
+        ("bad_response", 200, "The chat service sent a response this page couldn't read."),
+    ],
+)
+def test_a_failed_create_sends_nothing_and_keeps_the_question_to_copy(
+    open_app: OpenApp, fake: FakeChatApi, code: str, status_code: int | None, wording: str
+) -> None:
+    fake.created = [ApiError(code, status=status_code, request_id="req-12345678")]
+    app = open_app(cid=CID)
+
+    ask(app, "How do I print?")
+
+    assert fake.count("stream") == 0
+    assert main_errors(app) == [wording]
+    assert [c.value for c in app.code] == ["How do I print?"]
+    assert [c.value for c in app.caption] == [escape_markdown("Request ID: req-12345678")]
+    assert not app.chat_message
+    assert "conv" not in app.query_params
+
+
+def test_a_send_refused_before_the_first_token_keeps_the_question_out_of_the_thread(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.created = [conversation(A, None)]
+    fake.streams = [((), ApiError("llm_unavailable", status=503))]
+    app = open_app(cid=CID)
+
+    ask(app, "How do I print?")
+
+    assert main_errors(app) == [
+        "The language model is unavailable right now. Try again in a moment."
+    ]
+    assert [c.value for c in app.code] == ["How do I print?"]
+    assert not app.caption  # no request ID to show
+    assert not app.chat_message
+    assert app.query_params["conv"] == A  # the conversation exists; the question can be resent
+
+
+def test_a_failure_mid_stream_shows_its_wording_without_offering_the_stored_question(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.created = [conversation(A, None)]
+    fake.streams = [(tokens("Press the"), ApiError("llm_error", status=200))]
+    app = open_app(cid=CID)
+
+    ask(app, "How do I print?")
+
+    assert main_errors(app) == ["The language model couldn't answer this question."]
+    assert not app.code
+
+
+def test_a_send_answering_not_found_drops_the_conversation_and_keeps_the_question(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.pages[None] = page(conversation(A), conversation(B))
+    fake.streams = [((), ApiError("conversation_not_found", status=404))]
+    app = open_app(cid=CID, conv=A)
+    fake.pages[None] = page(conversation(B))
+
+    ask(app, "Still there?")
+
+    assert "conv" not in app.query_params
+    assert sidebar_text(app) == ["This conversation doesn't exist or was deleted."]
+    assert main_errors(app) == ["This conversation doesn't exist or was deleted."]
+    assert [c.value for c in app.code] == ["Still there?"]
+    assert [key for key, _ in conversation_buttons(app)] == [B]
+    assert fake.count("list") == 2
+    assert fake.count("create") == 0
+
+
+def test_the_last_error_is_cleared_by_the_next_question(
+    open_app: OpenApp, fake: FakeChatApi
+) -> None:
+    fake.created = [conversation(A, None)]
+    fake.streams = [
+        ((), ApiError("llm_timeout", status=503)),
+        ((*tokens("Hi."), done("Hi.")), None),
+    ]
+    app = open_app(cid=CID)
+    ask(app, "How do I print?")
+    assert main_errors(app)
+
+    ask(app, "How do I print?")
+
+    assert main_errors(app) == []
+    assert not app.code

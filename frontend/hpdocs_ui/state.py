@@ -90,15 +90,11 @@ def send_finished(
     nothing, the question is kept only in the error view, to be resent.
     """
     answer = answer_from_stream(events, error)
-    # Title and order change after any send, and a new conversation must appear.
-    state = replace(state, list_stale=True)
     if answer is None:
         # answer_from_stream returns None only for an error before the stream started.
-        refused = cast("ApiError", error)
-        if refused.code == _NOT_FOUND:
-            # Deleted elsewhere: drop the selection, or every resend fails the same way.
-            state = thread_missing(state)
-        return replace(state, send_error=error_view(refused, question=question))
+        return not_sent(state, question, cast("ApiError", error))
+    # Title and order change after any send, and a new conversation must appear.
+    state = replace(state, list_stale=True)
     asked = MessageView(role="user", text=question, state=None, sources=())
     return replace(
         state,
@@ -106,6 +102,17 @@ def send_finished(
         thread_for=state.conversation_id,
         send_error=None if error is None else error_view(error),
     )
+
+
+def not_sent(state: UiState, question: str, error: ApiError) -> UiState:
+    """Nothing reached the stream, whatever the status said (a create can fail with a
+    wrong 200), so the question is kept only in the error view, to be resent.
+    """
+    state = replace(state, list_stale=True)
+    if error.code == _NOT_FOUND:
+        # Deleted elsewhere: drop the selection, or every resend fails the same way.
+        state = thread_missing(state)
+    return replace(state, send_error=error_view(error, question=question))
 
 
 def select(state: UiState, conversation_id: str) -> UiState:

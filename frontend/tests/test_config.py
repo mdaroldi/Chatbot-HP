@@ -32,6 +32,10 @@ RENDERING = frozenset(
 SAFE_HELPERS = frozenset({"sanitize_markdown", "escape_markdown", "conversation_label"})
 # Tables of fixed wording, indexed by a code or state.
 WORDING_TABLES = frozenset({"NOTICE_TEXT", "ERROR_TEXT", "REFUSAL_TEXT"})
+# Module constants holding one fixed string each (hpdocs_ui.chat_view).
+FIXED_TEXT = frozenset({"PRIMING_TEXT"})
+# The one function allowed to call markdown(): it renders answers, always sanitized.
+ANSWER_RENDERER = ("chat.py", "render_answer_text")
 # Reviewed exceptions: attributes that only ever hold fixed wording.
 EXCEPTIONS = {
     "view.headline": "StatusView.headline, fixed headlines from view.describe()",
@@ -129,6 +133,8 @@ def _is_safe(node: ast.expr) -> bool:
         return name in SAFE_HELPERS
     if isinstance(node, ast.Subscript):
         return isinstance(node.value, ast.Name) and node.value.id in WORDING_TABLES
+    if isinstance(node, ast.Name):
+        return node.id in FIXED_TEXT
     return ast.unparse(node) in EXCEPTIONS
 
 
@@ -161,6 +167,7 @@ def rendering_violations(source: str) -> list[str]:
         "st.button(label=title)",
         "RENDER = {'ok': st.success}",
         "st.error(OTHER_TABLE[code])",
+        "slot.caption(OTHER_TEXT)",
     ],
 )
 def test_the_rendering_check_flags_unsafe_text(snippet: str) -> None:
@@ -176,6 +183,7 @@ def test_the_rendering_check_flags_unsafe_text(snippet: str) -> None:
         "st.button('Delete', key=k)",
         "st.error(error.text)",
         "st.text(anything)",
+        "slot.caption(PRIMING_TEXT)",
     ],
 )
 def test_the_rendering_check_accepts_safe_text(snippet: str) -> None:
@@ -186,6 +194,41 @@ def test_every_markdown_rendering_call_gets_safe_text() -> None:
     assert len(UI_SOURCES) >= 2
     for source in UI_SOURCES:
         assert rendering_violations(source.read_text()) == [], source.name
+
+
+def markdown_callers(source: str) -> list[str]:
+    """The function enclosing each markdown() call ("<module>" at the top level)."""
+    callers = []
+
+    def visit(node: ast.AST, enclosing: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.FunctionDef):
+                visit(child, child.name)
+                continue
+            if isinstance(child, ast.Call) and getattr(child.func, "attr", None) == "markdown":
+                callers.append(enclosing)
+            visit(child, enclosing)
+
+    visit(ast.parse(source), "<module>")
+    return callers
+
+
+def test_the_markdown_caller_check_names_the_enclosing_function() -> None:
+    source = (
+        "st.markdown('a')\ndef f():\n    slot.markdown(x)\n    def g():\n        st.markdown(y)\n"
+    )
+
+    assert markdown_callers(source) == ["<module>", "f", "g"]
+
+
+def test_markdown_is_called_only_where_answers_are_rendered() -> None:
+    callers = [
+        (source.name, caller)
+        for source in UI_SOURCES
+        for caller in markdown_callers(source.read_text())
+    ]
+
+    assert callers == [ANSWER_RENDERER]
 
 
 def test_only_the_streamlit_layer_imports_streamlit() -> None:

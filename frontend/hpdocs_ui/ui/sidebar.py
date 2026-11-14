@@ -46,7 +46,8 @@ def check_status(settings: FrontendSettings) -> StatusView:
     return view
 
 
-def render(api: ChatApi, backend: StatusView) -> None:
+def render(api: ChatApi, backend: StatusView, *, disabled: bool) -> None:
+    """Every button is disabled while an answer streams: a click would stop it."""
     state = session.get()
     with st.sidebar:
         _notice(state)
@@ -54,17 +55,24 @@ def render(api: ChatApi, backend: StatusView) -> None:
             "New conversation",
             key="new-conversation",
             icon=":material/add:",
+            disabled=disabled,
             on_click=session.apply,
             args=(ui.new_conversation,),
         )
         for conversation in state.conversations:
-            _conversation_row(api, state, conversation)
+            _conversation_row(api, state, conversation, disabled=disabled)
         if state.next_cursor is not None:
-            st.button("Load more", key="load-more", on_click=_load_more, args=(api,))
+            st.button(
+                "Load more",
+                key="load-more",
+                disabled=disabled,
+                on_click=_load_more,
+                args=(api,),
+            )
         if state.sidebar_error is not None:
             error = state.sidebar_error
             st.error(error.text)
-        _status(backend)
+        _status(backend, disabled=disabled)
 
 
 def _notice(state: UiState) -> None:
@@ -77,7 +85,9 @@ def _notice(state: UiState) -> None:
     session.put(ui.notice_shown(state))
 
 
-def _conversation_row(api: ChatApi, state: UiState, conversation: Conversation) -> None:
+def _conversation_row(
+    api: ChatApi, state: UiState, conversation: Conversation, *, disabled: bool
+) -> None:
     conversation_id = conversation.id
     current = conversation_id == state.conversation_id
     title, delete = st.columns([5, 1], vertical_alignment="center")
@@ -86,6 +96,7 @@ def _conversation_row(api: ChatApi, state: UiState, conversation: Conversation) 
         key=f"open-{conversation_id}",
         type="primary" if current else "tertiary",
         width="stretch",
+        disabled=disabled,
         on_click=session.apply,
         args=(ui.select, conversation_id),
     )
@@ -95,6 +106,7 @@ def _conversation_row(api: ChatApi, state: UiState, conversation: Conversation) 
         icon=":material/delete:",
         help="Delete this conversation",
         type="tertiary",
+        disabled=disabled,
         on_click=session.apply,
         args=(ui.ask_delete, conversation_id),
     )
@@ -106,12 +118,14 @@ def _conversation_row(api: ChatApi, state: UiState, conversation: Conversation) 
         "Delete",
         key=f"confirm-delete-{conversation_id}",
         type="primary",
+        disabled=disabled,
         on_click=_delete,
         args=(api, conversation_id),
     )
     cancel.button(
         "Cancel",
         key=f"cancel-delete-{conversation_id}",
+        disabled=disabled,
         on_click=session.apply,
         args=(ui.cancel_delete,),
     )
@@ -140,7 +154,7 @@ def _delete(api: ChatApi, conversation_id: str) -> None:
     session.put(ui.deleted(state, conversation_id))
 
 
-def _status(view: StatusView) -> None:
+def _status(view: StatusView, *, disabled: bool) -> None:
     with st.expander("Backend status", expanded=False):
         if view.level == "success":
             st.success(view.headline)
@@ -153,6 +167,7 @@ def _status(view: StatusView) -> None:
         st.button(
             "Refresh status",
             key="refresh-status",
+            disabled=disabled,
             on_click=session.apply,
             args=(ui.refresh_status,),
         )

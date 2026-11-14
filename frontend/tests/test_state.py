@@ -16,6 +16,7 @@ from hpdocs_ui.state import (
     initial,
     list_loaded,
     new_conversation,
+    not_sent,
     notice_shown,
     queue,
     refresh_status,
@@ -212,6 +213,26 @@ def test_a_send_to_a_conversation_gone_before_the_stream_clears_it_and_keeps_the
         question="Q?",
     )
     assert not state.needs_thread
+
+
+def test_a_question_never_sent_stays_only_in_the_error_view_whatever_the_status() -> None:
+    # A failed create can carry status 200 (a wrong 2xx answer), yet no answer was
+    # streamed or stored: the status must not turn it into a failed answer.
+    start = list_loaded(
+        selected(), ConversationPage(items=(conversation(A),), next_cursor=None), more=False
+    )
+    assert not start.list_stale
+    error = ApiError("bad_response", status=200, request_id="req-12345678")
+
+    state = not_sent(start, "Q?", error)
+
+    assert (state.thread, state.thread_for) == (start.thread, start.thread_for)
+    assert state.send_error == ErrorView(
+        text="The chat service sent a response this page couldn't read.",
+        request_id="req-12345678",
+        question="Q?",
+    )
+    assert state.list_stale
 
 
 def test_an_answer_to_a_conversation_with_no_loaded_thread_starts_one() -> None:

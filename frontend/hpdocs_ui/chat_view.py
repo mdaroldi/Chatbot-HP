@@ -43,6 +43,8 @@ REFUSAL_TEXT: Mapping[RefusalReason, str] = {
     "provider_refused": "The model declined to answer this question.",
 }
 UNKNOWN_REFUSAL_TEXT = "I can't answer this question from the manuals."
+# Shown in the answer's place until its first words arrive.
+PRIMING_TEXT = "Searching the manuals and writing the answer..."
 # A conversation is titled after its first question; until then it has this label.
 UNTITLED = "Untitled conversation"
 

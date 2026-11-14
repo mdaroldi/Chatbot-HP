@@ -1,10 +1,18 @@
 """A scripted ChatApi for page tests: canned results per call, and a record of calls."""
 
-from collections.abc import Iterator
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, datetime
 
-from hpdocs_ui.api import Conversation, ConversationDetail, ConversationPage, StreamEvent
+from hpdocs_ui.api import (
+    Conversation,
+    ConversationDetail,
+    ConversationPage,
+    Done,
+    Flags,
+    StreamEvent,
+    Token,
+)
 from hpdocs_ui.errors import ApiError
 from hpdocs_ui.status import BackendStatus
 
@@ -25,12 +33,50 @@ def page(*items: Conversation, next_cursor: str | None = None) -> ConversationPa
     return ConversationPage(items=items, next_cursor=next_cursor)
 
 
+def tokens(*texts: str) -> tuple[Token, ...]:
+    return tuple(Token(text=text) for text in texts)
+
+
+def done(content: str, conversation_id: str = A, *, uncited: bool = False) -> Done:
+    flags = Flags(
+        late_refusal_marker=False,
+        uncited=uncited,
+        invalid_citations=False,
+        rewrite_fallback=False,
+        truncated=False,
+    )
+    return Done(
+        conversation_id=conversation_id,
+        user_message_id="user-message",
+        message_id="assistant-message",
+        outcome="completed",
+        refusal=False,
+        refusal_reason=None,
+        content=content,
+        citations=() if uncited else ("S1",),
+        flags=flags,
+    )
+
+
+# The events one POST /messages yields, then the error it raises (if any).
+StreamScript = tuple[tuple[StreamEvent, ...], ApiError | None]
+
+
 class FakeChatApi:
     """Implements the ChatApi Protocol. A call nobody scripted fails the test."""
 
     def __init__(self) -> None:
         self.pages: dict[str | None, ConversationPage | ApiError] = {None: EMPTY_PAGE}
         self.delete_errors: dict[str, ApiError] = {}
+        self.created: list[Conversation | ApiError] = []
+        self.details: dict[str, ConversationDetail | ApiError] = {}
+        self.streams: list[StreamScript] = []
+        # Called inside the page run when the page starts reading an answer, and when
+        # it closes the stream.
+        self.on_stream_start: Callable[[], None] | None = None
+        self.on_stream_closed: Callable[[], None] | None = None
+        self.questions: list[str] = []
+        self.streams_closed = 0
         self.calls: list[tuple[str, str | None]] = []
         self.client_ids: list[str] = []
 
@@ -38,7 +84,13 @@ class FakeChatApi:
         return sum(1 for call, _ in self.calls if call == name)
 
     def create_conversation(self) -> Conversation:
-        raise AssertionError("create_conversation was not scripted")
+        self.calls.append(("create", None))
+        if not self.created:
+            raise AssertionError("create_conversation was not scripted")
+        result = self.created.pop(0)
+        if isinstance(result, ApiError):
+            raise result
+        return result
 
     def list_conversations(self, cursor: str | None = None) -> ConversationPage:
         self.calls.append(("list", cursor))
@@ -48,7 +100,13 @@ class FakeChatApi:
         return result
 
     def get_conversation(self, conversation_id: str) -> ConversationDetail:
-        raise AssertionError(f"get_conversation({conversation_id}) was not scripted")
+        self.calls.append(("get", conversation_id))
+        if conversation_id not in self.details:
+            raise AssertionError(f"get_conversation({conversation_id}) was not scripted")
+        result = self.details[conversation_id]
+        if isinstance(result, ApiError):
+            raise result
+        return result
 
     def delete_conversation(self, conversation_id: str) -> None:
         self.calls.append(("delete", conversation_id))
@@ -58,7 +116,32 @@ class FakeChatApi:
     def stream_answer(
         self, conversation_id: str, content: str
     ) -> AbstractContextManager[Iterator[StreamEvent]]:
-        raise AssertionError(f"stream_answer({conversation_id}, {content!r}) was not scripted")
+        self.calls.append(("stream", conversation_id))
+        self.questions.append(content)
+        if not self.streams:
+            raise AssertionError(f"stream_answer({conversation_id}) was not scripted")
+        events, error = self.streams.pop(0)
+        return self._open(events, error)
+
+    @contextmanager
+    def _open(
+        self, events: tuple[StreamEvent, ...], error: ApiError | None
+    ) -> Iterator[Iterator[StreamEvent]]:
+        try:
+            yield self._events(events, error)
+        finally:
+            self.streams_closed += 1
+            if self.on_stream_closed is not None:
+                self.on_stream_closed()
+
+    def _events(
+        self, events: tuple[StreamEvent, ...], error: ApiError | None
+    ) -> Iterator[StreamEvent]:
+        if self.on_stream_start is not None:
+            self.on_stream_start()
+        yield from events
+        if error is not None:
+            raise error
 
 
 class FakeFetch:
