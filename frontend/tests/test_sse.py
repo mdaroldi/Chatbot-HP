@@ -10,7 +10,13 @@ from collections.abc import Iterator
 
 import pytest
 
-from hpdocs_ui.sse import SseEvent, SseParser, iter_events
+from hpdocs_ui.sse import (
+    MAX_PENDING_FRAME_BYTES,
+    SseEvent,
+    SseFrameTooLargeError,
+    SseParser,
+    iter_events,
+)
 
 # What the backend's frame() and KEEPALIVE produce (backend/app/api/messages.py).
 BACKEND_STREAM = (
@@ -168,3 +174,53 @@ def test_iter_events_yields_each_event_as_its_chunk_arrives_and_flushes_at_the_e
     assert seen == ["data: a\n\nda"]
     assert list(events) == [SseEvent("message", "b"), SseEvent("message", "c")]
     assert seen == ["data: a\n\nda", "ta: b\n\ndata: c"]
+
+
+def test_the_pending_frame_cap_is_one_mebibyte() -> None:
+    assert MAX_PENDING_FRAME_BYTES == 1024 * 1024
+
+
+def frame_of(size: int) -> str:
+    """A data frame whose text before the blank line is exactly `size` UTF-8 bytes."""
+    prefix = "data: "
+    filler = "é" * ((size - len(prefix) - 1) // 2)
+    filler += "x" * (size - len(prefix) - 1 - 2 * len(filler))
+    text = prefix + filler + "\n"
+    assert len(text.encode()) == size
+    return text
+
+
+def test_a_frame_at_the_cap_is_delivered() -> None:
+    frame = frame_of(MAX_PENDING_FRAME_BYTES)
+
+    events = SseParser().feed(frame + "\n")
+
+    assert [len(event.data.encode()) for event in events] == [MAX_PENDING_FRAME_BYTES - 7]
+
+
+def test_one_byte_over_the_cap_raises_before_the_blank_line() -> None:
+    parser = SseParser()
+
+    with pytest.raises(SseFrameTooLargeError):
+        parser.feed(frame_of(MAX_PENDING_FRAME_BYTES + 1))
+
+
+def test_one_unterminated_line_over_the_cap_raises_while_it_arrives() -> None:
+    parser = SseParser()
+    body = "x" * (MAX_PENDING_FRAME_BYTES - len("data: "))
+
+    assert parser.feed("data: ") == []
+    for start in range(0, len(body), 65536):
+        assert parser.feed(body[start : start + 65536]) == []
+    with pytest.raises(SseFrameTooLargeError):
+        parser.feed("x")
+
+
+def test_many_small_frames_beyond_the_cap_in_total_never_trip_it() -> None:
+    parser = SseParser()
+    frame = 'event: token\ndata: {"text": "' + "x" * 1000 + '"}\n\n'
+    count = 3 * MAX_PENDING_FRAME_BYTES // len(frame)
+
+    events = [event for _ in range(count) for event in parser.feed(frame)]
+
+    assert len(events) == count
