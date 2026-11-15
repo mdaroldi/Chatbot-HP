@@ -16,3 +16,4 @@ considered, consequences.
 | [0009](0009-retrieval-strategy-and-evaluation.md) | Retrieval strategy and evaluation method |
 | [0010](0010-chat-api.md) | Chat API: conversations, SSE answers, three refusal reasons, rate limits, retention |
 | [0011](0011-chat-ui.md) | Chat UI: Streamlit page, state model, safe rendering, page guard |
+| [0012](0012-answer-benchmark.md) | Answer benchmark: harness over the chat API, judge, $10 budget, dev ablation and held-out result |
