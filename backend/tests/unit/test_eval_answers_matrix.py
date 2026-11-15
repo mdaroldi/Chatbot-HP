@@ -194,6 +194,21 @@ def test_the_repository_matrix_holds_the_owner_budget_and_run_order() -> None:
     assert {run.name for run in matrix.runs if run.reserved} == {"heldout", "improvement"}
     assert {run.name for run in matrix.runs if run.judge} == {"reference-1", "heldout"}
     assert matrix.run("reference-1").judge_repeat == 20
+    # Owner levers 2 and 3: references 2-3 and the improvement re-run on answers-v1 dev only.
+    assert {run.name: run.items.value for run in matrix.runs} == {
+        "reference-1": "dev",
+        "reference-2": "answers-dev",
+        "reference-3": "answers-dev",
+        "heldout": "heldout",
+        "improvement": "answers-dev",
+        "hybrid-no-rerank": "answers-dev",
+        "dense": "answers-dev",
+        "naive": "answers-dev",
+        "rewrite-off": "multi-turn-dev",
+        "k3": "answers-dev",
+        "sparse": "answers-dev",
+        "k8": "answers-dev",
+    }
 
 
 def test_the_stub_matrix_prices_the_stub_model_at_zero_and_keeps_the_rest() -> None:

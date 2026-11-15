@@ -6,7 +6,12 @@
 #
 # Runs are in priority order: when the budget runs short, the last rows are cut first.
 # Reserved runs (held-out, one improvement re-run) are funded up front, so a cut never
-# reaches them. A run's env sets only allowlisted backend settings; everything else is
+# reaches them. Owner levers after the pilot (2026-11-15): the judge sees in-scope items
+# only (1a, in code); references 2-3 and the improvement re-run use answers-dev (2, 3),
+# so the noise floor covers the primary metric and the slices run in reference 1. The
+# pilot measured $0.0082 per answer, above the owner's $0.008 line: k3, sparse and k8
+# stay as the last, conditional rows. Each runs only if its start check passes; a row
+# that does not run is reported as "not run: budget". A run's env sets only allowlisted backend settings; everything else is
 # the default stack. Item sets: dev (105 items), answers-dev (the 56 answers-v1 dev
 # items), multi-turn-dev (10 items), heldout (30 items, one run only).
 
@@ -66,11 +71,11 @@ judge_repeat = 20  # re-judged items for the judge's repeatability
 
 [[runs]]
 name = "reference-2"
-items = "dev"
+items = "answers-dev"
 
 [[runs]]
 name = "reference-3"
-items = "dev"
+items = "answers-dev"
 
 [[runs]]
 name = "heldout"
@@ -80,7 +85,7 @@ reserved = true
 
 [[runs]]
 name = "improvement"
-items = "dev"
+items = "answers-dev"
 reserved = true
 
 [[runs]]
