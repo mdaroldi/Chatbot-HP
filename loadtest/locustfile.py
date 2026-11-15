@@ -22,7 +22,7 @@ from hpdocs_load.client_id import new_client_id
 from hpdocs_load.config import config_from_env
 from hpdocs_load.ramp import measured_windows, tick
 from hpdocs_load.run_files import RunFiles
-from hpdocs_load.samplers import run_command, take_samples
+from hpdocs_load.samplers import HostProbes, run_command, take_samples
 from hpdocs_load.session import Reply, Session, StreamReply
 from hpdocs_load.stages import logs_command, parse_stage_logs
 from hpdocs_load.workload import GOLDEN, load_question_pool, page_open, plan_conversation
@@ -32,6 +32,7 @@ POOL = load_question_pool(GOLDEN)
 # S311: load-test randomness must be reproducible from a seed; nothing here is a secret.
 SEEDS = random.Random(CONFIG.seed)  # noqa: S311
 RESULTS = pathlib.Path(__file__).resolve().parent / "results"
+HOST = HostProbes(psutil.virtual_memory, psutil.swap_memory, os.sysconf("SC_PAGE_SIZE"))
 STATE: dict[str, object] = {}
 
 
@@ -102,8 +103,7 @@ def _sample_forever(files: RunFiles) -> None:
             take_samples(
                 at=time.time(),
                 docker=run_command,
-                memory=psutil.virtual_memory,
-                swap=psutil.swap_memory,
+                host=HOST,
                 generator_cpu=lambda: process.cpu_percent(None),
             )
         )

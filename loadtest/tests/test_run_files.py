@@ -46,7 +46,7 @@ def test_requests_are_appended_and_readable_while_running(tmp_path: pathlib.Path
 
 def test_samples_carry_their_kind(tmp_path: pathlib.Path) -> None:
     with RunFiles.create(tmp_path, "r") as files:
-        files.add_samples([HostSample(1.0, 50.0, 100, 0, 0.0), GeneratorSample(1.0, 12.0)])
+        files.add_samples([HostSample(1.0, 50.0, 100, 0, 0.0, 9, 4), GeneratorSample(1.0, 12.0)])
         lines = (files.directory / "samples.jsonl").read_text().splitlines()
 
     assert [json.loads(line) for line in lines] == [
@@ -57,6 +57,8 @@ def test_samples_carry_their_kind(tmp_path: pathlib.Path) -> None:
             "mem_available_bytes": 100,
             "swap_used_bytes": 0,
             "swap_percent": 0.0,
+            "pageins": 9,
+            "pageouts": 4,
         },
         {"kind": "generator", "at": 1.0, "cpu_percent": 12.0},
     ]

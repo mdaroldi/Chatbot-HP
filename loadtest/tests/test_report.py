@@ -11,10 +11,13 @@ import pytest
 from hpdocs_load.metrics import RequestRecord, write_record
 from hpdocs_load.report import (
     GENERATOR_SATURATED_PERCENT,
+    MAX_PAGEOUTS_PER_MINUTE,
+    MAX_RUN_SWAP_GROWTH_BYTES,
     MIN_WINDOW_SECONDS,
     Slo,
     build_rows,
     headline,
+    host_span,
     main,
     parse_slo,
     render,
@@ -58,7 +61,20 @@ def sample(at: float, kind: str, cpu: float = 0.0, **kw: object) -> dict[str, ob
     return {"kind": kind, "at": at, "cpu_percent": cpu, **kw}
 
 
+def host(at: float, swap: int = 0, pageouts: int = 0, **kw: object) -> dict[str, object]:
+    fields = {"mem_percent": 50.0, "mem_available_bytes": 4 * 1024**3, "pageins": 0}
+    return {
+        "kind": "host",
+        "at": at,
+        "swap_used_bytes": swap,
+        "pageouts": pageouts,
+        **fields,
+        **kw,
+    }
+
+
 WINDOW = (5, 100.0, 300.0)  # 200 s: long enough
+_MIB = 1024**2
 
 
 # ---------------------------------------------------------------- SLO
@@ -236,7 +252,8 @@ def write_run(directory: pathlib.Path) -> None:
     (directory / "run.json").write_text(json.dumps(meta(WINDOW)))
     with (directory / "requests.jsonl").open("w") as out:
         write_record(out, message(150.0))
-    (directory / "samples.jsonl").write_text(json.dumps(sample(200.0, "generator", 5.0)) + "\n")
+    lines = [sample(200.0, "generator", 5.0), host(150.0), host(250.0, pageouts=5)]
+    (directory / "samples.jsonl").write_text("".join(json.dumps(s) + "\n" for s in lines))
     stage = {"at": 150.0, "request_id": "a", "kind": "retrieval", "timings": {"rerank_ms": 1.0}}
     (directory / "stages.jsonl").write_text(json.dumps(stage) + "\n")
 
@@ -253,6 +270,7 @@ def test_main_prints_and_writes_the_report(
 
     printed = capsys.readouterr().out
     assert "| 5 |" in printed
+    assert "page-outs +5" in printed
     assert (run / "report.md").read_text() == printed
 
 
@@ -268,9 +286,95 @@ def test_main_works_before_the_slo_exists(tmp_path: pathlib.Path) -> None:
 def test_render_marks_why_a_step_does_not_count() -> None:
     short = build_rows(meta((1, 0.0, 60.0)), [message(30.0)], [sample(30.0, "generator")], [])
     saturated = build_rows(meta(WINDOW), [message(150.0)], [sample(150.0, "generator", 95.0)], [])
+    paging = [sample(150.0, "generator"), host(120.0), host(180.0, pageouts=10_000)]
+    pressured = build_rows(meta(WINDOW), [message(150.0)], paging, [])
 
     assert "no (short)" in render(short, SLO)
     assert "no (generator)" in render(saturated, SLO)
+    assert "no (memory)" in render(pressured, SLO)
+
+
+# ---------------------------------------------------------------- host memory pressure
+
+
+def test_page_outs_are_a_rate_over_the_window_and_the_limit_is_inclusive() -> None:
+    limit = int(MAX_PAGEOUTS_PER_MINUTE)
+    samples = [
+        sample(150.0, "generator"),
+        host(120.0, swap=100 * _MIB, pageouts=1000),
+        host(240.0, swap=160 * _MIB, pageouts=1000 + 2 * limit),  # two minutes later
+        host(400.0, pageouts=10**9),  # after the window: ignored
+    ]
+
+    (row,) = build_rows(meta(WINDOW), [message(150.0)], samples, [])
+
+    assert row.pageouts_per_minute == MAX_PAGEOUTS_PER_MINUTE
+    assert row.swap_growth_bytes == 60 * _MIB
+    assert row.memory_ok
+    assert row.counts
+
+
+def test_heavy_paging_flags_the_step_as_memory_pressured() -> None:
+    samples = [sample(150.0, "generator"), host(120.0), host(180.0, pageouts=3001)]
+
+    (row,) = build_rows(meta(WINDOW), [message(150.0)], samples, [])
+
+    assert row.pageouts_per_minute == 3001.0
+    assert not row.memory_ok
+    assert not row.counts
+
+
+def test_fewer_than_two_host_samples_give_no_paging_rate() -> None:
+    (row,) = build_rows(meta(WINDOW), [message(150.0)], [host(150.0, pageouts=10**6)], [])
+
+    assert row.pageouts_per_minute is None
+    assert row.swap_growth_bytes is None
+    assert row.memory_ok  # the same sampler round records the generator, which gates counting
+
+
+def test_the_host_span_runs_from_the_first_to_the_last_host_sample() -> None:
+    samples = [
+        sample(1.0, "generator"),
+        host(10.0, swap=1352 * _MIB, pageouts=15_000, pageins=2_000_000, mem_percent=63.0),
+        host(20.0, swap=1500 * _MIB, pageouts=15_200, pageins=2_000_500),
+        host(30.0, swap=1400 * _MIB, pageouts=15_400, pageins=2_001_000, mem_percent=70.0),
+    ]
+
+    span = host_span(samples)
+
+    assert span is not None
+    assert (span.swap_start_bytes, span.swap_end_bytes) == (1352 * _MIB, 1400 * _MIB)
+    assert span.swap_growth_bytes == 148 * _MIB  # the peak, not the end
+    assert (span.mem_percent_start, span.mem_percent_end) == (63.0, 70.0)
+    assert (span.pageins, span.pageouts) == (1000, 400)
+    assert span.counts
+
+
+def test_a_run_whose_swap_grew_too_much_does_not_count() -> None:
+    grown = 1352 * _MIB + MAX_RUN_SWAP_GROWTH_BYTES + 1
+    span = host_span([host(10.0, swap=1352 * _MIB), host(20.0, swap=grown)])
+
+    assert span is not None
+    assert not span.counts
+
+    text = render(rows_for(message(150.0)), SLO, span)
+
+    assert "Run does not count" in text
+    assert "Sustained:" not in text
+
+
+def test_no_host_samples_give_no_span() -> None:
+    assert host_span([sample(1.0, "generator")]) is None
+
+
+def test_render_states_the_host_at_start_and_end() -> None:
+    span = host_span([host(10.0, swap=1352 * _MIB), host(20.0, swap=1360 * _MIB, pageouts=7)])
+
+    text = render(rows_for(message(150.0)), SLO, span)
+
+    assert "Host: swap 1352 -> 1360 MiB" in text
+    assert "page-outs +7" in text
+    assert "Sustained:" in text
 
 
 def test_the_module_runs_as_a_script(

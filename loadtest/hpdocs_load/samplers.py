@@ -48,6 +48,8 @@ class HostSample:
     mem_available_bytes: int
     swap_used_bytes: int
     swap_percent: float
+    pageins: int  # cumulative since boot, as vm_stat counts them
+    pageouts: int
     kind: str = field(default="host", init=False)
 
 
@@ -77,6 +79,12 @@ class Swap(Protocol):
 
     @property
     def percent(self) -> float: ...
+
+    @property
+    def sin(self) -> int: ...
+
+    @property
+    def sout(self) -> int: ...
 
 
 def parse_size(text: str) -> int:
@@ -124,15 +132,23 @@ def run_command(argv: Sequence[str]) -> str:
     return done.stdout
 
 
+@dataclass(frozen=True)
+class HostProbes:
+    """psutil reports vm_stat's page-ins and page-outs in bytes; samples store pages."""
+
+    memory: Callable[[], Memory]
+    swap: Callable[[], Swap]
+    page_bytes: int
+
+
 def take_samples(
     *,
     at: float,
     docker: Callable[[tuple[str, ...]], str],
-    memory: Callable[[], Memory],
-    swap: Callable[[], Swap],
+    host: HostProbes,
     generator_cpu: Callable[[], float],
 ) -> list[Sample]:
-    vm, sw = memory(), swap()
+    vm, sw, page_bytes = host.memory(), host.swap(), host.page_bytes
     return [
         HostSample(
             at=at,
@@ -140,6 +156,8 @@ def take_samples(
             mem_available_bytes=vm.available,
             swap_used_bytes=sw.used,
             swap_percent=sw.percent,
+            pageins=sw.sin // page_bytes,
+            pageouts=sw.sout // page_bytes,
         ),
         GeneratorSample(at=at, cpu_percent=generator_cpu()),
         *parse_docker_stats(docker(DOCKER_STATS_COMMAND), at=at),

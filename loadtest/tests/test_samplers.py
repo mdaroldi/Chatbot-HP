@@ -12,6 +12,7 @@ from hpdocs_load.samplers import (
     LOAD_PREFIX,
     ContainerSample,
     GeneratorSample,
+    HostProbes,
     HostSample,
     parse_docker_stats,
     parse_size,
@@ -107,7 +108,7 @@ def test_run_command_fails_loudly() -> None:
 
 def test_one_round_samples_host_generator_and_containers() -> None:
     vm = SimpleNamespace(percent=71.5, available=2 * 1024**3)
-    swap = SimpleNamespace(used=512 * 1024**2, percent=25.0)
+    swap = SimpleNamespace(used=512 * 1024**2, percent=25.0, sin=7 * 16384, sout=3 * 16384)
     seen: list[tuple[str, ...]] = []
 
     def docker(argv: tuple[str, ...]) -> str:
@@ -115,7 +116,10 @@ def test_one_round_samples_host_generator_and_containers() -> None:
         return stats_line("hpdocs-load-postgres-1", "1.00%", "64MiB / 7.6GiB")
 
     samples = take_samples(
-        at=9.0, docker=docker, memory=lambda: vm, swap=lambda: swap, generator_cpu=lambda: 87.0
+        at=9.0,
+        docker=docker,
+        host=HostProbes(memory=lambda: vm, swap=lambda: swap, page_bytes=16384),
+        generator_cpu=lambda: 87.0,
     )
 
     assert seen == [DOCKER_STATS_COMMAND]
@@ -126,6 +130,8 @@ def test_one_round_samples_host_generator_and_containers() -> None:
             mem_available_bytes=2 * 1024**3,
             swap_used_bytes=512 * 1024**2,
             swap_percent=25.0,
+            pageins=7,
+            pageouts=3,
         ),
         GeneratorSample(at=9.0, cpu_percent=87.0),
     ]
