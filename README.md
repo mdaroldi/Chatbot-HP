@@ -205,6 +205,27 @@ make ingest                                               # restore the default 
 Compare runs only on the same index build: candidate lists are deterministic per
 build, not across builds (ADR 0009).
 
+### Answer quality
+
+Phase 5 measures the answers end to end through the chat API, on a frozen golden set
+(48 primary in-scope questions plus multi-turn, long-query, out-of-scope and adversarial
+slices), with an LLM judge (`claude-opus-5-5`, never the answer model) and a $10 budget
+for the whole phase. On dev, the default configuration passes every key fact on 45 of 48
+questions in each of three runs; out-of-scope recall is 25/25; the judge finds no
+unsupported claim in 67 answers, and agrees 20/20 with a person's blind labels. The
+ablation (no reranker, dense, sparse, naive fixed-size chunks, top 3, top 8) kept every
+default; naive chunking and top 3 are measurably worse. Held out, run once: 11/12. Known
+limitations (safety notes carried 4/6, the rewrite adding a product name, threshold
+refusals of answerable questions, long queries) and next steps are in
+[ADR 0012](docs/adr/0012-answer-benchmark.md); the numbers are in
+[the answer summary](eval/reports/answers-summary.md).
+
+```bash
+make eval-estimate               # budget plan and spend so far (no key)
+make eval EVAL_PROVIDER=stub     # free pipeline check on the stub stack
+make eval                        # billed: reference run on dev, report and summary
+```
+
 ## Chat
 
 Conversations belong to an anonymous client ID sent as `X-Client-ID` (the chat UI
@@ -415,7 +436,8 @@ A unit test fails if this table, `.env.example` and the `Settings` class disagre
 | `make smoke-llm` | Manual and billed: a few synthetic requests to the real Anthropic models; prints time to first token, stop reasons and the rewrite outcome (`SMOKE_ARGS="--runs N"`) |
 | `make purge` | Delete conversations older than `CHAT_RETENTION_DAYS` now (needs `make up`); prints the counts |
 | `make eval-retrieval` | Retrieval benchmark against the running stack (`EVAL_ARGS=preflight` or `run ...`; see [eval/README.md](eval/README.md)) |
-| `make eval` / `load` | Later phases; print "not implemented yet" and fail |
+| `make eval` | Answer benchmark: the reference run on dev, its report and the summary (billed; `EVAL_PROVIDER=stub` for the free pipeline check; the other `eval-*` targets in [eval/README.md](eval/README.md)) |
+| `make load` | Later phase; prints "not implemented yet" and fails |
 
 ## Repository layout
 
@@ -541,7 +563,9 @@ integration job as a required check in the branch protection settings.
   stack after ingestion.
 - **Third-party processing**: with `LLM_PROVIDER=anthropic`, **the user's question,
   recent conversation history (for the answer and for the follow-up rewrite) and the
-  retrieved document excerpts are sent to the Anthropic API** to generate answers.
+  retrieved document excerpts are sent to the Anthropic API** to generate answers. The
+  answer benchmark's judge (`make eval-judge`, billed, manual) also sends the benchmark
+  questions, excerpts and answers to the Anthropic API.
 - **Chat data** is personal data: messages are never logged (logs carry IDs, counts,
   timings and codes; a unit test checks a canary string never reaches a log line),
   a conversation can be deleted at any time, and retention deletes conversations
