@@ -208,6 +208,23 @@ def test_the_row_expectation_comes_from_the_matrix_and_the_run() -> None:
     )
 
 
+def test_only_a_sparse_run_may_store_fewer_chunk_ids_than_top_k() -> None:
+    """BM25 returns only chunks that share a term with the query (both-ambiguous-001
+    got 2 of 5 in the sparse row); dense and hybrid always fill top_k.
+    """
+    assert row_expectation(MATRIX, spec(RETRIEVAL_MODE="sparse"), BUILD).exact_k is False
+    assert row_expectation(MATRIX, spec(RETRIEVAL_MODE="dense"), BUILD).exact_k is True
+    assert row_expectation(MATRIX, REFERENCE, BUILD).exact_k is True
+
+
+def test_a_sparse_row_with_fewer_chunk_ids_passes_and_one_with_more_fails() -> None:
+    sparse = expectation(exact_k=False)
+    check_rows((row(1, chunk_ids=("c-1",)),), sparse)
+
+    with pytest.raises(ConfigMismatchError, match=r"row m-1: 3 chunk ids \(expected at most 2\)"):
+        check_rows((row(1, chunk_ids=("c-1", "c-2", "c-3")),), sparse)
+
+
 def test_rows_that_match_pass() -> None:
     rewritten = row(2, rewritten_query="How do I X on the ENVY?", rewrite_ms=300.0)
     layer1 = row(

@@ -9,7 +9,8 @@ mismatch stops the run as invalid:
    and rewrite models and the matrix's output-token bounds.
 2. `/ready` reports the real provider and the build the run's alias points at, and
    that alias's collection carries the version prefix of the alias's chunker.
-3. Every stored row shows it: the answer model, that build, `top_k` chunk ids, a
+3. Every stored row shows it: the answer model, that build, `top_k` chunk ids (at most
+   `top_k` in sparse mode), a
    relevance signal exactly when rerank is on and no rewrite when rewriting is off.
 
 The driver passes `overrides` for every allowlisted setting, not only the row's, so a
@@ -69,6 +70,9 @@ class RowExpectation:
     top_k: int
     rerank: bool
     rewrite: bool
+    # BM25 returns only chunks that share a term with the query, so a sparse run may
+    # store fewer than top_k; dense and hybrid always fill it.
+    exact_k: bool = True
 
 
 _FIELDS = Settings.model_fields
@@ -201,6 +205,7 @@ def row_expectation(matrix: AnswerMatrix, run: RunSpec, build_id: str) -> RowExp
         top_k=settings.top_k,
         rerank=settings.rerank,
         rewrite=settings.rewrite_turns > 0,
+        exact_k=settings.mode is not SearchMode.SPARSE,
     )
 
 
@@ -210,8 +215,11 @@ def _row_problems(row: StoredAnswer, expected: RowExpectation) -> list[str]:
         problems.append(f"model {row.model} (expected {expected.model})")
     if row.index_build_id != expected.build_id:
         problems.append(f"index_build_id {row.index_build_id} (expected {expected.build_id})")
-    if len(row.chunk_ids) != expected.top_k:
-        problems.append(f"{len(row.chunk_ids)} chunk ids (expected {expected.top_k})")
+    count = len(row.chunk_ids)
+    if expected.exact_k and count != expected.top_k:
+        problems.append(f"{count} chunk ids (expected {expected.top_k})")
+    if not expected.exact_k and count > expected.top_k:
+        problems.append(f"{count} chunk ids (expected at most {expected.top_k})")
     if expected.rerank and row.relevance_signal is None:
         problems.append("no relevance signal with rerank on")
     if not expected.rerank and row.relevance_signal is not None:
