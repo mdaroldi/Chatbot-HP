@@ -30,7 +30,15 @@ Key-fact pass on its 10 multi-turn items: reference-1 10/10, rewrite off 7/10.
 
 ## Held-out (final default)
 
-Not run yet (rule 8: once, last).
+| metric | k/n | rate | Wilson 95% |
+|---|---|---|---|
+| primary (strict key-fact pass) | 11/12 | 0.917 | [0.646, 0.985] |
+| false refusals (in scope) | 2/19 | 0.105 | [0.029, 0.314] |
+| out-of-scope recall, unrelated | 4/4 | 1.000 | [0.510, 1.000] |
+| out-of-scope recall, near_domain | 5/5 | 1.000 | [0.566, 1.000] |
+| out-of-scope recall, pooled | 9/9 | 1.000 | [0.701, 1.000] |
+| faithful, lenient (no unsupported claim) | 17/17 | 1.000 | [0.816, 1.000] |
+| faithful, strict (every claim supported) | 16/17 | 0.941 | [0.730, 0.990] |
 
 ## Judge (reference-1)
 
