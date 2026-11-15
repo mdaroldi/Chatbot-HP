@@ -126,6 +126,7 @@ def test_a_conversation_starts_with_thinking_then_creates_and_asks() -> None:
 
     assert [a.kind for a in plan[:4]] == [THINK, CREATE, MESSAGE, LIST]
     assert plan[2].text in POOL.first
+    assert not plan[2].follow_up
     assert sum(a.kind == CREATE for a in plan) == 1
 
 
@@ -139,6 +140,7 @@ def test_each_follow_up_is_think_message_list_with_a_follow_up_text() -> None:
         assert plan[at - 1].kind == THINK
         assert plan[at + 1].kind == LIST
         assert message.text in POOL.follow_ups
+        assert message.follow_up  # its own SLO class: the rewrite comes before retrieval
 
 
 def test_follow_ups_number_one_to_three_and_each_count_occurs() -> None:

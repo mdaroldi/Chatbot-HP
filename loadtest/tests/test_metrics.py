@@ -1,6 +1,7 @@
 """Metric extraction from the per-request records: windows, percentiles, the unit of
 capacity (a message whose stream reached `done`) and error accounting."""
 
+import dataclasses
 import json
 import pathlib
 
@@ -26,6 +27,7 @@ def rec(  # noqa: PLR0913 - a record has these fields; keywords keep tests reada
     ttft_ms: float | None = 300.0,
     reached_done: bool = True,
     error_code: str | None = None,
+    follow_up: bool = False,
 ) -> RequestRecord:
     return RequestRecord(
         name=name,
@@ -35,6 +37,7 @@ def rec(  # noqa: PLR0913 - a record has these fields; keywords keep tests reada
         ttft_ms=ttft_ms if name == MESSAGE else None,
         reached_done=reached_done if name == MESSAGE else False,
         error_code=error_code,
+        follow_up=follow_up,
     )
 
 
@@ -195,7 +198,11 @@ def test_a_trailing_partial_minute_is_its_own_shorter_bucket() -> None:
 
 def test_records_round_trip_through_jsonl(tmp_path: pathlib.Path) -> None:
     path = tmp_path / "requests.jsonl"
-    written = [rec(1.0), rec(2.0, name="list", status=429, error_code="rate_limited")]
+    written = [
+        rec(1.0),
+        rec(1.5, follow_up=True),
+        rec(2.0, name="list", status=429, error_code="rate_limited"),
+    ]
 
     with path.open("w") as out:
         for record in written:
@@ -219,4 +226,17 @@ def test_a_record_line_holds_only_the_known_fields(tmp_path: pathlib.Path) -> No
         "ttft_ms",
         "reached_done",
         "error_code",
+        "follow_up",
     }
+
+
+def test_records_written_before_the_class_existed_read_as_first_questions(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = tmp_path / "requests.jsonl"
+    old = {k: v for k, v in dataclasses.asdict(rec(1.0)).items() if k != "follow_up"}
+    path.write_text(json.dumps(old) + "\n")
+
+    (record,) = read_records(path)
+
+    assert not record.follow_up

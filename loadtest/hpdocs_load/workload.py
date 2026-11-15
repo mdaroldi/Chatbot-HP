@@ -43,6 +43,7 @@ class Action:
     text: str | None = None
     seconds: float = 0.0
     target: str = CURRENT
+    follow_up: bool = False
 
 
 def load_question_pool(path: pathlib.Path) -> QuestionPool:
@@ -72,8 +73,11 @@ def _think(rng: random.Random) -> Action:
     return Action(THINK, seconds=think_seconds(rng))
 
 
-def _ask(rng: random.Random, texts: tuple[str, ...]) -> tuple[Action, ...]:
-    return (_think(rng), Action(MESSAGE, text=rng.choice(texts)), Action(LIST))
+def _ask(
+    rng: random.Random, texts: tuple[str, ...], *, follow_up: bool = False
+) -> tuple[Action, ...]:
+    message = Action(MESSAGE, text=rng.choice(texts), follow_up=follow_up)
+    return (_think(rng), message, Action(LIST))
 
 
 def plan_conversation(rng: random.Random, pool: QuestionPool) -> tuple[Action, ...]:
@@ -81,7 +85,7 @@ def plan_conversation(rng: random.Random, pool: QuestionPool) -> tuple[Action, .
     plan = [first[0], Action(CREATE), *first[1:]]
     (count,) = rng.choices(FOLLOW_UP_COUNTS, weights=FOLLOW_UP_WEIGHTS)
     for _ in range(count):
-        plan += _ask(rng, pool.follow_ups)
+        plan += _ask(rng, pool.follow_ups, follow_up=True)
     if rng.random() < SELECT_RATE:
         plan += [_think(rng), Action(OPEN, target=PREVIOUS)]
     if rng.random() < RELOAD_RATE:

@@ -1,6 +1,7 @@
 """Turning per-request records into the capacity table's numbers.
 
-A record holds a route name, times, the status and an error code, never message text.
+A record holds a route name, times, the status, an error code and, for a message, its
+question class (first or follow-up), never message text.
 A record counts in the window where it ends, so a step's throughput is what finished in
 it. Latency percentiles use only messages whose stream reached `done`, the unit of
 capacity; failures show up in the error rate instead.
@@ -27,6 +28,9 @@ class RequestRecord:
     ttft_ms: float | None
     reached_done: bool
     error_code: str | None
+    # A follow-up is rewritten into a standalone query before retrieval: its own SLO class.
+    # Defaults to False so run files written before the field still read.
+    follow_up: bool = False
 
     @property
     def end(self) -> float:

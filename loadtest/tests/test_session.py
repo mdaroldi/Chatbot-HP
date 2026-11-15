@@ -259,6 +259,17 @@ def test_a_mid_stream_error_event_keeps_its_code() -> None:
     assert records[1].ttft_ms == pytest.approx(100.0)
 
 
+def test_each_message_record_keeps_its_question_class() -> None:
+    session, _, _, records = rig()
+
+    session.run(
+        (Action(CREATE), Action(MESSAGE, text="a"), Action(MESSAGE, text="b", follow_up=True))
+    )
+
+    assert [r.follow_up for r in records if r.name == MESSAGE] == [False, True]
+    assert not records[0].follow_up  # plain calls are never follow-ups
+
+
 def test_the_follow_up_goes_to_the_same_conversation() -> None:
     session, transport, _, _ = rig()
 

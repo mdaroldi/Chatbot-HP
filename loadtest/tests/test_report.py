@@ -1,5 +1,6 @@
 """The capacity table: one row per step, judged on the whole measured window, with the
-generator and host columns that decide whether a step counts (rules 2 and 10)."""
+generator and host columns that decide whether a step counts (rules 2 and 10). First
+questions and follow-ups are two SLO classes, each with its own bounds."""
 
 import json
 import pathlib
@@ -14,6 +15,7 @@ from hpdocs_load.report import (
     MAX_PAGEOUTS_PER_MINUTE,
     MAX_RUN_SWAP_GROWTH_BYTES,
     MIN_WINDOW_SECONDS,
+    Bound,
     Slo,
     build_rows,
     headline,
@@ -24,15 +26,25 @@ from hpdocs_load.report import (
 )
 from hpdocs_load.stages import StageRow
 
-SLO = Slo(ttft_p95_ms=4000.0, done_p95_ms=8000.0, max_error_rate=0.01)
+SLO = Slo(
+    first=Bound(ttft_p95_ms=4000.0, done_p95_ms=8000.0),
+    follow_up=Bound(ttft_p95_ms=6000.0, done_p95_ms=10000.0),
+    max_error_rate=0.01,
+)
 SLO_TEXT = """# SLO
 
 Prose first.
 
 ```toml
+max_error_rate = 0.01
+
+[first]
 ttft_p95_ms = 4000
 done_p95_ms = 8000
-max_error_rate = 0.01
+
+[follow_up]
+ttft_p95_ms = 6000
+done_p95_ms = 10000
 ```
 """
 
@@ -89,6 +101,15 @@ def test_the_slo_is_read_from_the_first_toml_block() -> None:
     [
         pytest.param("# SLO\nno block", id="no-block"),
         pytest.param("```toml\nttft_p95_ms = 1\n```", id="missing-keys"),
+        pytest.param(
+            "```toml\nmax_error_rate = 0.01\n[first]\nttft_p95_ms = 1\ndone_p95_ms = 2\n```",
+            id="missing-class",
+        ),
+        pytest.param(
+            "```toml\nmax_error_rate = 0.01\n[first]\nttft_p95_ms = 1\n"
+            "[follow_up]\nttft_p95_ms = 1\ndone_p95_ms = 2\n```",
+            id="missing-class-key",
+        ),
     ],
 )
 def test_an_unreadable_slo_raises(text: str) -> None:
@@ -100,7 +121,11 @@ def test_an_unreadable_slo_raises(text: str) -> None:
 
 
 def test_a_row_summarises_requests_resources_and_stages() -> None:
-    records = [message(150.0, ttft=1000.0, total=3000.0), message(250.0, ttft=2000.0)]
+    records = [
+        message(150.0, ttft=1000.0, total=3000.0),
+        message(250.0, ttft=2000.0),
+        message(260.0, ttft=5000.0, total=7000.0, follow_up=True),
+    ]
     samples = [
         sample(150.0, "generator", 10.0),
         sample(250.0, "generator", 30.0),
@@ -120,7 +145,12 @@ def test_a_row_summarises_requests_resources_and_stages() -> None:
     (row,) = build_rows(meta(WINDOW), records, samples, stages)
 
     assert row.users == 5
-    assert row.summary.questions_completed == 2
+    assert row.summary.questions_completed == 3
+    # Each class has its own latency; throughput and errors are over all questions.
+    assert row.first.questions_completed == 2
+    assert (row.first.ttft_p50_ms, row.first.ttft_p95_ms) == (1000.0, 2000.0)
+    assert row.follow_up.questions_completed == 1
+    assert (row.follow_up.ttft_p95_ms, row.follow_up.done_p95_ms) == (5000.0, 7000.0)
     assert row.generator_cpu_max == 30.0
     assert row.cpu_mean["backend"] == 350.0
     assert row.cpu_mean["postgres"] == 20.0
@@ -164,14 +194,39 @@ def test_a_window_without_samples_has_empty_resource_columns() -> None:
 # ---------------------------------------------------------------- SLO verdict
 
 
-def rows_for(*records: RequestRecord) -> list:  # type: ignore[type-arg]
-    return build_rows(meta(WINDOW), list(records), [sample(200.0, "generator", 5.0)], [])
+def follow_up(end: float = 170.0, ttft: float = 5000.0, total: float = 9000.0) -> RequestRecord:
+    return message(end, ttft=ttft, total=total, follow_up=True)
+
+
+def rows_for(*records: RequestRecord, with_follow_up: bool = True) -> list:  # type: ignore[type-arg]
+    """A passing follow-up is added unless the test is about the follow-up class."""
+    kept = [*records, follow_up()] if with_follow_up else list(records)
+    return build_rows(meta(WINDOW), kept, [sample(200.0, "generator", 5.0)], [])
 
 
 def test_slo_met_when_every_bound_holds() -> None:
-    (row,) = rows_for(message(150.0, ttft=4000.0, total=8000.0))
+    (row,) = rows_for(
+        message(150.0, ttft=4000.0, total=8000.0),
+        follow_up(ttft=6000.0, total=10000.0),
+        with_follow_up=False,
+    )
 
     assert row.slo_met(SLO)
+
+
+def test_each_class_is_held_to_its_own_bound() -> None:
+    # 5 s TTFT passes the follow-up bound (6 s) but fails the first-question bound (4 s).
+    (first_slow,) = rows_for(message(150.0, ttft=5000.0))
+    (follow_up_slow,) = rows_for(message(150.0), follow_up(ttft=6001.0), with_follow_up=False)
+
+    assert not first_slow.slo_met(SLO)
+    assert not follow_up_slow.slo_met(SLO)
+
+
+def test_a_step_without_completed_follow_ups_does_not_meet_the_slo() -> None:
+    (row,) = rows_for(message(150.0), with_follow_up=False)
+
+    assert not row.slo_met(SLO)
 
 
 @pytest.mark.parametrize(
@@ -179,8 +234,9 @@ def test_slo_met_when_every_bound_holds() -> None:
     [
         pytest.param([message(150.0, ttft=4001.0)], id="ttft"),
         pytest.param([message(150.0, total=8001.0)], id="done"),
+        pytest.param([message(150.0), follow_up(total=10001.0)], id="follow-up-done"),
         pytest.param(
-            [message(150.0)] * 99 + [message(160.0, reached_done=False, error_code="x")],
+            [message(150.0)] * 98 + [message(160.0, reached_done=False, error_code="x")],
             id="one-percent-errors",
         ),
         pytest.param([], id="nothing-completed"),
@@ -207,6 +263,7 @@ def test_the_headline_is_the_best_counting_step_that_meets_the_slo() -> None:
     windows = meta((1, 0.0, 200.0), (5, 200.0, 400.0), (10, 400.0, 600.0))
     records = [message(100.0), *[message(300.0 + i) for i in range(5)]]
     records += [message(500.0, ttft=9000.0)] * 9
+    records += [follow_up(t) for t in (110.0, 310.0, 510.0)]
     samples = [sample(t, "generator", 5.0) for t in (100.0, 300.0, 500.0)]
 
     rows = build_rows(windows, records, samples, [])

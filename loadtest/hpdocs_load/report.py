@@ -4,7 +4,12 @@ One row per step, judged on the whole measured window (per-minute values are sta
 evidence, not the verdict). A step counts when its window is at least 3 minutes (rule 2),
 the generator never reached Locust's own CPU warning level (rule 10) and the host did not
 page out more than a few thousand pages a minute (the 8 GB host may start with residual
-swap). A run whose swap grew by more than 500 MiB does not count at all. The SLO comes
+swap). A run whose swap grew by more than 500 MiB does not count at all.
+
+First questions and follow-ups are two SLO classes: a follow-up is rewritten into a
+standalone query before retrieval, which adds its own wait. Each class has its own p95
+bounds; a step meets the SLO only when both classes do and the error rate over all
+questions stays under the bound (429s apart). The SLO comes
 from the first TOML block of `loadtest/SLO.md`; before it exists the table has no
 verdict. The headline is the counting step with the most completed questions per minute
 that met the SLO.
@@ -19,7 +24,7 @@ import tomllib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
-from hpdocs_load.metrics import RequestRecord, WindowSummary, percentile, read_records
+from hpdocs_load.metrics import MESSAGE, RequestRecord, WindowSummary, percentile, read_records
 from hpdocs_load.metrics import summarize_window as summarize
 from hpdocs_load.stages import StageRow, read_stages
 
@@ -37,10 +42,33 @@ Sample = Mapping[str, object]
 
 
 @dataclass(frozen=True)
-class Slo:
+class Bound:
     ttft_p95_ms: float
     done_p95_ms: float
+
+    def met_by(self, summary: WindowSummary) -> bool:
+        """A class with no completed question in the window is no evidence of meeting it."""
+        ttft, done = summary.ttft_p95_ms, summary.done_p95_ms
+        return (
+            ttft is not None
+            and done is not None
+            and ttft <= self.ttft_p95_ms
+            and done <= self.done_p95_ms
+        )
+
+
+@dataclass(frozen=True)
+class Slo:
+    first: Bound
+    follow_up: Bound
     max_error_rate: float
+
+
+def _bound(values: Mapping[str, object]) -> Bound:
+    return Bound(
+        ttft_p95_ms=float(values["ttft_p95_ms"]),  # type: ignore[arg-type]  # TOML number
+        done_p95_ms=float(values["done_p95_ms"]),  # type: ignore[arg-type]  # TOML number
+    )
 
 
 def parse_slo(text: str) -> Slo:
@@ -50,8 +78,8 @@ def parse_slo(text: str) -> Slo:
     values = tomllib.loads(match.group(1))
     try:
         return Slo(
-            ttft_p95_ms=float(values["ttft_p95_ms"]),
-            done_p95_ms=float(values["done_p95_ms"]),
+            first=_bound(values["first"]),
+            follow_up=_bound(values["follow_up"]),
             max_error_rate=float(values["max_error_rate"]),
         )
     except KeyError as missing:
@@ -63,6 +91,8 @@ class StepRow:
     users: int
     seconds: float
     summary: WindowSummary
+    first: WindowSummary
+    follow_up: WindowSummary
     generator_cpu_max: float | None
     cpu_mean: dict[str, float | None]
     cpu_max: dict[str, float | None]
@@ -97,13 +127,10 @@ class StepRow:
         )
 
     def slo_met(self, slo: Slo) -> bool:
-        s = self.summary
         return (
-            s.ttft_p95_ms is not None
-            and s.done_p95_ms is not None
-            and s.ttft_p95_ms <= slo.ttft_p95_ms
-            and s.done_p95_ms <= slo.done_p95_ms
-            and s.error_rate < slo.max_error_rate
+            slo.first.met_by(self.first)
+            and slo.follow_up.met_by(self.follow_up)
+            and self.summary.error_rate < slo.max_error_rate
         )
 
 
@@ -174,10 +201,13 @@ def _row(
         short: [s for s in inside if s.get("name") == f"hpdocs-load-{name}-1"]
         for short, name in _CONTAINERS.items()
     }
+    messages = [r for r in records if r.name == MESSAGE]
     return StepRow(
         users=int(window["users"]),
         seconds=end - start,
         summary=summarize(records, start=start, end=end),
+        first=summarize([r for r in messages if not r.follow_up], start=start, end=end),
+        follow_up=summarize([r for r in messages if r.follow_up], start=start, end=end),
         generator_cpu_max=_max(
             _numbers((s for s in inside if s["kind"] == "generator"), "cpu_percent")
         ),
@@ -276,7 +306,8 @@ def _num(value: float | None, scale: float = 1.0) -> str:
 
 
 _HEADER = (
-    "| Users | Min | Q/min | Req/min | Err % | 429 | TTFT p50 / p95 s | Done p50 / p95 s "
+    "| Users | Min | Q/min | Req/min | Err % | 429 | First TTFT p50 / p95 s "
+    "| First done p50 / p95 s | Follow-up TTFT p50 / p95 s | Follow-up done p50 / p95 s "
     "| Rerank p50 / p95 s | TTFT - retrieval p50 / p95 s | Backend CPU mean / max % "
     "| PG CPU % | Qdrant CPU % | Locust CPU max % | Host mem max % | Swap max GiB "
     "| Swap growth MiB | Page-outs/min | Counts | SLO |"
@@ -293,8 +324,11 @@ def _line(row: StepRow, slo: Slo | None) -> str:
         f"{s.requests_per_minute:.1f}",
         f"{s.error_rate * 100:.2f}",
         str(s.rate_limited),
-        _pair((s.ttft_p50_ms, s.ttft_p95_ms)),
-        _pair((s.done_p50_ms, s.done_p95_ms)),
+        *(
+            _pair(pair)
+            for c in (row.first, row.follow_up)
+            for pair in ((c.ttft_p50_ms, c.ttft_p95_ms), (c.done_p50_ms, c.done_p95_ms))
+        ),
         _pair(row.stage_p50_p95["rerank_ms"]),
         _pair(row.stage_p50_p95["ttft_minus_retrieval_ms"]),
         f"{_pct(row.cpu_mean['backend'])} / {_pct(row.cpu_max['backend'])}",

@@ -80,7 +80,7 @@ class Session:
             elif action.kind == CREATE and not self._create():
                 return
             elif action.kind == MESSAGE:
-                self._message(str(action.text))
+                self._message(str(action.text), follow_up=action.follow_up)
             elif action.kind == DELETE:
                 self._call("DELETE", f"{_CONVERSATIONS}/{self._kept.pop()}", DELETE)
             elif action.kind == OPEN:
@@ -117,7 +117,7 @@ class Session:
         )
         return reply
 
-    def _message(self, content: str) -> None:
+    def _message(self, content: str, *, follow_up: bool) -> None:
         wall, start = self._clock.wall(), self._clock.mono()
         path = f"{_CONVERSATIONS}/{self._kept[-1]}/messages"
         reply = self._transport.stream(path, content=content)
@@ -143,5 +143,6 @@ class Session:
                 ttft_ms=ttft_ms,
                 reached_done=reached_done,
                 error_code=code,
+                follow_up=follow_up,
             )
         )
