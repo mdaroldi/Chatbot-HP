@@ -20,7 +20,7 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 	fetch-test-assets models \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins \
 	purge eval-retrieval eval-estimate eval-answers eval-ablation eval-judge \
-	eval-label-sheet eval-agreement eval-report eval-summary eval load check
+	eval-label-sheet eval-agreement eval-report eval-summary eval load load-up load-reset load-down check
 
 help: ## List available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -251,6 +251,25 @@ else
 	$(MAKE) eval-report REPORT_ARGS="--run reference-1"
 	$(MAKE) eval-summary
 endif
+
+# Load stack (Phase 6, ADR 0013): own project, resource limits, load profile after .env.
+LOAD_COMPOSE := docker compose -p hpdocs-load -f docker-compose.yml -f docker-compose.load.yml --env-file .env --env-file loadtest/load.env
+LOAD_PROVIDER ?= stub
+LOAD_API_URL := http://127.0.0.1:8100
+# /ready is 503 until the models are warm (ADR 0008); 3 minutes covers a first start.
+LOAD_WAIT_READY := for i in $$(seq 90); do curl -fs -o /dev/null $(LOAD_API_URL)/ready && exit 0; sleep 2; done; echo "load stack not ready"; exit 1
+
+load-up: ## Start the load stack: backend and dependencies only (LOAD_PROVIDER=anthropic: Profile B)
+	LLM_PROVIDER=$(LOAD_PROVIDER) $(LOAD_COMPOSE) up --build --detach --wait backend
+	@$(LOAD_WAIT_READY)
+
+load-reset: ## Same starting state: clear conversations (index kept), fresh backend, wait for /ready
+	$(LOAD_COMPOSE) exec -T postgres sh -c 'psql -q -v ON_ERROR_STOP=1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -c "TRUNCATE messages, conversations"'
+	LLM_PROVIDER=$(LOAD_PROVIDER) $(LOAD_COMPOSE) up --detach --wait --no-deps --force-recreate backend
+	@$(LOAD_WAIT_READY)
+
+load-down: ## Stop the load stack (its volumes are kept)
+	$(LOAD_COMPOSE) down
 
 load: ## Run the load test
 	@echo "not implemented yet"; exit 1

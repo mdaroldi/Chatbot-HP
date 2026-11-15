@@ -111,6 +111,9 @@ make eval-agreement  # judge agreement with the human labels: raw and Cohen's ka
 make eval-report  # one finished run's report in its run dir (REPORT_ARGS="--run NAME"), files only
 make eval-summary # eval/reports/answers-summary.md from the run reports, files only
 make eval         # billed: reference run on dev + report + summary (no key: exit 2; EVAL_PROVIDER=stub: free pipeline check)
+make load-up      # start the load stack (own project, backend + dependencies, load.env)
+make load-reset   # clear load-stack conversations (index kept), fresh backend, wait for /ready
+make load-down    # stop the load stack
 make load         # run the load test
 make check        # lint + typecheck + test + security (run before every commit)
 ```

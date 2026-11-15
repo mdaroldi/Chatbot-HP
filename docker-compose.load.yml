@@ -1,0 +1,16 @@
+# Load stack (Phase 6, ADR 0013), used only through the Makefile's load targets:
+#   docker compose -p hpdocs-load -f docker-compose.yml -f docker-compose.load.yml \
+#     --env-file .env --env-file loadtest/load.env
+# Its own project name gives it its own volumes and networks, so load runs never touch
+# the dev stack's conversations. This file sets resource limits only (a unit test pins
+# that), so one replica means 4 CPUs and 2 GiB, and every hardening rule of the main
+# file still applies. memswap_limit equal to mem_limit: the backend never swaps quietly.
+services:
+  backend:
+    cpus: 4
+    mem_limit: 2g
+    memswap_limit: 2g
+  postgres:
+    cpus: 1
+  qdrant:
+    cpus: 1
