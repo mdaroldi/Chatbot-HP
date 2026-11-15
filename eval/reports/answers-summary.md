@@ -4,29 +4,29 @@ Generated from each run's report.json by `make eval-summary`; ids and numbers on
 
 ## Reference runs and noise floor (answers-v1 items)
 
-| metric | reference-1 | noise floor | n |
-|---|---|---|---|
-| primary (strict key-fact pass) | 45/48 | 0.021 | 48 |
-| false refusals (in scope) | 2/48 | 0.021 | 48 |
-| near-domain refusal recall | 4/4 | 0.250 | 4 |
+| metric | reference-1 | reference-2 | reference-3 | noise floor | n |
+|---|---|---|---|---|---|
+| primary (strict key-fact pass) | 45/48 | 45/48 | 45/48 | 0.021 | 48 |
+| false refusals (in scope) | 2/48 | 2/48 | 2/48 | 0.021 | 48 |
+| near-domain refusal recall | 4/4 | 4/4 | 4/4 | 0.250 | 4 |
 
-Incomplete: fewer than three reference runs.
+
 
 ## Ablation (rule 7 against reference-1)
 
 | run | env | primary | difference vs reference-1 [95%] | gate subset ref -> alt | false refusals | near-domain recall | layer 1 refused | verdict | reasons |
 |---|---|---|---|---|---|---|---|---|---|
 | improvement | default | not run |  |  |  |  |  |  |  |
-| hybrid-no-rerank | RETRIEVAL_RERANK_ENABLED=false | not run |  |  |  |  |  |  |  |
-| dense | RETRIEVAL_MODE=dense, RETRIEVAL_RERANK_ENABLED=false | not run |  |  |  |  |  |  |  |
-| naive | QDRANT_COLLECTION_ALIAS=hpdocs_chunks_naive | not run |  |  |  |  |  |  |  |
-| k3 | RETRIEVAL_TOP_K=3 | not run |  |  |  |  |  |  |  |
-| sparse | RETRIEVAL_MODE=sparse, RETRIEVAL_RERANK_ENABLED=false | not run |  |  |  |  |  |  |  |
-| k8 | RETRIEVAL_TOP_K=8 | not run |  |  |  |  |  |  |  |
+| hybrid-no-rerank | RETRIEVAL_RERANK_ENABLED=false | 44/48 | -0.021 [-0.083, +0.042] (n=48) | 45/46 -> 43/46 | 2/48 | 4/4 | 0 | keep | primary_interval_not_above_zero, primary_gap_within_noise |
+| dense | RETRIEVAL_MODE=dense, RETRIEVAL_RERANK_ENABLED=false | 42/48 | -0.062 [-0.125, +0.000] (n=48) | 45/46 -> 42/46 | 1/48 | 4/4 | 0 | keep | primary_interval_not_above_zero, primary_gap_within_noise |
+| naive | QDRANT_COLLECTION_ALIAS=hpdocs_chunks_naive | 41/48 | -0.083 [-0.167, -0.021] (n=48) | 44/45 -> 41/45 | 4/48 | 4/4 | 7 | keep | primary_interval_not_above_zero, primary_gap_within_noise, false_refusals_worse |
+| k3 | RETRIEVAL_TOP_K=3 | 41/48 | -0.083 [-0.167, -0.021] (n=48) | 45/46 -> 41/46 | 5/48 | 4/4 | 6 | keep | primary_interval_not_above_zero, primary_gap_within_noise, false_refusals_worse |
+| sparse | RETRIEVAL_MODE=sparse, RETRIEVAL_RERANK_ENABLED=false | 43/48 | -0.042 [-0.125, +0.042] (n=48) | 45/46 -> 42/46 | 2/48 | 4/4 | 0 | keep | primary_interval_not_above_zero, primary_gap_within_noise |
+| k8 | RETRIEVAL_TOP_K=8 | 44/48 | -0.021 [-0.062, +0.000] (n=48) | 45/46 -> 44/46 | 2/48 | 4/4 | 6 | keep | primary_interval_not_above_zero, primary_gap_within_noise |
 
-## Rewrite off (descriptive)
+## Rewrite off (descriptive, no verdict)
 
-Not run.
+Key-fact pass on its 10 multi-turn items: reference-1 10/10, rewrite off 7/10.
 
 ## Held-out (final default)
 
@@ -74,7 +74,7 @@ Negative controls (5 corrupted answers): correctness flagged 5, lenient faithful
 - models: answer claude-sonnet-5-5, rewrite claude-haiku-5-5, judge claude-opus-5-5 (judge-v1 6c8d87315639)
 - index_build_ids: 20261113t173108z
 - datasets: retrieval-v1.toml 1.0.1 91e754f19cba, answers-v1.toml 1.0.0 2aac464af1c6, slices-v1.toml 1.0.0 b9ec7a354bb6
-- git_sha: ee80580f74fab26dd733221eeddcfa0651117079
+- git_sha: 93ff7a4abe1cc5534cf431d5b94c269967210e46
 - health: valid, 0 errors
 
 | metric | k/n | rate | Wilson 95% |
