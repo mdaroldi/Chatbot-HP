@@ -242,3 +242,28 @@ pinned MiniLM tokenizer:
 Phase 3 set `CHAT_MESSAGE_MAX_CHARS=1000`. From the second turn on, the rewrite (at most
 300 characters) is what reaches the reranker; a long first message still cuts chunk
 tails, a known limitation that Phase 5 measures ([ADR 0010](0010-chat-api.md#consequences)).
+
+### Update (Phase 6, 2026-11-15): first call not reproduced
+
+The open item from commit 10c was retested on the load stack (backend limited to 4 CPUs
+and 2 GiB, stub provider, Docker Desktop on the 8 GB host) before any load number was
+taken. Each start truncates the conversations, recreates the backend, waits for
+`/ready`, then asks two different dev questions in new conversations. Conditions were
+interleaved: warm (recreate only) and cold (the Docker VM page cache dropped first with
+`echo 3 > /proc/sys/vm/drop_caches` from an image already on the machine), five starts
+each, then one start after a forced index build.
+
+| Condition | Starts | First rerank p50 (range) | Second rerank p50 (range) | Client TTFT, first call p50 | Start to `/ready` p50 |
+|---|---|---|---|---|---|
+| Warm | 5 | 1.77 s (1.75-2.16) | 1.84 s (1.79-2.04) | 2.02 s | 5.9 s |
+| Cold page cache | 5 | 1.83 s (1.70-1.93) | 1.84 s (1.81-1.95) | 2.08 s | 6.6 s |
+| After a forced ingest | 1 | 1.93 s | 2.08 s | 2.22 s | 7.9 s |
+
+- **Not reproduced.** In 11 fresh starts no first call was slower than the second by
+  more than the spread between starts. A cold page cache costs about 0.75 s of
+  readiness and nothing after `/ready`: the full-length warm-up runs before `/ready`
+  and absorbs it. No defect was found, so there is no fix.
+- **Load profile:** every measured run starts with `make load-reset` (fresh backend,
+  warm-up done) and each step has a warm-up window, so cold versus warm does not
+  affect the capacity numbers. The 10.1 s of commit 10c stays unexplained and is
+  closed as not reproduced on this hardware.
