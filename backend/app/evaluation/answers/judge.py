@@ -159,7 +159,8 @@ class JudgeInput:
     answer: str
 
 
-def _fact(group: KeyFactGroup) -> str:
+def fact_text(group: KeyFactGroup) -> str:
+    """A key-fact group as one line: alternatives joined, regexes shown as patterns."""
     shown = [
         f"pattern: {alt.removeprefix(REGEX_PREFIX)}" if alt.startswith(REGEX_PREFIX) else alt
         for alt in group
@@ -171,7 +172,7 @@ def user_message(judged: JudgeInput) -> str:
     esc = html.escape
     turns = "".join(f"<turn>{esc(turn)}</turn>\n" for turn in judged.turns)
     passages = "".join(f"<passage>{esc(text)}</passage>\n" for text in judged.passages)
-    facts = "".join(f"<key_fact>{esc(_fact(group))}</key_fact>\n" for group in judged.key_facts)
+    facts = "".join(f"<key_fact>{esc(fact_text(group))}</key_fact>\n" for group in judged.key_facts)
     return (
         f"<conversation>\n{turns}</conversation>\n"
         f"<excerpts>\n{chr(10).join(judged.excerpts)}\n</excerpts>\n"
