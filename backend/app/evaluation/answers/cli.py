@@ -19,6 +19,11 @@
   run must be finished, so the repeat sample is drawn from its final judged items.
   Verdicts are cached across runs (`answer-runs/judge-cache.jsonl`); a second call
   collects an open batch or reuses recorded verdicts and pays nothing again.
+- `label-sheet --run NAME` writes `labels.csv` in the run directory: 20 judged items,
+  stratified by the judge's faithful verdict and the key-fact pass, verdicts hidden, from
+  the inputs the judge pass saved (files only; `make eval-label-sheet` on the host). An
+  existing sheet is never overwritten. `agreement --run NAME` prints raw agreement and
+  Cohen's kappa with n for faithful and correctness (`make eval-agreement`).
 - `drive --run NAME --eval-dir DIR` is the host side (`make eval-answers`): it restarts
   the backend for the run, checks its env, runs `ask` in a harness container with the
   same run options and restores the defaults (`driver.drive`). It never opens a
@@ -84,7 +89,23 @@ from app.evaluation.answers.judge_inputs import (
     judge_inputs,
     require_finished,
 )
-from app.evaluation.answers.judge_run import JudgeFiles, JudgeOptions, JudgeRunError, judge_run
+from app.evaluation.answers.judge_run import (
+    JudgeFiles,
+    JudgeOptions,
+    JudgeRunError,
+    judge_run,
+    read_verdicts,
+)
+from app.evaluation.answers.labels import (
+    Agreement,
+    LabelError,
+    compare,
+    read_inputs,
+    read_labels,
+    sheet_items,
+    write_inputs,
+    write_sheet,
+)
 from app.evaluation.answers.runtime import (
     AskRuntime,
     JudgeRuntime,
@@ -127,6 +148,8 @@ DEFAULT_API_URL = "http://backend:8000"
 JUDGE_CACHE_FILE = RUNS_DIR / "judge-cache.jsonl"
 JUDGE_FILE = "judge.jsonl"
 JUDGE_BATCHES_FILE = "judge-batches.jsonl"
+JUDGE_INPUTS_FILE = "judge-inputs.jsonl"
+LABELS_FILE = "labels.csv"
 # The API's message limit as compose sets it by default; turns longer than this fail
 # dataset validation instead of a 422 in the middle of a paid run.
 MAX_TURN_CHARS: int = Settings.model_fields["chat_message_max_chars"].default
@@ -167,6 +190,15 @@ def _parser() -> argparse.ArgumentParser:
     judge.add_argument(
         "--eval-dir", type=Path, default=DEFAULT_EVAL_DIR, help="the eval/ directory"
     )
+    for name, text in (
+        ("label-sheet", "write the human label sheet of a judged run"),
+        ("agreement", "print the judge's agreement with the human labels"),
+    ):
+        labels = commands.add_parser(name, help=text)
+        labels.add_argument("--run", required=True, help="the matrix run name")
+        labels.add_argument(
+            "--eval-dir", type=Path, default=DEFAULT_EVAL_DIR, help="the eval/ directory"
+        )
     drive = commands.add_parser(
         "drive", parents=[run_options], help="drive one run from the host (restart, check, ask)"
     )
@@ -288,6 +320,7 @@ async def _judge(
     async with judge_runtime(settings) as runtime:
         chunks = await runtime.chunks(run_settings(run).alias)
         inputs = judge_inputs(items, results, traces, chunks)
+        write_inputs(files.run_dir / JUDGE_INPUTS_FILE, inputs)
         repeat = repeat_sample([judged.item_id for judged in inputs], run.judge_repeat, matrix.seed)
         summary = await judge_run(
             matrix,
@@ -310,6 +343,37 @@ async def _judge(
             "recorded": summary.judged,
             "errors": summary.errors,
         },
+    )
+    return 0
+
+
+def _label_sheet(args: argparse.Namespace) -> int:
+    matrix = load_answer_matrix(args.eval_dir / MATRIX_FILE)
+    run_dir = args.eval_dir / RUNS_DIR / matrix.run(args.run).name
+    records = read_verdicts(run_dir / JUDGE_FILE)
+    inputs = read_inputs(run_dir / JUDGE_INPUTS_FILE)
+    chosen = sheet_items(records, inputs, matrix.models.judge, matrix.seed)
+    write_sheet(run_dir / LABELS_FILE, chosen)
+    logger.info("label sheet written", extra={"run": args.run, "items": len(chosen)})
+    return 0
+
+
+def _row(name: str, found: Agreement) -> str:
+    kappa = "n/a" if found.kappa is None else f"{found.kappa:.2f}"
+    return f"| {name} | {found.n} | {found.agreed} | {found.raw:.2f} | {kappa} |\n"
+
+
+def _agreement(args: argparse.Namespace, stdout: TextIO) -> int:
+    matrix = load_answer_matrix(args.eval_dir / MATRIX_FILE)
+    run_dir = args.eval_dir / RUNS_DIR / matrix.run(args.run).name
+    faithful, correctness = compare(
+        read_labels(run_dir / LABELS_FILE), read_verdicts(run_dir / JUDGE_FILE)
+    )
+    stdout.write(
+        f"# Judge agreement, {args.run}\n\n"
+        "| measure | n | agreed | raw | kappa |\n|---|---|---|---|---|\n"
+        + _row("faithful", faithful)
+        + _row("correctness", correctness)
     )
     return 0
 
@@ -365,6 +429,7 @@ _INVALID_FILES: tuple[tuple[type[Exception] | tuple[type[Exception], ...], str],
     (MatrixError, "answer matrix is invalid"),
     ((DatasetError, DatasetNotFrozenError), "dataset is invalid"),
     (LedgerError, "ledger is invalid"),
+    (LabelError, "label files are invalid"),
 )
 
 
@@ -379,14 +444,16 @@ def main(  # noqa: PLR0913 - keyword-only test seams, one per external system
 ) -> int:
     args = _parser().parse_args(argv)
     configure_logging("INFO")
+    commands: dict[str, Callable[[], int]] = {
+        "estimate": lambda: _estimate(args, stdout),
+        "ask": lambda: asyncio.run(_ask(args, get_settings(), ask_runtime)),
+        "drive": lambda: _drive(args, drive_runner, environ),
+        "judge": lambda: asyncio.run(_judge(args, get_settings(), judge_runtime)),
+        "label-sheet": lambda: _label_sheet(args),
+        "agreement": lambda: _agreement(args, stdout),
+    }
     try:
-        if args.command == "ask":
-            return asyncio.run(_ask(args, get_settings(), ask_runtime))
-        if args.command == "drive":
-            return _drive(args, drive_runner, environ)
-        if args.command == "judge":
-            return asyncio.run(_judge(args, get_settings(), judge_runtime))
-        return _estimate(args, stdout)
+        return commands[args.command]()
     except Exception as exc:  # every failure maps to an exit code and one log line
         code, message, extra = _failure(exc)
         logger.error(message, extra=extra)  # noqa: TRY400 - fixed messages, no traceback

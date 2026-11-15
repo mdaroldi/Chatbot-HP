@@ -105,6 +105,8 @@ make eval-retrieval  # retrieval benchmark via compose (EVAL_ARGS=preflight | ru
 make eval-estimate   # answer benchmark budget plan and spend (measured / estimated), no key
 make eval-answers    # billed: one answer run via the host driver (ANSWER_ARGS="--run NAME ...")
 make eval-judge      # billed: judge pass of a run via the Batch API (JUDGE_ARGS="--run NAME [--limit N]")
+make eval-label-sheet  # human label sheet of a judged run, verdicts hidden (LABEL_RUN=reference-1)
+make eval-agreement  # judge agreement with the human labels: raw and Cohen's kappa
 make eval         # run the quality benchmark
 make load         # run the load test
 make check        # lint + typecheck + test + security (run before every commit)

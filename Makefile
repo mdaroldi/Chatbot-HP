@@ -18,7 +18,8 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 .PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int test-ui-int test-eval-int smoke-llm \
 	fetch-test-assets models \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins \
-	purge eval-retrieval eval-estimate eval-answers eval-judge eval load check
+	purge eval-retrieval eval-estimate eval-answers eval-judge \
+	eval-label-sheet eval-agreement eval load check
 
 help: ## List available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -180,6 +181,18 @@ eval-judge: ## Billed: judge one run's answers via the Batch API (needs `make up
 	docker compose run --rm --no-deps --user "$$(id -u):$$(id -g)" \
 		--volume "$(CURDIR)/eval:/eval" \
 		--entrypoint python backend -m app.evaluation.answers judge $(JUDGE_ARGS)
+
+# Files only, on the host (no stack, no key, no spend): the label sheet of a judged run,
+# built from the inputs the judge pass saved, and the judge's agreement with the labels.
+LABEL_RUN ?= reference-1
+
+eval-label-sheet: ## Write the human label sheet of a judged run (eval/answer-runs/RUN/labels.csv); LABEL_RUN=reference-1
+	cd $(BACKEND) && uv run --frozen python -m app.evaluation.answers label-sheet \
+		--eval-dir ../eval --run $(LABEL_RUN)
+
+eval-agreement: ## Judge agreement with the human labels (raw and Cohen's kappa); LABEL_RUN=reference-1
+	cd $(BACKEND) && uv run --frozen python -m app.evaluation.answers agreement \
+		--eval-dir ../eval --run $(LABEL_RUN)
 
 # Local only, like test-ui-int: the answer harness end to end on the stub provider, no
 # key and no spend. The driver pins the stub and the stub matrix's models, so it runs on

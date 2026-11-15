@@ -3,6 +3,7 @@
 backend image (fake runtime); and `drive`, its host side (fake command runner).
 """
 
+import csv
 import dataclasses
 import io
 import json
@@ -26,6 +27,7 @@ from app.evaluation.answers.dataset import load_dataset
 from app.evaluation.answers.driver import Completed
 from app.evaluation.answers.journal import read_journal
 from app.evaluation.answers.judge_run import BatchOutcome, BatchPendingError, read_verdicts
+from app.evaluation.answers.labels import SHEET_COLUMNS, read_inputs
 from app.evaluation.answers.runtime import AskRuntime, JudgeRuntime
 from app.ingestion.corpus import load_corpus
 from tests.unit.conftest import LogReader
@@ -506,6 +508,8 @@ def test_a_judge_smoke_judges_a_spread_of_answers_once_and_charges_the_ledger(
     records = read_verdicts(eval_dir / RUNS_DIR / "reference-1" / "judge.jsonl")
     assert [r.verdict is not None for r in records] == [True, True]
     assert (eval_dir / JUDGE_CACHE_FILE).exists()
+    saved = read_inputs(eval_dir / RUNS_DIR / "reference-1" / "judge-inputs.jsonl")
+    assert set(saved) >= {cid.removesuffix("--p1") for cid in batch}
     judge_charges = [c for c in Ledger(eval_dir / LEDGER_FILE).charges() if c.kind is Kind.JUDGE]
     assert len(judge_charges) == 2
     (done,) = [r for r in json_logs() if r["message"] == "judge pass done"]
@@ -577,3 +581,62 @@ def test_a_batch_still_running_stops_with_one_and_names_the_batch(
     (stopped,) = [r for r in json_logs() if r["message"] == "answer run stopped"]
     assert stopped["error"] == "BatchPendingError"
     assert "batch-1" in stopped["detail"]
+
+
+# ------------------------------------------------------------------ labels
+
+
+def judged_run(eval_dir: Path) -> Path:
+    """A finished reference-1 run with a full judge pass (fakes); its run directory."""
+    run_ask(eval_dir, FakeRuntime(), "--run", "reference-1")
+    run_judge(eval_dir, FakeJudgeRuntime(), "--run", "reference-1")
+    return eval_dir / RUNS_DIR / "reference-1"
+
+
+def run_labels(eval_dir: Path, command: str) -> tuple[int, str]:
+    out = io.StringIO()
+    code = main([command, "--eval-dir", str(eval_dir), "--run", "reference-1"], stdout=out)
+    return code, out.getvalue()
+
+
+def test_label_sheet_writes_twenty_unlabelled_rows_and_never_overwrites(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    run_dir = judged_run(eval_dir)
+
+    assert run_labels(eval_dir, "label-sheet")[0] == 0
+    with (run_dir / "labels.csv").open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 20
+    assert {(r["faithful"], r["correctness"]) for r in rows} == {("", "")}
+
+    assert run_labels(eval_dir, "label-sheet")[0] == 1
+    (failed,) = [r for r in json_logs() if r["message"] == "label files are invalid"]
+    assert "labels.csv" in str(failed["detail"])
+
+
+def test_agreement_prints_both_measures_with_n(eval_dir: Path) -> None:
+    run_dir = judged_run(eval_dir)
+    run_labels(eval_dir, "label-sheet")
+    sheet = run_dir / "labels.csv"
+    with sheet.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    for row in rows:  # the fake judge says unfaithful and partial for every answer
+        row |= {"faithful": "no", "correctness": "partial"}
+    rows[0] |= {"faithful": "yes", "correctness": "correct"}
+    with sheet.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, SHEET_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    code, out = run_labels(eval_dir, "agreement")
+
+    assert code == 0
+    assert "| faithful | 20 | 19 | 0.95 | 0.00 |" in out
+    assert "| correctness | 20 | 19 | 0.95 | 0.00 |" in out
+
+
+def test_agreement_without_a_sheet_fails_with_one(eval_dir: Path, json_logs: LogReader) -> None:
+    judged_run(eval_dir)
+    assert run_labels(eval_dir, "agreement")[0] == 1
+    assert any(r["message"] == "label files are invalid" for r in json_logs())
