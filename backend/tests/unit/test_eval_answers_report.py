@@ -135,6 +135,34 @@ def test_the_record_holds_secondary_metrics_slices_and_server_latency() -> None:
     assert found["long_query_pairs"]["n"] == 0
 
 
+def test_the_record_holds_each_item_verdict_for_pairing_across_runs() -> None:
+    found = run_record(HEADER, SCORES, HEALTH, judge=None)
+
+    by_id = {row["id"]: row for row in found["items"]}
+    assert list(by_id) == ["q-1", "q-2", "q-3", "oos-1", "lq-1", "adv-1"]
+    assert by_id["q-1"] == {
+        "id": "q-1",
+        "slice": "answers_v1",
+        "primary": True,
+        "in_scope": True,
+        "oos_kind": None,
+        "attack": None,
+        "rewrite_trap": None,
+        "refused": False,
+        "refusal_reason": None,
+        "key_fact_pass": True,
+        "coverage": None,
+        "warning_carried": True,
+        "forbidden_hit": None,
+        "adversarial_pass": None,
+        "rewrite_clean": None,
+    }
+    assert by_id["q-3"]["refusal_reason"] == "below_threshold"
+    assert by_id["oos-1"]["oos_kind"] == "unrelated"
+    assert by_id["lq-1"]["slice"] == "long_query"
+    assert by_id["lq-1"]["primary"] is False
+
+
 def test_the_record_is_plain_json() -> None:
     found = run_record(HEADER, SCORES, HEALTH, judge=judge_section([], human=None))
     assert json.loads(json.dumps(found)) == found

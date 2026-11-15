@@ -9,13 +9,15 @@ git SHA), run health, the primary metric (rule 5) with k/n and its Wilson interv
 false refusals, out-of-scope recall, secondary metrics, one row per slice, refusals by
 item and reason, long-query pairs, server latency (layer 1 refusals apart) and the
 judge: first-pass verdicts, repeatability on the re-judged sample, and agreement with
-the human labels when they exist.
+the human labels when they exist. The JSON also keeps one row per item (id, slice
+and verdicts, never text), which the summary pairs across runs for rule 7.
 """
 
 import dataclasses
 import json
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +134,41 @@ def _refusals(scores: Sequence[ItemScore]) -> Record:
     }
 
 
+def _value(found: object) -> object:
+    return found.value if isinstance(found, StrEnum) else found
+
+
+def _items(scores: Sequence[ItemScore]) -> list[Record]:
+    """One row per scored item, ids and verdicts only, so the summary can pair runs."""
+    rows = []
+    for found in scores:
+        item = found.item
+        row: Record = {
+            "id": item.id,
+            "slice": item.slice or ANSWERS_V1,
+            "primary": item.primary,
+            "in_scope": item.in_scope,
+            "oos_kind": item.oos_kind,
+            "attack": item.attack,
+            "rewrite_trap": item.rewrite_trap,
+            "refused": found.refused,
+            "refusal_reason": found.refusal_reason,
+        }
+        row |= {name: getattr(found, name) for name in _ITEM_VERDICTS}
+        rows.append({key: _value(value) for key, value in row.items()})
+    return rows
+
+
+_ITEM_VERDICTS = (
+    "key_fact_pass",
+    "coverage",
+    "warning_carried",
+    "forbidden_hit",
+    "adversarial_pass",
+    "rewrite_clean",
+)
+
+
 def run_record(
     header: Mapping[str, object],
     scores: Sequence[ItemScore],
@@ -158,6 +195,7 @@ def run_record(
         "long_query_pairs": dataclasses.asdict(metrics.long_query_pairs(scores)),
         "latency_ms": dataclasses.asdict(metrics.latency(scores)),
         "judge": judge,
+        "items": _items(scores),
     }
 
 
