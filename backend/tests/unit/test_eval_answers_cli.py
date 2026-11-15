@@ -36,7 +36,7 @@ from app.evaluation.answers.labels import (
 from app.evaluation.answers.runtime import AskRuntime, JudgeRuntime
 from app.ingestion.corpus import load_corpus
 from tests.unit.conftest import LogReader
-from tests.unit.test_eval_answers_ask import FakeBackend, FakeIndex, FakeRows, ready_body
+from tests.unit.test_eval_answers_ask import BUILD, FakeBackend, FakeIndex, FakeRows, ready_body
 from tests.unit.test_eval_answers_budget import MATRIX, OPUS, SONNET
 from tests.unit.test_eval_answers_judge_run import VERDICT
 from tests.unit.test_eval_answers_pin import EVAL_DIR
@@ -645,3 +645,168 @@ def test_agreement_without_a_sheet_fails_with_one(eval_dir: Path, json_logs: Log
     judged_run(eval_dir)
     assert run_labels(eval_dir, "agreement")[0] == 1
     assert any(r["message"] == "label files are invalid" for r in json_logs())
+
+
+# ------------------------------------------------------------------ report and summary
+
+GIT = {"GIT_SHA": "abc1234"}
+
+
+def run_report(eval_dir: Path, *args: str, environ: Mapping[str, str] = GIT) -> int:
+    return main(
+        ["report", "--eval-dir", str(eval_dir), *args], stdout=io.StringIO(), environ=environ
+    )
+
+
+def report_of(run_dir: Path) -> dict[str, object]:
+    found = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    assert isinstance(found, dict)
+    return found
+
+
+def test_report_writes_json_and_markdown_for_a_finished_judged_run(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    run_dir = judged_run(eval_dir)
+
+    assert run_report(eval_dir, "--run", "reference-1") == 0
+
+    found = report_of(run_dir)
+    header = found["header"]
+    assert isinstance(header, dict)
+    assert (header["run"], header["git_sha"], header["items"]) == (
+        "reference-1",
+        "abc1234",
+        "105 of 105",
+    )
+    assert header["index_build_ids"] == BUILD
+    assert "answers-v1.toml 1.0.0 2aac464af1c6" in header["datasets"]
+    judge = found["judge"]
+    assert isinstance(judge, dict)
+    assert judge["faithful_strict"]["n"] == 72
+    assert judge["human"] is None  # no label sheet yet
+    assert (run_dir / "report.md").read_text(encoding="utf-8").startswith("# Answer run")
+    (done,) = [r for r in json_logs() if r["message"] == "run report written"]
+    assert (done["run"], done["items"]) == ("reference-1", 105)
+
+
+def test_report_adds_human_agreement_once_the_sheet_is_labelled(eval_dir: Path) -> None:
+    run_dir = judged_run(eval_dir)
+    run_labels(eval_dir, "label-sheet")
+    assert run_report(eval_dir, "--run", "reference-1") == 0
+    judge = report_of(run_dir)["judge"]
+    assert isinstance(judge, dict)
+    assert judge["human"] is None  # a blank sheet is not labelled yet
+
+    sheet = run_dir / "labels.csv"
+    with sheet.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    with sheet.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, SHEET_COLUMNS)
+        writer.writeheader()
+        writer.writerows(r | {FAITHFUL_COLUMN: "no", CORRECTNESS_COLUMN: "partial"} for r in rows)
+
+    assert run_report(eval_dir, "--run", "reference-1") == 0
+    judge = report_of(run_dir)["judge"]
+    assert isinstance(judge, dict)
+    assert judge["human"]["faithful"] == {"n": 20, "agreed": 20, "kappa": None}
+
+
+def test_report_of_an_unfinished_run_fails_with_one(eval_dir: Path, json_logs: LogReader) -> None:
+    run_ask(eval_dir, FakeRuntime(), "--run", "reference-1", "--limit", "3")
+
+    assert run_report(eval_dir, "--run", "reference-1") == 1
+    (stopped,) = [r for r in json_logs() if r["message"] == "answer run stopped"]
+    assert stopped["error"] == "RunScoreError"
+    assert not (eval_dir / RUNS_DIR / "reference-1" / "report.json").exists()
+
+
+@pytest.mark.parametrize("environ", [{}, {"GIT_SHA": "main"}])
+def test_report_needs_a_commit_sha(eval_dir: Path, environ: Mapping[str, str]) -> None:
+    assert run_report(eval_dir, "--run", "reference-1", environ=environ) == 2
+
+
+def test_the_heldout_report_needs_allow_heldout(eval_dir: Path) -> None:
+    assert run_report(eval_dir, "--run", "heldout") == 2
+
+
+def test_a_stub_report_covers_recorded_items_and_makes_no_quality_claims(eval_dir: Path) -> None:
+    runtime = FakeRuntime(FakeBackend(ready=ready_body(llm="stub")), rows=FakeRows(model="stub"))
+    run_ask(eval_dir, runtime, "--run", "reference-1", "--limit", "2", "--provider", "stub")
+
+    assert run_report(eval_dir, "--run", "reference-1", "--provider", "stub") == 0
+
+    header = report_of(eval_dir / RUNS_DIR / "stub" / "reference-1")["header"]
+    assert isinstance(header, dict)
+    assert header["items"] == "2 of 105"
+    assert header["note"] == "stub provider: pipeline check only, no quality claims"
+
+
+def run_summary(eval_dir: Path) -> int:
+    return main(["summary", "--eval-dir", str(eval_dir)], stdout=io.StringIO())
+
+
+def summary_page(eval_dir: Path) -> str:
+    return (eval_dir / "reports" / "answers-summary.md").read_text(encoding="utf-8")
+
+
+def test_summary_writes_the_page_from_the_run_reports_and_negative_controls(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    run_dir = judged_run(eval_dir)
+    run_report(eval_dir, "--run", "reference-1")
+    negative = eval_dir / RUNS_DIR / "negative-controls"
+    negative.mkdir()
+    (negative / "judge.jsonl").write_bytes((run_dir / "judge.jsonl").read_bytes())
+
+    assert run_summary(eval_dir) == 0
+
+    page = summary_page(eval_dir)
+    assert page.startswith("# Answer benchmark summary\n")
+    assert "| hybrid-no-rerank | RETRIEVAL_RERANK_ENABLED=false | not run |" in page
+    assert "Negative controls (72 corrupted answers)" in page
+    assert any(r["message"] == "answer summary written" for r in json_logs())
+
+
+def test_summary_marks_the_rows_the_budget_cut(eval_dir: Path) -> None:
+    judged_run(eval_dir)
+    run_report(eval_dir, "--run", "reference-1")
+    matrix = load_answer_matrix(eval_dir / "answer-matrix.toml")
+    spent = charge(matrix, "reference-1", "x", Kind.ANSWER, SONNET, 3_000_000, 0)  # $6
+    Ledger(eval_dir / LEDGER_FILE).append(spent)
+
+    assert run_summary(eval_dir) == 0
+    page = summary_page(eval_dir)
+    assert "| hybrid-no-rerank | RETRIEVAL_RERANK_ENABLED=false | not run: budget |" in page
+    assert "Negative controls" not in page
+
+
+def test_summary_without_a_reference_1_report_fails_with_one(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    assert run_summary(eval_dir) == 1
+    (stopped,) = [r for r in json_logs() if r["message"] == "answer run stopped"]
+    assert "reference-1" in stopped["detail"]
+    assert not (eval_dir / "reports").exists()
+
+
+def test_a_report_of_another_schema_stops_the_summary(eval_dir: Path, json_logs: LogReader) -> None:
+    run_dir = eval_dir / RUNS_DIR / "reference-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "report.json").write_text('{"schema": "answers-report-v0"}', encoding="utf-8")
+
+    assert run_summary(eval_dir) == 1
+    (stopped,) = [r for r in json_logs() if r["message"] == "answer run stopped"]
+    assert stopped["error"] == "ReportError"
+
+
+def test_an_unreadable_report_stops_the_summary_naming_the_run(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    run_dir = eval_dir / RUNS_DIR / "reference-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "report.json").write_text("{", encoding="utf-8")
+
+    assert run_summary(eval_dir) == 1
+    (stopped,) = [r for r in json_logs() if r["message"] == "answer run stopped"]
+    assert stopped["detail"] == "cannot read the report of reference-1"

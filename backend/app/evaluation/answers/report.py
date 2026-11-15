@@ -21,9 +21,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from app.domain.answer_dataset import DatasetFile
 from app.evaluation.answers import metrics
+from app.evaluation.answers.answer_matrix import AnswerMatrix, RunSpec
 from app.evaluation.answers.health import RunHealth
-from app.evaluation.answers.judge import Correctness
+from app.evaluation.answers.judge import RUBRIC_SHA256, RUBRIC_VERSION, Correctness
 from app.evaluation.answers.judge_run import JudgeRecord
 from app.evaluation.answers.labels import Agreement, agreement
 from app.evaluation.answers.scoring import ItemScore
@@ -167,6 +169,39 @@ _ITEM_VERDICTS = (
     "adversarial_pass",
     "rewrite_clean",
 )
+
+
+STUB_NOTE = "stub provider: pipeline check only, no quality claims"
+
+
+def run_header(  # noqa: PLR0913 - one keyword per header line, named at the call site
+    run: RunSpec,
+    matrix: AnswerMatrix,
+    *,
+    provider: str,
+    asked: int,
+    total: int,
+    build_ids: Iterable[str | None],
+    datasets: Sequence[DatasetFile],
+    git_sha: str,
+) -> Record:
+    """What the run was: its config, models, index builds, dataset versions and commit."""
+    models = f"answer {matrix.models.answer}, rewrite {matrix.models.rewrite}"
+    if run.judge:
+        models += f", judge {matrix.models.judge} ({RUBRIC_VERSION} {RUBRIC_SHA256[:12]})"
+    header: Record = {
+        "run": run.name,
+        "provider": provider,
+        "items": f"{asked} of {total}",
+        "env": ", ".join(f"{key}={value}" for key, value in run.env.items()) or "default",
+        "models": models,
+        "index_build_ids": ", ".join(sorted({b for b in build_ids if b})) or "none",
+        "datasets": ", ".join(f"{f.name} {f.version} {f.sha256[:12]}" for f in datasets),
+        "git_sha": git_sha,
+    }
+    if provider == "stub":
+        header["note"] = STUB_NOTE
+    return header
 
 
 def run_record(

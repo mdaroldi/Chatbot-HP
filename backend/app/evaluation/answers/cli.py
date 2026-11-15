@@ -24,6 +24,14 @@
   the inputs the judge pass saved (files only; `make eval-label-sheet` on the host). An
   existing sheet is never overwritten. `agreement --run NAME` prints raw agreement and
   Cohen's kappa with n for faithful and correctness (`make eval-agreement`).
+- `report --run NAME` scores a finished run from its files (journal, traces, judge
+  verdicts, labels once the sheet is labelled) and writes `report.json` and
+  `report.md` in its run directory; the header names config, models, index builds,
+  dataset hashes and the commit (`GIT_SHA`, as the retrieval CLI). With `--provider
+  stub` it scores the recorded items only and says it makes no quality claims.
+  `summary` writes `reports/answers-summary.md` (committed) from every run's
+  report.json, the budget plan's cuts and the negative controls' verdicts when they
+  exist. Both read files only (`make eval-report`, `make eval-summary` on the host).
 - `drive --run NAME --eval-dir DIR` is the host side (`make eval-answers`): it restarts
   the backend for the run, checks its env, runs `ask` in a harness container with the
   same run options and restores the defaults (`driver.drive`). It never opens a
@@ -40,8 +48,10 @@ infrastructure failure logs its type only.
 
 import argparse
 import asyncio
+import json
 import logging
 import os
+import re
 import sys
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -78,9 +88,10 @@ from app.evaluation.answers.driver import (
     drive,
     subprocess_runner,
 )
-from app.evaluation.answers.estimate import plan, render, typical_tokens
+from app.evaluation.answers.estimate import Status, plan, render, typical_tokens
 from app.evaluation.answers.excerpts import ExcerptError
 from app.evaluation.answers.freeze import run_items
+from app.evaluation.answers.health import run_health
 from app.evaluation.answers.journal import JournalError, latest, read_journal, retried_items
 from app.evaluation.answers.judge import repeat_sample
 from app.evaluation.answers.judge_inputs import (
@@ -102,10 +113,22 @@ from app.evaluation.answers.labels import (
     compare,
     read_inputs,
     read_labels,
+    read_labels_when_done,
     sheet_items,
     write_inputs,
     write_sheet,
 )
+from app.evaluation.answers.report import (
+    REPORT_JSON,
+    SCHEMA,
+    Record,
+    ReportError,
+    judge_section,
+    run_header,
+    run_record,
+    write_report,
+)
+from app.evaluation.answers.run_scores import RunScoreError, score_run
 from app.evaluation.answers.runtime import (
     AskRuntime,
     JudgeRuntime,
@@ -114,6 +137,12 @@ from app.evaluation.answers.runtime import (
     open_judge_runtime,
 )
 from app.evaluation.answers.settle import StoreMismatchError
+from app.evaluation.answers.summary import (
+    SummaryError,
+    negative_controls,
+    render_summary,
+    summary_record,
+)
 from app.evaluation.answers.traces import TraceError, read_traces
 from app.evaluation.runner import HeldoutRefusedError
 from app.ingestion.corpus import load_corpus
@@ -128,9 +157,12 @@ _STOPS = (
     JudgeInputError,
     JudgeRunError,
     MissingKeyError,
+    ReportError,
     RunNotFinishedError,
     RunNotFundedError,
+    RunScoreError,
     StoreMismatchError,
+    SummaryError,
     TraceError,
     UnsoundBoundError,
 )
@@ -150,6 +182,9 @@ JUDGE_FILE = "judge.jsonl"
 JUDGE_BATCHES_FILE = "judge-batches.jsonl"
 JUDGE_INPUTS_FILE = "judge-inputs.jsonl"
 LABELS_FILE = "labels.csv"
+NEGATIVE_CONTROLS_DIR = "negative-controls"
+SUMMARY_FILE = Path("reports/answers-summary.md")
+_GIT_SHA = re.compile(r"[0-9a-f]{7,40}(-dirty)?")
 # The API's message limit as compose sets it by default; turns longer than this fail
 # dataset validation instead of a 422 in the middle of a paid run.
 MAX_TURN_CHARS: int = Settings.model_fields["chat_message_max_chars"].default
@@ -199,6 +234,23 @@ def _parser() -> argparse.ArgumentParser:
         labels.add_argument(
             "--eval-dir", type=Path, default=DEFAULT_EVAL_DIR, help="the eval/ directory"
         )
+    report = commands.add_parser("report", help="write one finished run's report (files only)")
+    report.add_argument("--run", required=True, help="the matrix run name")
+    report.add_argument("--allow-heldout", action="store_true", help="the heldout run only")
+    report.add_argument(
+        "--provider",
+        type=LLMProviderName,
+        choices=list(LLMProviderName),
+        default=LLMProviderName.ANTHROPIC,
+        help="stub: the pipeline check's run directory, recorded items only",
+    )
+    report.add_argument(
+        "--eval-dir", type=Path, default=DEFAULT_EVAL_DIR, help="the eval/ directory"
+    )
+    summary = commands.add_parser("summary", help="write the cross-run summary (files only)")
+    summary.add_argument(
+        "--eval-dir", type=Path, default=DEFAULT_EVAL_DIR, help="the eval/ directory"
+    )
     drive = commands.add_parser(
         "drive", parents=[run_options], help="drive one run from the host (restart, check, ask)"
     )
@@ -378,6 +430,91 @@ def _agreement(args: argparse.Namespace, stdout: TextIO) -> int:
     return 0
 
 
+def _git_sha(environ: Mapping[str, str]) -> str:
+    sha = environ.get("GIT_SHA", "")
+    if not _GIT_SHA.fullmatch(sha):
+        raise _RefusedError("GIT_SHA must be a commit SHA, optionally with -dirty")
+    return sha
+
+
+def _judge_record(run_dir: Path) -> Record | None:
+    verdicts = run_dir / JUDGE_FILE
+    if not verdicts.exists():
+        return None
+    records = read_verdicts(verdicts)
+    labels = read_labels_when_done(run_dir / LABELS_FILE)
+    return judge_section(records, None if labels is None else compare(labels, records))
+
+
+def _report(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
+    git_sha = _git_sha(environ)
+    matrix = _matrix(args.eval_dir, args.provider)
+    run = matrix.run(args.run)
+    doc_ids = {document.doc_id for document in load_corpus()}
+    dataset = load_dataset(args.eval_dir, doc_ids, max_turn_chars=MAX_TURN_CHARS)
+    items = _items_by_run(matrix, dataset, run, allow_heldout=args.allow_heldout)[run.name]
+    files = _run_files(args.eval_dir, run.name, args.provider)
+    results = latest(read_journal(files.results))
+    traces = read_traces(files.traces).latest()
+    total = len(items)
+    if args.provider is LLMProviderName.STUB:  # a pipeline check asks a few items
+        items = tuple(item for item in items if item.id in results)
+    scores = score_run(items, results, traces)
+    header = run_header(
+        run,
+        matrix,
+        provider=args.provider.value,
+        asked=len(items),
+        total=total,
+        build_ids=[row.index_build_id for trace in traces.values() for row in trace.rows],
+        datasets=dataset.files,
+        git_sha=git_sha,
+    )
+    judge = _judge_record(files.run_dir) if run.judge else None
+    record = run_record(header, scores, run_health(list(results.values())), judge)
+    write_report(files.run_dir, record)
+    logger.info("run report written", extra={"run": run.name, "items": len(scores)})
+    return 0
+
+
+def _read_report(path: Path, run: str) -> Record:
+    try:
+        found = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise ReportError(f"cannot read the report of {run}") from None
+    if not isinstance(found, dict) or found.get("schema") != SCHEMA:
+        raise ReportError(f"the report of {run} is not {SCHEMA}; write it again")
+    return found
+
+
+def _summary(args: argparse.Namespace) -> int:
+    matrix = load_answer_matrix(args.eval_dir / MATRIX_FILE)
+    runs_dir = args.eval_dir / RUNS_DIR
+    reports = {
+        run.name: _read_report(runs_dir / run.name / REPORT_JSON, run.name)
+        for run in matrix.runs
+        if (runs_dir / run.name / REPORT_JSON).exists()
+    }
+    doc_ids = {document.doc_id for document in load_corpus()}
+    dataset = load_dataset(args.eval_dir, doc_ids, max_turn_chars=MAX_TURN_CHARS)
+    # Counting the held-out items for the plan is not scoring them (rule 8).
+    items = {run.name: run_items(dataset, run.items, allow_heldout=True) for run in matrix.runs}
+    charges = Ledger(args.eval_dir / LEDGER_FILE).charges()
+    rows = plan(matrix, items, charges, typical_tokens(matrix, charges).tokens)
+    negative = runs_dir / NEGATIVE_CONTROLS_DIR / JUDGE_FILE
+    record = summary_record(
+        matrix,
+        reports,
+        cut=frozenset(row.run for row in rows if row.status is Status.CUT),
+        negative=negative_controls(read_verdicts(negative)) if negative.exists() else None,
+    )
+    page = args.eval_dir / SUMMARY_FILE
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text(render_summary(record), encoding="utf-8")
+    logger.info("answer summary written", extra={"runs": sorted(reports)})
+    return 0
+
+
 def _ask_args(args: argparse.Namespace) -> tuple[str, ...]:
     """The run options given to `drive`, passed on to `ask` unchanged."""
     flags = [
@@ -451,6 +588,8 @@ def main(  # noqa: PLR0913 - keyword-only test seams, one per external system
         "judge": lambda: asyncio.run(_judge(args, get_settings(), judge_runtime)),
         "label-sheet": lambda: _label_sheet(args),
         "agreement": lambda: _agreement(args, stdout),
+        "report": lambda: _report(args, environ),
+        "summary": lambda: _summary(args),
     }
     try:
         return commands[args.command]()

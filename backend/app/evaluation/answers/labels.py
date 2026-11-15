@@ -268,3 +268,17 @@ def compare(
         faithful.append((label.faithful, verdict.faithful))
         correctness.append((label.correctness, verdict.correctness))
     return agreement(faithful), agreement(correctness)
+
+
+def read_labels_when_done(path: Path) -> dict[str, Label] | None:
+    """None while the sheet is absent or untouched, so a run report can be written
+    before the labels exist; a half-labelled sheet is still an error naming the row.
+    """
+    if not path.exists():
+        return None
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    cells = [(row.get(FAITHFUL_COLUMN) or "") + (row.get(CORRECTNESS_COLUMN) or "") for row in rows]
+    if not any(cell.strip() for cell in cells):
+        return None
+    return read_labels(path)

@@ -19,7 +19,7 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 	fetch-test-assets models \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins \
 	purge eval-retrieval eval-estimate eval-answers eval-judge \
-	eval-label-sheet eval-agreement eval load check
+	eval-label-sheet eval-agreement eval-report eval-summary eval load check
 
 help: ## List available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -205,8 +205,38 @@ test-eval-int: ## Answer harness pipeline on the stub provider (local, needs `ma
 	cd $(BACKEND) && uv run --frozen python -m app.evaluation.answers drive --provider stub \
 		--eval-dir "$(CURDIR)/eval" --run reference-1 --limit 2 --resume
 
-eval: ## Run the quality benchmark
-	@echo "not implemented yet"; exit 1
+# Files only, on the host (no stack, no key, no spend): one finished run's report in its
+# git-ignored run directory, and the committed cross-run summary built from the reports.
+# REPORT_ARGS: --run NAME [--provider stub] [--allow-heldout].
+REPORT_ARGS ?= --run reference-1
+
+eval-report: ## Write one finished run's report (eval/answer-runs/RUN/report.md); REPORT_ARGS="--run reference-1"
+	cd $(BACKEND) && GIT_SHA="$$(git rev-parse HEAD)$$(git diff --quiet HEAD || echo -dirty)" \
+		uv run --frozen python -m app.evaluation.answers report --eval-dir ../eval $(REPORT_ARGS)
+
+eval-summary: ## Write eval/reports/answers-summary.md from the run reports (files only)
+	cd $(BACKEND) && uv run --frozen python -m app.evaluation.answers summary --eval-dir ../eval
+
+# The reference config once on dev (resumed if it exists, so a finished run pays nothing
+# again), then its report and the summary. Billed and inside the ledger's cap: needs the
+# key (in the environment or .env) and `make up`; without it, exit 2 before anything runs.
+# EVAL_PROVIDER=stub is the free pipeline check: test-eval-int's 5 stub items, then their
+# report, which says it makes no quality claims.
+EVAL_PROVIDER ?= anthropic
+
+eval: ## Quality benchmark: reference run on dev, report, summary (billed); EVAL_PROVIDER=stub for the free pipeline check
+ifeq ($(EVAL_PROVIDER),stub)
+	$(MAKE) test-eval-int
+	$(MAKE) eval-report REPORT_ARGS="--run reference-1 --provider stub"
+else
+	@[ -n "$$ANTHROPIC_API_KEY" ] || grep -Eq '^ANTHROPIC_API_KEY=[^[:space:]]+' .env 2>/dev/null || { \
+		echo "make eval needs ANTHROPIC_API_KEY (EVAL_PROVIDER=stub runs the free pipeline check)" >&2; \
+		exit 2; }
+	cd $(BACKEND) && uv run --frozen python -m app.evaluation.answers drive \
+		--eval-dir "$(CURDIR)/eval" --run reference-1 --resume
+	$(MAKE) eval-report REPORT_ARGS="--run reference-1"
+	$(MAKE) eval-summary
+endif
 
 load: ## Run the load test
 	@echo "not implemented yet"; exit 1

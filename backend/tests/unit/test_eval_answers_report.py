@@ -7,11 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.answer_dataset import EvalItem, Slice
+from app.domain.answer_dataset import DatasetFile, EvalItem, Slice
 from app.domain.chat import RefusalReason
 from app.domain.evaluation import OosKind, Split
+from app.evaluation.answers.answer_matrix import parse_answer_matrix
 from app.evaluation.answers.health import RunHealth
-from app.evaluation.answers.judge import Verdict
+from app.evaluation.answers.judge import RUBRIC_SHA256, Verdict
 from app.evaluation.answers.judge_run import JudgeRecord
 from app.evaluation.answers.labels import Agreement
 from app.evaluation.answers.report import (
@@ -21,12 +22,14 @@ from app.evaluation.answers.report import (
     judge_section,
     proportion,
     render_markdown,
+    run_header,
     run_record,
     write_report,
 )
 from app.evaluation.answers.scoring import ItemScore
 from app.evaluation.answers.stats import Proportion
 from tests.unit.test_eval_answers_labels import judged, record
+from tests.unit.test_eval_answers_matrix import BASE
 
 HEALTH = RunHealth(
     items=6,
@@ -263,3 +266,68 @@ def test_the_report_is_written_as_json_and_markdown(tmp_path: Path) -> None:
 def test_a_run_with_no_scored_items_has_no_report() -> None:
     with pytest.raises(ReportError, match="no scored"):
         run_record(HEADER, (), HEALTH, judge=None)
+
+
+MATRIX = parse_answer_matrix(
+    BASE
+    + """
+[[runs]]
+name = "reference-1"
+items = "dev"
+judge = true
+
+[[runs]]
+name = "k3"
+items = "answers-dev"
+env = { RETRIEVAL_TOP_K = "3" }
+"""
+)
+DATASETS = (
+    DatasetFile("retrieval-v1", "1.0.1", "a" * 64),
+    DatasetFile("answers-v1", "1.0.0", "2aac464af1c6" + "0" * 52),
+)
+
+
+def test_the_header_names_config_models_builds_datasets_and_commit() -> None:
+    found = run_header(
+        MATRIX.run("k3"),
+        MATRIX,
+        provider="anthropic",
+        asked=56,
+        total=56,
+        build_ids=["b-2", None, "b-1", "b-2"],
+        datasets=DATASETS,
+        git_sha="abc1234-dirty",
+    )
+
+    assert found == {
+        "run": "k3",
+        "provider": "anthropic",
+        "items": "56 of 56",
+        "env": "RETRIEVAL_TOP_K=3",
+        "models": f"answer {MATRIX.models.answer}, rewrite {MATRIX.models.rewrite}",
+        "index_build_ids": "b-1, b-2",
+        "datasets": "retrieval-v1 1.0.1 aaaaaaaaaaaa, answers-v1 1.0.0 2aac464af1c6",
+        "git_sha": "abc1234-dirty",
+    }
+
+
+def test_a_judged_run_names_the_judge_and_rubric_and_a_stub_run_says_no_claims() -> None:
+    found = run_header(
+        MATRIX.run("reference-1"),
+        MATRIX,
+        provider="stub",
+        asked=3,
+        total=105,
+        build_ids=[],
+        datasets=DATASETS,
+        git_sha="abc1234",
+    )
+
+    assert found["env"] == "default"
+    assert found["models"].endswith(
+        f", judge {MATRIX.models.judge} (judge-v1 {RUBRIC_SHA256[:12]})"
+    )
+    assert found["index_build_ids"] == "none"
+    assert found["items"] == "3 of 105"
+    assert found["note"] == "stub provider: pipeline check only, no quality claims"

@@ -21,6 +21,7 @@ from app.evaluation.answers.labels import (
     label_sample,
     read_inputs,
     read_labels,
+    read_labels_when_done,
     sheet_items,
     sheet_row,
     write_inputs,
@@ -206,6 +207,22 @@ def test_a_sheet_without_the_label_columns_is_refused(tmp_path: Path) -> None:
 def test_a_missing_sheet_is_an_error_naming_it(tmp_path: Path) -> None:
     with pytest.raises(LabelError, match=r"labels\.csv"):
         read_labels(tmp_path / "labels.csv")
+
+
+def test_a_sheet_not_yet_labelled_reads_as_none(tmp_path: Path) -> None:
+    assert read_labels_when_done(tmp_path / "labels.csv") is None
+    blank = labelled(tmp_path, ("q-1", "", ""), ("q-2", " ", ""))
+    assert read_labels_when_done(blank) is None
+
+
+def test_a_labelled_sheet_reads_back_and_a_half_labelled_one_is_an_error(
+    tmp_path: Path,
+) -> None:
+    path = labelled(tmp_path, ("q-1", "yes", "correct"))
+    assert read_labels_when_done(path) == {"q-1": Label(True, Correctness.CORRECT)}
+    labelled(tmp_path, ("q-1", "yes", "correct"), ("q-2", "", ""))
+    with pytest.raises(LabelError, match="row 2"):
+        read_labels_when_done(path)
 
 
 # ---------------------------------------------------------------- agreement

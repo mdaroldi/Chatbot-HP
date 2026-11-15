@@ -107,7 +107,9 @@ make eval-answers    # billed: one answer run via the host driver (ANSWER_ARGS="
 make eval-judge      # billed: judge pass of a run via the Batch API (JUDGE_ARGS="--run NAME [--limit N]")
 make eval-label-sheet  # human label sheet of a judged run, verdicts hidden (LABEL_RUN=reference-1)
 make eval-agreement  # judge agreement with the human labels: raw and Cohen's kappa
-make eval         # run the quality benchmark
+make eval-report  # one finished run's report in its run dir (REPORT_ARGS="--run NAME"), files only
+make eval-summary # eval/reports/answers-summary.md from the run reports, files only
+make eval         # billed: reference run on dev + report + summary (no key: exit 2; EVAL_PROVIDER=stub: free pipeline check)
 make load         # run the load test
 make check        # lint + typecheck + test + security (run before every commit)
 ```
