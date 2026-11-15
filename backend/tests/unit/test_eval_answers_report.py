@@ -207,6 +207,24 @@ def test_the_markdown_shows_ids_and_numbers_from_the_record() -> None:
     assert "Q?" not in page  # never question wording
 
 
+def test_the_markdown_shows_measured_agreement_as_rows() -> None:
+    records = [
+        record(judged("q-1"), faithful=True, correctness="correct"),
+        record(judged("q-1"), judge_pass=2, faithful=True, correctness="partial"),
+    ]
+    human = (Agreement(20, 19, 0.5), Agreement(20, 18, None))
+    found = run_record(HEADER, SCORES, HEALTH, judge=judge_section(records, human))
+
+    page = render_markdown(found)
+
+    assert "### repeatability" in page
+    assert "| faithful | 1 | 1 | 1.000 | n/a |" in page  # kappa undefined: p_e = 1
+    assert "| correctness | 1 | 0 | 0.000 | 0.000 |" in page
+    assert "### human" in page
+    assert "| faithful | 20 | 19 | 0.950 | 0.500 |" in page
+    assert "not measured" not in page
+
+
 def test_the_report_is_written_as_json_and_markdown(tmp_path: Path) -> None:
     found = run_record(HEADER, SCORES, HEALTH, judge=None)
     write_report(tmp_path, found)
