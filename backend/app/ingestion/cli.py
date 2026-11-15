@@ -43,7 +43,7 @@ from app.infra.manifest_repository import SqlManifestStore
 from app.infra.model_files import HuggingFaceHub, PinnedModelSource, load_pins
 from app.infra.pdfplumber_parser import PdfplumberParser
 from app.infra.qdrant_index import QdrantIndex
-from app.ingestion import chunking, naive
+from app.ingestion.chunkers import CHUNKING_VERSIONS
 from app.ingestion.chunking import StructureChunker
 from app.ingestion.corpus import load_corpus
 from app.ingestion.naive import NaiveChunker
@@ -57,9 +57,6 @@ from app.ingestion.pipeline import (
 from app.ingestion.report import render_markdown
 
 logger = logging.getLogger(__name__)
-
-# The version each chunker stamps on its chunks; the build records it before chunking.
-CHUNKING_VERSIONS = {ChunkerKind.STRUCTURE: chunking.VERSION, ChunkerKind.NAIVE: naive.VERSION}
 
 
 @dataclass(frozen=True)

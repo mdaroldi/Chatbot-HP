@@ -22,6 +22,7 @@ from app.evaluation.answers.driver import (
     Completed,
     DriveRequest,
     DriverError,
+    build_index,
     drive,
     subprocess_runner,
 )
@@ -232,3 +233,71 @@ def test_a_real_drive_never_passes_a_provider_to_ask() -> None:
     runner = FakeRunner()
     drive(MATRIX, request(), runner, ENVIRON)
     assert "--provider" not in runner.calls[2][0]
+
+
+# ------------------------------------------------------------------ index builds
+
+NAIVE = parse_answer_matrix(
+    BASE
+    + REFERENCE
+    + HELDOUT
+    + """
+[[runs]]
+name = "naive"
+items = "answers-dev"
+env = { QDRANT_COLLECTION_ALIAS = "hpdocs_chunks_naive" }
+"""
+)
+
+
+def test_a_run_on_the_default_alias_builds_nothing() -> None:
+    runner = FakeRunner()
+
+    build_index(MATRIX.run("k3"), runner, ENVIRON)
+
+    assert runner.calls == []
+
+
+def test_a_run_on_another_alias_builds_it_only_if_needed_with_its_chunker() -> None:
+    runner = FakeRunner()
+
+    build_index(NAIVE.run("naive"), runner, ENVIRON)
+
+    [(argv, env, capture)] = runner.calls
+    assert argv == (
+        "docker",
+        "compose",
+        "run",
+        "--rm",
+        "--no-deps",
+        "--env",
+        "CHUNKER=naive",
+        "--env",
+        "QDRANT_COLLECTION_ALIAS=hpdocs_chunks_naive",
+        "ingest",
+        "--if-needed",
+    )
+    assert env == ENVIRON
+    assert capture is False  # ingest's own logs stream through
+
+
+def test_a_failed_index_build_stops_naming_the_step() -> None:
+    runner = FakeRunner(ask_code=1)  # every other command exits with ask_code
+
+    with pytest.raises(DriverError, match=r"index build \(ingest\) failed with exit code 1"):
+        build_index(NAIVE.run("naive"), runner, ENVIRON)
+
+
+def test_an_alias_with_no_known_chunker_is_never_built() -> None:
+    other = parse_answer_matrix(
+        BASE
+        + REFERENCE
+        + HELDOUT
+        + '[[runs]]\nname = "x"\nitems = "answers-dev"\n'
+        + 'env = { QDRANT_COLLECTION_ALIAS = "hpdocs_other" }\n'
+    )
+    runner = FakeRunner()
+
+    with pytest.raises(ConfigMismatchError, match="hpdocs_other"):
+        build_index(other.run("x"), runner, ENVIRON)
+    assert runner.calls == []

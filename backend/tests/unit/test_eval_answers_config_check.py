@@ -6,16 +6,19 @@ import dataclasses
 
 import pytest
 
-from app.core.settings import LLMProviderName
+from app.core.settings import LLMProviderName, Settings
 from app.domain.chat import Outcome, RefusalReason
+from app.domain.ingestion import ChunkerKind
 from app.domain.retrieval import SearchMode
 from app.evaluation.answers.answer_matrix import RunSpec, load_answer_matrix
 from app.evaluation.answers.config_check import (
     CHECKED_NAMES,
+    INDEX_CHUNKERS,
     ConfigMismatchError,
     RowExpectation,
     RunSettings,
     backend_env,
+    check_index,
     check_printenv,
     check_ready,
     check_rows,
@@ -278,3 +281,42 @@ def test_ready_checks_the_provider_it_is_given() -> None:
     check_ready(ready(llm="stub"), collection="hpdocs_chunks_x", build_id=BUILD, provider=STUB)
     with pytest.raises(ConfigMismatchError, match="expected stub"):
         check_ready(ready(), collection="hpdocs_chunks_x", build_id=BUILD, provider=STUB)
+
+
+# ------------------------------------------------------------------ index
+
+
+def test_each_known_alias_names_its_chunker_and_the_default_alias_is_the_settings() -> None:
+    assert {
+        Settings.model_fields["qdrant_collection_alias"].default: ChunkerKind.STRUCTURE,
+        "hpdocs_chunks_naive": ChunkerKind.NAIVE,
+    } == INDEX_CHUNKERS
+
+
+@pytest.mark.parametrize(
+    ("alias", "collection"),
+    [
+        ("hpdocs_chunks", f"hpdocs_chunks_v2_{BUILD}"),
+        ("hpdocs_chunks_naive", f"hpdocs_chunks_naive-v1_{BUILD}"),
+    ],
+)
+def test_an_alias_on_its_chunkers_collection_passes(alias: str, collection: str) -> None:
+    check_index(alias, collection)
+
+
+@pytest.mark.parametrize(
+    ("alias", "collection"),
+    [
+        ("hpdocs_chunks_naive", f"hpdocs_chunks_v2_{BUILD}"),  # an image without CHUNKER
+        ("hpdocs_chunks", f"hpdocs_chunks_naive-v1_{BUILD}"),
+        ("hpdocs_chunks", f"hpdocs_chunks_v1_{BUILD}"),  # an older chunking version
+    ],
+)
+def test_an_alias_on_another_chunkers_collection_stops_the_run(alias: str, collection: str) -> None:
+    with pytest.raises(ConfigMismatchError, match=f"{alias}.*{collection}"):
+        check_index(alias, collection)
+
+
+def test_an_alias_with_no_known_chunker_stops_the_run() -> None:
+    with pytest.raises(ConfigMismatchError, match="hpdocs_other"):
+        check_index("hpdocs_other", f"hpdocs_chunks_v2_{BUILD}")

@@ -24,12 +24,16 @@ from pathlib import Path
 from typing import Protocol
 
 from app.core.settings import LLMProviderName
+from app.domain.ingestion import ChunkerKind
 from app.evaluation.answers.answer_matrix import AnswerMatrix, RunSpec
 from app.evaluation.answers.config_check import (
     CHECKED_NAMES,
+    DEFAULT_ALIAS,
     backend_env,
     check_printenv,
+    index_chunker,
     overrides,
+    run_settings,
 )
 
 logger = logging.getLogger(__name__)
@@ -146,3 +150,33 @@ def drive(
         raise DriverError("backend restore failed after the run")
     logger.info("backend restored to its defaults", extra={"run": request.run.name})
     return code
+
+
+def ingest_argv(alias: str, chunker: ChunkerKind) -> tuple[str, ...]:
+    return (
+        *_COMPOSE,
+        "run",
+        "--rm",
+        "--no-deps",
+        "--env",
+        f"CHUNKER={chunker.value}",
+        "--env",
+        f"QDRANT_COLLECTION_ALIAS={alias}",
+        "ingest",
+        "--if-needed",
+    )
+
+
+def build_index(run: RunSpec, runner: CommandRunner, environ: Mapping[str, str]) -> None:
+    """A run on another alias than the default gets that alias's index, built only when
+    it is missing or stale (`make up` keeps the default one current). The live alias is
+    never touched.
+    """
+    alias = run_settings(run).alias
+    if alias == DEFAULT_ALIAS:
+        return
+    chunker = index_chunker(alias)
+    done = runner(ingest_argv(alias, chunker), env=environ, capture=False)
+    if done.returncode != 0:
+        raise DriverError(f"index build (ingest) failed with exit code {done.returncode}")
+    logger.info("index ready for the run", extra={"run": run.name, "alias": alias})

@@ -104,6 +104,7 @@ make purge        # delete conversations past CHAT_RETENTION_DAYS now (via compo
 make eval-retrieval  # retrieval benchmark via compose (EVAL_ARGS=preflight | run ...)
 make eval-estimate   # answer benchmark budget plan and spend (measured / estimated), no key
 make eval-answers    # billed: one answer run via the host driver (ANSWER_ARGS="--run NAME ...")
+make eval-ablation   # billed: matrix rows in priority order, skips finished and budget-cut rows (ABLATION_ARGS="--runs NAME ..." | "--provider stub --limit N")
 make eval-judge      # billed: judge pass of a run via the Batch API (JUDGE_ARGS="--run NAME [--limit N]")
 make eval-label-sheet  # human label sheet of a judged run, verdicts hidden (LABEL_RUN=reference-1)
 make eval-agreement  # judge agreement with the human labels: raw and Cohen's kappa

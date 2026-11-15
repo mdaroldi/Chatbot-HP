@@ -36,6 +36,11 @@
   the backend for the run, checks its env, runs `ask` in a harness container with the
   same run options and restores the defaults (`driver.drive`). It never opens a
   database, so it needs no settings.
+- `ablate --eval-dir DIR [--runs NAME ...]` sweeps matrix rows in priority order from
+  the host (`make eval-ablation`, `ablation.sweep`): a finished row gets its report
+  again, a row the budget plan cuts is skipped, any other row has its index built when
+  it uses another alias, is driven as `drive` would, and gets its report. A stopped run
+  stops the sweep. `--provider stub --limit N` is a free check of the sweep.
 
 Run files live in `answer-runs/` under the eval directory, which is git-ignored: the
 ledger, and per run the config record, the results journal and the traces (stored
@@ -56,6 +61,7 @@ import sys
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
@@ -63,6 +69,7 @@ from app.core.logging import configure_logging
 from app.core.settings import LLMProviderName, Settings, get_settings
 from app.domain.answer_dataset import Dataset, DatasetError, DatasetNotFrozenError, EvalItem
 from app.domain.evaluation import GoldenSetError
+from app.evaluation.answers.ablation import AblationError, exit_code, sweep, sweep_runs
 from app.evaluation.answers.answer_matrix import (
     AnswerMatrix,
     ItemSet,
@@ -85,6 +92,7 @@ from app.evaluation.answers.driver import (
     CommandRunner,
     DriveRequest,
     DriverError,
+    build_index,
     drive,
     subprocess_runner,
 )
@@ -148,6 +156,7 @@ from app.evaluation.runner import HeldoutRefusedError
 from app.ingestion.corpus import load_corpus
 
 _STOPS = (
+    AblationError,
     AskError,
     BudgetExceededError,
     ConfigMismatchError,
@@ -255,6 +264,21 @@ def _parser() -> argparse.ArgumentParser:
         "drive", parents=[run_options], help="drive one run from the host (restart, check, ask)"
     )
     drive.add_argument("--eval-dir", type=Path, required=True, help="the eval/ directory")
+    ablate = commands.add_parser(
+        "ablate", help="sweep the matrix rows in priority order from the host (billed)"
+    )
+    ablate.add_argument("--eval-dir", type=Path, required=True, help="the eval/ directory")
+    ablate.add_argument(
+        "--runs", nargs="+", default=[], help="these rows only (default: every unreserved row)"
+    )
+    ablate.add_argument(
+        "--provider",
+        type=LLMProviderName,
+        choices=list(LLMProviderName),
+        default=LLMProviderName.ANTHROPIC,
+        help="stub: a free pipeline check of the sweep",
+    )
+    ablate.add_argument("--limit", type=int, help="stub only: ask a spread of N items per row")
     return parser
 
 
@@ -447,23 +471,37 @@ def _judge_record(run_dir: Path) -> Record | None:
 
 
 def _report(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
-    git_sha = _git_sha(environ)
-    matrix = _matrix(args.eval_dir, args.provider)
-    run = matrix.run(args.run)
+    request = ReportRequest(args.eval_dir, args.provider, _git_sha(environ), args.allow_heldout)
+    _write_run_report(request, args.run)
+    return 0
+
+
+@dataclass(frozen=True)
+class ReportRequest:
+    eval_dir: Path
+    provider: LLMProviderName
+    git_sha: str
+    allow_heldout: bool = False
+
+
+def _write_run_report(request: ReportRequest, run_name: str) -> None:
+    git_sha, provider = request.git_sha, request.provider
+    matrix = _matrix(request.eval_dir, provider)
+    run = matrix.run(run_name)
     doc_ids = {document.doc_id for document in load_corpus()}
-    dataset = load_dataset(args.eval_dir, doc_ids, max_turn_chars=MAX_TURN_CHARS)
-    items = _items_by_run(matrix, dataset, run, allow_heldout=args.allow_heldout)[run.name]
-    files = _run_files(args.eval_dir, run.name, args.provider)
+    dataset = load_dataset(request.eval_dir, doc_ids, max_turn_chars=MAX_TURN_CHARS)
+    items = _items_by_run(matrix, dataset, run, allow_heldout=request.allow_heldout)[run.name]
+    files = _run_files(request.eval_dir, run.name, provider)
     results = latest(read_journal(files.results))
     traces = read_traces(files.traces).latest()
     total = len(items)
-    if args.provider is LLMProviderName.STUB:  # a pipeline check asks a few items
+    if provider is LLMProviderName.STUB:  # a pipeline check asks a few items
         items = tuple(item for item in items if item.id in results)
     scores = score_run(items, results, traces)
     header = run_header(
         run,
         matrix,
-        provider=args.provider.value,
+        provider=provider.value,
         asked=len(items),
         total=total,
         build_ids=[row.index_build_id for trace in traces.values() for row in trace.rows],
@@ -474,7 +512,6 @@ def _report(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
     record = run_record(header, scores, run_health(list(results.values())), judge)
     write_report(files.run_dir, record)
     logger.info("run report written", extra={"run": run.name, "items": len(scores)})
-    return 0
 
 
 def _read_report(path: Path, run: str) -> Record:
@@ -544,6 +581,90 @@ def _drive(
     return drive(matrix, request, runner_for(eval_dir.parent), environ)
 
 
+class _SweepPorts:
+    """The real sweep steps: run files, the budget plan, docker and the report writer."""
+
+    def __init__(
+        self,
+        *,
+        matrix: AnswerMatrix,
+        request: ReportRequest,
+        runner: CommandRunner,
+        environ: Mapping[str, str],
+        limit: int | None,
+    ) -> None:
+        self._matrix, self._request, self._runner = matrix, request, runner
+        self._environ, self._limit = environ, limit
+        doc_ids = {document.doc_id for document in load_corpus()}
+        dataset = load_dataset(request.eval_dir, doc_ids, max_turn_chars=MAX_TURN_CHARS)
+        # Counting the held-out items for the plan is not scoring them (rule 8).
+        self._items = {
+            run.name: run_items(dataset, run.items, allow_heldout=True) for run in matrix.runs
+        }
+
+    def _files(self, run: RunSpec) -> RunFiles:
+        return _run_files(self._request.eval_dir, run.name, self._request.provider)
+
+    def finished(self, run: RunSpec) -> bool:
+        files = self._files(run)
+        if not files.results.exists():
+            return False
+        results = latest(read_journal(files.results))
+        return all(item.id in results for item in self._items[run.name])
+
+    def started(self, run: RunSpec) -> bool:
+        return self._files(run).config.exists()
+
+    def funded(self, run: RunSpec) -> bool:
+        charges = Ledger(self._files(run).ledger).charges()
+        rows = plan(
+            self._matrix, self._items, charges, typical_tokens(self._matrix, charges).tokens
+        )
+        return next(row.status for row in rows if row.run == run.name) is not Status.CUT
+
+    def build_index(self, run: RunSpec) -> None:
+        build_index(run, self._runner, self._environ)
+
+    def drive(self, run: RunSpec, *, resume: bool) -> int:
+        ask_args = (
+            *(("--resume",) if resume else ()),
+            *(("--limit", str(self._limit)) if self._limit is not None else ()),
+        )
+        request = DriveRequest(
+            run,
+            self._request.eval_dir,
+            ask_args,
+            uid=os.getuid(),
+            gid=os.getgid(),
+            provider=self._request.provider,
+        )
+        return drive(self._matrix, request, self._runner, self._environ)
+
+    def report(self, run: RunSpec) -> None:
+        _write_run_report(self._request, run.name)
+
+
+def _ablate(
+    args: argparse.Namespace,
+    runner_for: Callable[[Path], CommandRunner],
+    environ: Mapping[str, str],
+) -> int:
+    if args.limit is not None and args.provider is not LLMProviderName.STUB:
+        raise _RefusedError("--limit is for the stub pipeline check only")
+    eval_dir = args.eval_dir.resolve()
+    request = ReportRequest(eval_dir, args.provider, _git_sha(environ))  # before any spend
+    matrix = _matrix(eval_dir, args.provider)
+    runs = sweep_runs(matrix, args.runs)
+    ports = _SweepPorts(
+        matrix=matrix,
+        request=request,
+        runner=runner_for(eval_dir.parent),
+        environ=environ,
+        limit=args.limit,
+    )
+    return exit_code(sweep(runs, ports))
+
+
 def _failure(exc: Exception) -> tuple[int, str, dict[str, str]]:
     """Exit code, fixed message and log fields for a failed command."""
     if isinstance(exc, _RefusedError):
@@ -590,6 +711,7 @@ def main(  # noqa: PLR0913 - keyword-only test seams, one per external system
         "agreement": lambda: _agreement(args, stdout),
         "report": lambda: _report(args, environ),
         "summary": lambda: _summary(args),
+        "ablate": lambda: _ablate(args, drive_runner, environ),
     }
     try:
         return commands[args.command]()

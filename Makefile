@@ -18,7 +18,7 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 .PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int test-ui-int test-eval-int smoke-llm \
 	fetch-test-assets models \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins \
-	purge eval-retrieval eval-estimate eval-answers eval-judge \
+	purge eval-retrieval eval-estimate eval-answers eval-ablation eval-judge \
 	eval-label-sheet eval-agreement eval-report eval-summary eval load check
 
 help: ## List available targets
@@ -169,6 +169,17 @@ ANSWER_ARGS ?=
 eval-answers: ## Billed: one answer run via the host driver (needs `make up`); ANSWER_ARGS="--run reference-1 --limit 10"
 	cd $(BACKEND) && uv run --frozen python -m app.evaluation.answers drive \
 		--eval-dir "$(CURDIR)/eval" $(ANSWER_ARGS)
+
+# Billed: the matrix rows in priority order (every unreserved row, or ABLATION_ARGS="--runs
+# NAME ..."). A finished row only gets its report again; a row the budget plan cuts is
+# skipped; the naive row builds its own alias first (ingest --if-needed, CHUNKER=naive);
+# a run that stops stops the sweep. Rebuild the backend image after a code change first.
+# ABLATION_ARGS="--provider stub --limit N ..." is a free check of the sweep.
+ABLATION_ARGS ?=
+
+eval-ablation: ## Billed: sweep the matrix rows in priority order (needs `make up`); ABLATION_ARGS="--runs dense naive"
+	cd $(BACKEND) && GIT_SHA="$$(git rev-parse HEAD)$$(git diff --quiet HEAD || echo -dirty)" \
+		uv run --frozen python -m app.evaluation.answers ablate --eval-dir "$(CURDIR)/eval" $(ABLATION_ARGS)
 
 # Billed: the judge pass of one run through the Message Batches API, in a one-off
 # backend container (Qdrant for the gold passages; ANTHROPIC_API_KEY from .env through

@@ -7,7 +7,8 @@ mismatch stops the run as invalid:
 1. The backend container's environment (`printenv` of `CHECKED_NAMES`, never the key)
    equals `backend_env`: the run's settings, the real provider, the matrix's answer
    and rewrite models and the matrix's output-token bounds.
-2. `/ready` reports the real provider and the build the run's alias points at.
+2. `/ready` reports the real provider and the build the run's alias points at, and
+   that alias's collection carries the version prefix of the alias's chunker.
 3. Every stored row shows it: the answer model, that build, `top_k` chunk ids, a
    relevance signal exactly when rerank is on and no rewrite when rewriting is off.
 
@@ -24,9 +25,12 @@ from typing import Annotated, cast
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.core.settings import LLMProviderName, Settings
+from app.domain.ingestion import ChunkerKind
 from app.domain.retrieval import SearchMode
 from app.evaluation.answers.answer_matrix import AnswerMatrix, RunSpec
 from app.evaluation.answers.store import StoredAnswer
+from app.ingestion.chunkers import CHUNKING_VERSIONS
+from app.ingestion.publish import collection_prefix
 
 _RUN_NAMES = (
     "RETRIEVAL_MODE",
@@ -220,3 +224,29 @@ def _row_problems(row: StoredAnswer, expected: RowExpectation) -> list[str]:
 def check_rows(rows: Sequence[StoredAnswer], expected: RowExpectation) -> None:
     """A row without a model never reached the answer call (a layer 1 refusal)."""
     _raise([problem for row in rows for problem in _row_problems(row, expected)])
+
+
+# The chunker behind each alias a run may use. Its live collection must carry that
+# chunker's version prefix: an image that predates `CHUNKER` ignores the setting and
+# would build chunking v2 under the naive alias.
+DEFAULT_ALIAS: str = _FIELDS["qdrant_collection_alias"].default
+INDEX_CHUNKERS: Mapping[str, ChunkerKind] = {
+    DEFAULT_ALIAS: ChunkerKind.STRUCTURE,
+    "hpdocs_chunks_naive": ChunkerKind.NAIVE,
+}
+
+
+def index_chunker(alias: str) -> ChunkerKind:
+    chunker = INDEX_CHUNKERS.get(alias)
+    if chunker is None:
+        raise ConfigMismatchError(f"alias {alias} has no known chunker")
+    return chunker
+
+
+def check_index(alias: str, collection: str) -> None:
+    """`collection` is the alias's live collection in Qdrant."""
+    prefix = collection_prefix(CHUNKING_VERSIONS[index_chunker(alias)])
+    if not collection.startswith(prefix):
+        raise ConfigMismatchError(
+            f"alias {alias} points at {collection}, not a {prefix}* collection"
+        )

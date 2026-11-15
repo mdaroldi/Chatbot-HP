@@ -41,6 +41,7 @@ from app.evaluation.answers.budget import (
 from app.evaluation.answers.client import ChatClient, Failed, ItemResult, run_item
 from app.evaluation.answers.config_check import (
     backend_env,
+    check_index,
     check_ready,
     check_rows,
     row_expectation,
@@ -244,6 +245,7 @@ async def ask_run(  # noqa: PLR0913, PLR0917 - the run, its inputs, files, ports
     index = await ports.index.resolve(alias)
     if index is None:
         raise AskError(f"alias {alias} has no live collection with a succeeded build")
+    check_index(alias, index.collection)
     check_ready(
         await _wait_ready(ports.backend, ports.sleep),
         collection=index.collection,

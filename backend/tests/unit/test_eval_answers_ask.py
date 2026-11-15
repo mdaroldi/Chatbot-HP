@@ -53,7 +53,7 @@ from tests.unit.test_eval_answers_settle import TITLES, FakeChunks
 
 REFERENCE = MATRIX.run("reference-1")
 BUILD = "20261113t173108z"
-COLLECTION = "hpdocs_chunks_20261113t173108z"
+COLLECTION = "hpdocs_chunks_v2_20261113t173108z"
 LIVE = IndexRef(COLLECTION, BUILD)
 CHUNKS = tuple(f"c-{n}" for n in range(1, 6))  # top_k 5, the backend default
 
@@ -318,6 +318,19 @@ async def test_no_live_index_for_the_runs_alias_stops_before_any_backend_call(
         await ask(files, ports(backend, index=FakeIndex(None)))
 
     assert backend.log == []
+
+
+async def test_an_alias_on_another_chunkers_collection_stops_before_any_backend_call(
+    files: RunFiles,
+) -> None:
+    backend = FakeBackend()
+    structure = FakeIndex(IndexRef(f"hpdocs_chunks_v1_{BUILD}", BUILD))  # an older chunker
+
+    with pytest.raises(ConfigMismatchError, match="hpdocs_chunks_v1_"):
+        await ask(files, ports(backend, index=structure))
+
+    assert backend.log == []
+    assert not files.config.exists()
 
 
 async def test_a_backend_serving_another_build_stops_before_any_item(files: RunFiles) -> None:

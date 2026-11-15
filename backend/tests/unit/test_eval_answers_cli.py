@@ -43,6 +43,7 @@ from tests.unit.test_eval_answers_pin import EVAL_DIR
 from tests.unit.test_eval_answers_settle import hit
 
 REPO = EVAL_DIR.parent
+STUB = LLMProviderName.STUB
 
 
 @pytest.fixture(autouse=True)
@@ -810,3 +811,167 @@ def test_an_unreadable_report_stops_the_summary_naming_the_run(
     assert run_summary(eval_dir) == 1
     (stopped,) = [r for r in json_logs() if r["message"] == "answer run stopped"]
     assert stopped["detail"] == "cannot read the report of reference-1"
+
+
+# ------------------------------------------------------------------ ablate
+
+
+class AblateRunners:
+    """Answers each docker step; the harness step runs the real `ask` on the fake runtime
+    (or exits with `ask_code`), so a swept row leaves the files a report reads.
+    """
+
+    def __init__(self, eval_dir: Path, ask_code: int | None = None) -> None:
+        self.eval_dir, self.ask_code = eval_dir, ask_code
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, cwd: Path) -> object:
+        assert cwd == self.eval_dir.resolve().parent
+        matrix = load_answer_matrix(EVAL_DIR / "answer-matrix.toml")
+
+        def run(argv: Sequence[str], *, env: Mapping[str, str], capture: bool) -> Completed:
+            call = tuple(argv)
+            self.calls.append(call)
+            assert capture == (call[2] != "run")  # ingest and the harness stream their logs
+            if "ingest" in call or call[2] == "up":
+                return Completed(0, "")
+            stub = env.get("LLM_PROVIDER") == "stub"
+            if call[2] == "exec":
+                name = "naive" if "hpdocs_chunks_naive" in env.values() else "reference-1"
+                if stub:
+                    expected = backend_env(stub_matrix(matrix), matrix.run(name), STUB)
+                else:
+                    expected = backend_env(matrix, matrix.run(name))
+                return Completed(0, "".join(f"{v}\n" for v in expected.values()))
+            if self.ask_code is not None:
+                return Completed(self.ask_code, "")
+            ask_args = call[call.index("ask") + 1 :]
+            runtime = (
+                FakeRuntime(FakeBackend(ready=ready_body(llm="stub")), rows=FakeRows(model="stub"))
+                if stub
+                else FakeRuntime()
+            )
+            return Completed(run_ask(self.eval_dir, runtime, *ask_args), "")
+
+        return run
+
+    def steps(self) -> list[str]:
+        return ["ingest" if "ingest" in c else "ask" if "ask" in c else c[2] for c in self.calls]
+
+
+def run_ablate(eval_dir: Path, runners: AblateRunners, *args: str) -> int:
+    return main(
+        ["ablate", "--eval-dir", str(eval_dir), *args],
+        stdout=io.StringIO(),
+        drive_runner=runners,  # type: ignore[arg-type]  # a fake factory
+        environ={"PATH": "/usr/bin"} | GIT,
+    )
+
+
+def measured_ledger(eval_dir: Path) -> None:
+    """Measured calls at the pilot's and the judge smoke's sizes, as the real ledger holds."""
+    matrix = load_answer_matrix(eval_dir / "answer-matrix.toml")
+    (eval_dir / LEDGER_FILE).parent.mkdir(parents=True, exist_ok=True)
+    ledger = Ledger(eval_dir / LEDGER_FILE)
+    ledger.append(charge(matrix, "reference-1", "x", Kind.ANSWER, SONNET, 3054, 208))
+    ledger.append(charge(matrix, "reference-1", "x", Kind.JUDGE, OPUS, 5153, 196))
+
+
+def rows_logged(json_logs: LogReader) -> list[tuple[object, object]]:
+    return [(r["run"], r["outcome"]) for r in json_logs() if r["message"] == "ablation row"]
+
+
+def test_ablate_drives_a_pending_row_and_writes_its_report(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    runners = AblateRunners(eval_dir)
+
+    assert run_ablate(eval_dir, runners, "--runs", "reference-2") == 0
+
+    assert runners.steps() == ["up", "exec", "ask", "up"]
+    assert report_of(eval_dir / RUNS_DIR / "reference-2")["header"]["items"] == "56 of 56"  # type: ignore[index]
+    assert rows_logged(json_logs) == [("reference-2", "done")]
+
+
+def test_ablate_reports_a_finished_row_without_any_docker_step(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    run_dir = judged_run(eval_dir)
+    runners = AblateRunners(eval_dir)
+
+    assert run_ablate(eval_dir, runners, "--runs", "reference-1") == 0
+
+    assert runners.calls == []
+    assert report_of(run_dir)["header"]["git_sha"] == "abc1234"  # type: ignore[index]
+    assert rows_logged(json_logs) == [("reference-1", "finished")]
+
+
+def test_ablate_builds_the_naive_index_before_driving_its_row_and_stops_on_a_failed_run(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    measured_ledger(eval_dir)  # the placeholder estimates would cut the naive row
+    runners = AblateRunners(eval_dir, ask_code=1)
+
+    assert run_ablate(eval_dir, runners, "--runs", "naive", "rewrite-off") == 1
+
+    assert runners.steps() == ["ingest", "up", "exec", "ask", "up"]
+    ingest = runners.calls[0]
+    assert "CHUNKER=naive" in ingest
+    assert "QDRANT_COLLECTION_ALIAS=hpdocs_chunks_naive" in ingest
+    assert rows_logged(json_logs) == [("naive", "stopped")]
+    assert not (eval_dir / RUNS_DIR / "naive" / "report.json").exists()
+
+
+def test_ablate_skips_a_row_the_budget_cuts_and_goes_on(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    matrix = load_answer_matrix(eval_dir / "answer-matrix.toml")
+    spent = charge(matrix, "reference-1", "x", Kind.ANSWER, SONNET, 3_000_000, 0)  # $6
+    (eval_dir / LEDGER_FILE).parent.mkdir(parents=True)
+    Ledger(eval_dir / LEDGER_FILE).append(spent)
+    runners = AblateRunners(eval_dir)
+
+    assert run_ablate(eval_dir, runners, "--runs", "k8") == 0
+
+    assert runners.calls == []
+    assert rows_logged(json_logs) == [("k8", "not run: budget")]
+
+
+def test_a_stub_ablate_asks_a_limited_spread_in_the_stub_run_directory(eval_dir: Path) -> None:
+    runners = AblateRunners(eval_dir)
+    args = ("--runs", "reference-2", "--provider", "stub", "--limit", "2")
+
+    assert run_ablate(eval_dir, runners, *args) == 0
+    assert run_ablate(eval_dir, runners, *args) == 0  # unfinished: the next sweep resumes
+
+    first, second = [c[c.index("ask") :] for c in runners.calls if "ask" in c]
+    assert first == ("ask", "--run", "reference-2", "--limit", "2", "--provider", "stub")
+    assert second == (
+        "ask",
+        "--run",
+        "reference-2",
+        "--resume",
+        "--limit",
+        "2",
+        "--provider",
+        "stub",
+    )
+    stub_dir = eval_dir / RUNS_DIR / "stub" / "reference-2"
+    assert report_of(stub_dir)["header"]["items"] == "4 of 56"  # type: ignore[index]
+    assert not (eval_dir / RUNS_DIR / "reference-2").exists()
+    assert not (eval_dir / LEDGER_FILE).exists()
+
+
+def test_a_limit_without_the_stub_provider_is_refused_with_two(eval_dir: Path) -> None:
+    runners = AblateRunners(eval_dir)
+
+    assert run_ablate(eval_dir, runners, "--runs", "k3", "--limit", "2") == 2
+    assert runners.calls == []
+
+
+def test_the_heldout_row_is_refused_by_ablate_with_one(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    assert run_ablate(eval_dir, AblateRunners(eval_dir), "--runs", "heldout") == 1
+    (stopped,) = [r for r in json_logs() if r["message"] == "answer run stopped"]
+    assert stopped["error"] == "AblationError"
