@@ -31,6 +31,7 @@ from app.evaluation.answers.budget import (
     guard_item,
     item_worst_case,
     judge_cost,
+    judge_requests,
     require_start,
     run_estimate,
     split_by_run,
@@ -43,12 +44,12 @@ MATRIX: AnswerMatrix = parse_answer_matrix(BASE + REFERENCE + HELDOUT)
 SONNET, HAIKU, OPUS = "claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5"
 
 
-def item(turns: int = 1, item_id: str = "q-1") -> EvalItem:
+def item(turns: int = 1, item_id: str = "q-1", *, in_scope: bool = True) -> EvalItem:
     return EvalItem(
         id=item_id,
         split=Split.DEV,
         turns=tuple(f"turn {n}" for n in range(turns)),
-        in_scope=True,
+        in_scope=in_scope,
     )
 
 
@@ -219,6 +220,19 @@ def test_a_run_estimate_counts_answers_rewrites_and_judging() -> None:
 
     assert plain == pytest.approx(3 * answer + rewrite)
     assert judged_run == pytest.approx(plain + 3 * judged)
+
+
+def test_only_in_scope_items_are_judged_plus_the_repeat_sample() -> None:
+    # Lever 1a: refusals are scored in code, so out-of-scope items never reach the judge.
+    items = [item(1, "a"), item(1, "b", in_scope=False), item(1, "c")]
+    est = MATRIX.estimate
+    judged = (est.judge_input_tokens * 4 + est.judge_output_tokens * 20) / 1e6 * 0.5
+
+    assert judge_requests(spec("j", judge=True, judge_repeat=1), items) == 2 + 1
+    assert judge_requests(spec("plain"), items) == 0
+    assert run_estimate(MATRIX, spec("j", judge=True, judge_repeat=1), items) == pytest.approx(
+        run_estimate(MATRIX, spec("plain"), items) + 3 * judged
+    )
 
 
 def test_measured_means_can_replace_the_matrix_estimate() -> None:

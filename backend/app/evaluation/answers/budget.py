@@ -109,6 +109,17 @@ def judge_cost(matrix: AnswerMatrix, requests: int, tokens: Tokens) -> float:
     return requests * per * matrix.batch_discount
 
 
+def judge_requests(run: RunSpec, items: Sequence[EvalItem]) -> int:
+    """Lever 1a (owner): only in-scope items reach the judge. Refusals, false refusals and
+    out-of-scope recall are scored in code, so a judge request there adds cost, not
+    evidence. Before the run this is an upper bound: refused in-scope answers are not
+    judged either.
+    """
+    if not run.judge:
+        return 0
+    return sum(item.in_scope for item in items) + run.judge_repeat
+
+
 # ---------------------------------------------------------------- ledger
 
 
@@ -238,9 +249,7 @@ def run_estimate(
     typical = tokens or matrix.estimate
     turns = sum(len(item.turns) for item in items)
     cost = turns * _answer_cost(matrix, typical) + (turns - len(items)) * _rewrite_worst(matrix)
-    if run.judge:
-        cost += judge_cost(matrix, len(items) + run.judge_repeat, typical)
-    return cost
+    return cost + judge_cost(matrix, judge_requests(run, items), typical)
 
 
 def start_check(

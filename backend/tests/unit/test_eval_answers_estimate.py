@@ -73,15 +73,16 @@ THREE = parse_answer_matrix(BASE + REFERENCE + HELDOUT + DENSE)
 
 
 def test_rows_follow_the_matrix_order_with_their_estimates() -> None:
-    rows = plan(THREE, ITEMS, [], THREE.estimate)
+    reference = [*ITEMS["reference-1"], item(1, "q-3", in_scope=False)]
+    rows = plan(THREE, {**ITEMS, "reference-1": reference}, [], THREE.estimate)
     assert [row.run for row in rows] == ["reference-1", "heldout", "dense"]
     first = rows[0]
-    expected = run_estimate(THREE, THREE.run("reference-1"), ITEMS["reference-1"])
+    expected = run_estimate(THREE, THREE.run("reference-1"), reference)
     assert first == PlanRow(
         run="reference-1",
-        items=2,
-        turns=3,
-        judge_requests=2 + 20,
+        items=3,
+        turns=4,
+        judge_requests=2 + 20,  # the out-of-scope item is not judged
         estimate=pytest.approx(expected),  # type: ignore[arg-type]
         needed=pytest.approx(expected * 1.25),  # type: ignore[arg-type]
         spent=Spend(0.0, 0.0),
