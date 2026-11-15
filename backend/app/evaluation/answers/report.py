@@ -202,25 +202,25 @@ def run_record(
 # ---------------------------------------------------------------- markdown
 
 
-def _number(value: object) -> str:
+def number(value: object) -> str:
     if value is None:
         return "n/a"
     return f"{value:.3f}" if isinstance(value, float) else str(value)
 
 
-def _share(found: Record) -> list[str]:
+def share(found: Record) -> list[str]:
     interval = "n/a" if found["low"] is None else f"[{found['low']:.3f}, {found['high']:.3f}]"
-    return [f"{found['k']}/{found['n']}", _number(found["rate"]), interval]
+    return [f"{found['k']}/{found['n']}", number(found["rate"]), interval]
 
 
-def _table(head: Sequence[str], rows: Iterable[Sequence[str]]) -> list[str]:
+def table(head: Sequence[str], rows: Iterable[Sequence[str]]) -> list[str]:
     lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
     lines += ["| " + " | ".join(row) + " |" for row in rows]
     return [*lines, ""]
 
 
 def _counts(head: str, counts: Mapping[str, int]) -> list[str]:
-    return _table([head, "items"], [[key, str(value)] for key, value in counts.items()])
+    return table([head, "items"], [[key, str(value)] for key, value in counts.items()])
 
 
 _SHARE_HEAD = ("metric", "k/n", "rate", "Wilson 95%")
@@ -238,21 +238,21 @@ def _health_lines(health: Record) -> list[str]:
 def _metric_lines(record: Record) -> list[str]:
     secondary = record["secondary"]
     rows = [
-        ["primary (strict key-fact pass)", *_share(record["primary"])],
-        ["false refusals (in scope)", *_share(record["false_refusals"])],
-        *[[f"out-of-scope recall, {k}", *_share(v)] for k, v in record["oos_recall"].items()],
-        *[[name, *_share(v)] for name, v in secondary.items() if name != "support_mean"],
+        ["primary (strict key-fact pass)", *share(record["primary"])],
+        ["false refusals (in scope)", *share(record["false_refusals"])],
+        *[[f"out-of-scope recall, {k}", *share(v)] for k, v in record["oos_recall"].items()],
+        *[[name, *share(v)] for name, v in secondary.items() if name != "support_mean"],
     ]
-    support = f"Mean citation support: {_number(secondary['support_mean'])}"
-    return ["## Metrics", "", *_table(_SHARE_HEAD, rows), support, ""]
+    support = f"Mean citation support: {number(secondary['support_mean'])}"
+    return ["## Metrics", "", *table(_SHARE_HEAD, rows), support, ""]
 
 
 def _slice_lines(slices: Record) -> list[str]:
     rows = [
-        [name, str(s["items"]), _share(s["key_fact_pass"])[0], _share(s["refused"])[0]]
+        [name, str(s["items"]), share(s["key_fact_pass"])[0], share(s["refused"])[0]]
         for name, s in slices.items()
     ]
-    return ["## Slices", "", *_table(["slice", "items", "key-fact pass", "refused"], rows)]
+    return ["## Slices", "", *table(["slice", "items", "key-fact pass", "refused"], rows)]
 
 
 def _refusal_lines(refusals: Record) -> list[str]:
@@ -261,7 +261,7 @@ def _refusal_lines(refusals: Record) -> list[str]:
         "## Refusals",
         "",
         *_counts("reason", refusals["by_reason"]),
-        *_table(["in-scope item", "reason"], in_scope),
+        *table(["in-scope item", "reason"], in_scope),
     ]
 
 
@@ -269,10 +269,10 @@ def _agreement_lines(name: str, found: Record | None) -> list[str]:
     if found is None:
         return [f"{name}: not measured", ""]
     rows = [
-        [label, str(a["n"]), str(a["agreed"]), _number(a["agreed"] / a["n"]), _number(a["kappa"])]
+        [label, str(a["n"]), str(a["agreed"]), number(a["agreed"] / a["n"]), number(a["kappa"])]
         for label, a in found.items()
     ]
-    return [f"### {name}", "", *_table(["label", "n", "agreed", "raw", "kappa"], rows)]
+    return [f"### {name}", "", *table(["label", "n", "agreed", "raw", "kappa"], rows)]
 
 
 def _judge_lines(judge: Record | None) -> list[str]:
@@ -281,11 +281,11 @@ def _judge_lines(judge: Record | None) -> list[str]:
     return [
         "## Judge",
         "",
-        *_table(
+        *table(
             _SHARE_HEAD,
             [
-                ["faithful, lenient (no unsupported claim)", *_share(judge["faithful_lenient"])],
-                ["faithful, strict (every claim supported)", *_share(judge["faithful_strict"])],
+                ["faithful, lenient (no unsupported claim)", *share(judge["faithful_lenient"])],
+                ["faithful, strict (every claim supported)", *share(judge["faithful_strict"])],
             ],
         ),
         *_counts("correctness", judge["correctness"]),
@@ -298,7 +298,7 @@ def _judge_lines(judge: Record | None) -> list[str]:
 
 def render_markdown(record: Record) -> str:
     header = record["header"]
-    latency = [[key, _number(value)] for key, value in record["latency_ms"].items()]
+    latency = [[key, number(value)] for key, value in record["latency_ms"].items()]
     lines = [
         f"# Answer run {header['run']}",
         "",
@@ -310,7 +310,7 @@ def render_markdown(record: Record) -> str:
         *_refusal_lines(record["refusals"]),
         "## Latency (server, ms)",
         "",
-        *_table(["measure", "value"], latency),
+        *table(["measure", "value"], latency),
         *_judge_lines(record["judge"]),
     ]
     return "\n".join(lines).rstrip() + "\n"
