@@ -33,7 +33,8 @@ from app.evaluation.answers.budget import (
     start_check,
 )
 
-# Owner rule: above this measured cost per answer, drop k8, then k3, then sparse.
+# Owner rule: above this measured cost per answer, k3, sparse and k8 become the last,
+# conditional rows (2026-11-15: kept, not dropped; each runs only if its start check passes).
 PILOT_ANSWER_LIMIT_USD = 0.008
 
 
@@ -158,11 +159,16 @@ def _source(matrix: AnswerMatrix, typical: Typical) -> str:
     cost = _usd(typical.answer_cost(matrix))
     if not typical.answer_calls:
         return f"matrix estimate (no measured answer calls yet), {cost} per answer"
-    return (
+    source = (
         f"means of {typical.answer_calls} measured answer calls and "
-        f"{typical.judge_calls} measured judge calls, {cost} per answer "
-        f"(above ${PILOT_ANSWER_LIMIT_USD:.4f}, drop k8, then k3, then sparse)"
+        f"{typical.judge_calls} measured judge calls, {cost} per answer"
     )
+    if typical.answer_cost(matrix) > PILOT_ANSWER_LIMIT_USD:
+        source += (
+            f" (above ${PILOT_ANSWER_LIMIT_USD:.4f}: k3, sparse and k8 run only if their "
+            "start check passes)"
+        )
+    return source
 
 
 def render(

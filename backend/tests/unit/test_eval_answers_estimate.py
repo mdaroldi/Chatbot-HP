@@ -172,6 +172,23 @@ def test_the_report_shows_rows_spend_split_and_the_token_source() -> None:
     assert "prices as of 2026-11-03" in text
 
 
+CONDITIONAL_NOTE = "k3, sparse and k8 run only if their start check passes"
+
+
+@pytest.mark.parametrize(
+    ("tokens_in", "tokens_out", "noted"),
+    [(3000, 400, True), (1000, 100, False)],  # $0.0100 and $0.0030 per answer
+)
+def test_the_conditional_rows_are_noted_only_above_the_pilot_limit(
+    tokens_in: int, tokens_out: int, noted: bool
+) -> None:
+    charges = [answer("dense", tokens_in, tokens_out)]
+    typical = typical_tokens(THREE, charges)
+    text = render(THREE, plan(THREE, ITEMS, charges, typical.tokens), typical, charges)
+    assert (CONDITIONAL_NOTE in text) is noted
+    assert "drop" not in text
+
+
 def test_before_the_pilot_the_report_says_tokens_are_the_matrix_estimate() -> None:
     typical = typical_tokens(THREE, [])
     text = render(THREE, plan(THREE, ITEMS, [], typical.tokens), typical, [])
