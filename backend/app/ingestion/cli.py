@@ -23,6 +23,8 @@ from app.core.logging import configure_logging
 from app.core.settings import Settings, get_settings
 from app.domain.ingestion import (
     Bm25Params,
+    Chunker,
+    ChunkerKind,
     CorpusDocument,
     ModelError,
     ModelFiles,
@@ -41,8 +43,10 @@ from app.infra.manifest_repository import SqlManifestStore
 from app.infra.model_files import HuggingFaceHub, PinnedModelSource, load_pins
 from app.infra.pdfplumber_parser import PdfplumberParser
 from app.infra.qdrant_index import QdrantIndex
-from app.ingestion.chunking import VERSION, StructureChunker
+from app.ingestion import chunking, naive
+from app.ingestion.chunking import StructureChunker
 from app.ingestion.corpus import load_corpus
+from app.ingestion.naive import NaiveChunker
 from app.ingestion.pipeline import (
     IngestConfig,
     IngestPorts,
@@ -53,6 +57,9 @@ from app.ingestion.pipeline import (
 from app.ingestion.report import render_markdown
 
 logger = logging.getLogger(__name__)
+
+# The version each chunker stamps on its chunks; the build records it before chunking.
+CHUNKING_VERSIONS = {ChunkerKind.STRUCTURE: chunking.VERSION, ChunkerKind.NAIVE: naive.VERSION}
 
 
 @dataclass(frozen=True)
@@ -79,9 +86,13 @@ async def open_runtime(
 
     def processor(dense: VerifiedModel) -> StructureProcessor:
         tokens = FastembedTokenCounter.from_settings(settings, dense, model_class=token_class)
-        chunker = StructureChunker(
-            tokens, max_tokens=settings.chunk_max_tokens, min_tokens=settings.chunk_min_tokens
-        )
+        chunker: Chunker
+        if settings.chunker is ChunkerKind.NAIVE:
+            chunker = NaiveChunker(tokens)
+        else:
+            chunker = StructureChunker(
+                tokens, max_tokens=settings.chunk_max_tokens, min_tokens=settings.chunk_min_tokens
+            )
         return StructureProcessor(PdfplumberParser(), chunker)
 
     def embedder(
@@ -157,7 +168,7 @@ async def _run(args: argparse.Namespace, settings: Settings, runtime: RuntimeFac
             keep_previous=settings.index_keep_previous,
             dense_model=settings.embedding_dense_model,
             sparse_model=settings.embedding_sparse_model,
-            chunking_version=VERSION,
+            chunking_version=CHUNKING_VERSIONS[settings.chunker],
             bm25_avg_len=settings.embedding_bm25_avg_len,
         )
         await ingest(rt.documents, rt.pins, config, rt.ports, force=args.force)

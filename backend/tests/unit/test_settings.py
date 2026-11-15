@@ -6,6 +6,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from app.core.settings import Environment, LLMProviderName, LogLevel, Settings, get_settings
+from app.domain.ingestion import ChunkerKind
 from app.domain.retrieval import SearchMode
 
 
@@ -431,6 +432,23 @@ def test_chunk_merge_floor_must_be_below_the_limit(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setenv("CHUNK_MIN_TOKENS", "100")
     with pytest.raises(ValidationError, match="chunk_min_tokens must be below chunk_max_tokens"):
+        Settings()
+
+
+def test_the_chunker_defaults_to_structure_and_accepts_the_naive_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert Settings().chunker is ChunkerKind.STRUCTURE
+
+    monkeypatch.setenv("CHUNKER", "naive")
+    assert Settings().chunker is ChunkerKind.NAIVE
+
+
+@pytest.mark.parametrize("value", ["", "Naive", "fixed", "structure-aware"])
+def test_the_chunker_rejects_anything_else(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("CHUNKER", value)
+
+    with pytest.raises(ValidationError, match="chunker"):
         Settings()
 
 

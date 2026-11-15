@@ -9,7 +9,7 @@ from urllib.parse import quote, urlsplit
 from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from app.domain.ingestion import BM25_DEFAULT_AVG_LEN
+from app.domain.ingestion import BM25_DEFAULT_AVG_LEN, ChunkerKind
 from app.domain.retrieval import DEFAULT_RRF_K, SearchMode
 
 _ALLOWED_ORIGIN_SCHEMES = frozenset({"http", "https"})
@@ -181,6 +181,11 @@ class Settings(BaseSettings):
         le=511,
         description="Sections below this many tokens merge with the next one under the "
         "same parent (ADR 0005).",
+    )
+    chunker: ChunkerKind = Field(
+        default=ChunkerKind.STRUCTURE,
+        description="`structure` (chunking v2, ADR 0005) or `naive` (fixed 256-token windows, "
+        "the Phase 5 ablation baseline; build it under its own alias).",
     )
 
     retrieval_mode: SearchMode = Field(

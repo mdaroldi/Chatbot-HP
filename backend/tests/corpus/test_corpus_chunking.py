@@ -41,7 +41,7 @@ FRONT = {
         ("Important notice about Customer Self-Repair parts", 4, False),
     ],
 }
-ALL_TYPES = set(ContentType)
+ALL_TYPES = set(ContentType) - {ContentType.TEXT}  # TEXT is the naive chunker's
 CONTENT_TYPES = {ENVY: ALL_TYPES - {ContentType.PARTS}, OMEN: ALL_TYPES}
 PARTS = ContentType.PARTS
 

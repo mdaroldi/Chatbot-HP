@@ -22,9 +22,10 @@ logger = logging.getLogger(__name__)
 
 # Collections are `hpdocs_chunks_<chunking version>_<build id>`. A new chunking
 # version gets a new prefix, and pruning stays inside the live version's prefix, so it
-# never deletes collections built by another chunker.
+# never deletes collections built by another chunker. A version holds no underscore, so
+# one version's prefix never covers another version's collections.
 _BASE = "hpdocs_chunks_"
-_VERSION = re.compile(r"[a-z0-9]+")
+_VERSION = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _BUILD_ID = re.compile(r"[a-z0-9_-]+")
 
 
@@ -39,7 +40,8 @@ class Published:
 def collection_prefix(chunking_version: str) -> str:
     if not _VERSION.fullmatch(chunking_version):
         raise ValueError(
-            f"chunking version {chunking_version!r} must be lowercase letters or digits"
+            f"chunking version {chunking_version!r} must be lowercase letters or digits,"
+            " in parts joined by single dashes"
         )
     return f"{_BASE}{chunking_version}_"
 

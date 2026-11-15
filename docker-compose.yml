@@ -90,6 +90,7 @@ services:
       EMBEDDING_BM25_AVG_LEN: ${EMBEDDING_BM25_AVG_LEN:-256}
       CHUNK_MAX_TOKENS: ${CHUNK_MAX_TOKENS:-450}
       CHUNK_MIN_TOKENS: ${CHUNK_MIN_TOKENS:-65}
+      CHUNKER: ${CHUNKER:-structure}
       # huggingface-hub and hf-xet write their own cache and logs under HF_HOME
       # (default ~/.cache); the root is read-only and the user has no home. The
       # verified model files still land in EMBEDDING_CACHE_DIR.

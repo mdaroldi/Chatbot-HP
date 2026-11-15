@@ -325,7 +325,7 @@ def test_startup_order_runs_migrate_then_ingest_before_the_backend(
 
 # Settings ingestion reads, passed through from .env; the rest of its settings are
 # fixed by the stack (hosts and cache paths) or unused by it (API-only settings).
-INGEST_FROM_ENV_PREFIXES = ("postgres_", "qdrant_collection_", "index_", "embedding_", "chunk_")
+INGEST_FROM_ENV_PREFIXES = ("postgres_", "qdrant_collection_", "index_", "embedding_", "chunk")
 INGEST_FROM_ENV_EXTRA = {"app_env", "log_level", "log_include_exception_messages"}
 INGEST_FIXED = {
     "POSTGRES_HOST": "postgres",
@@ -525,7 +525,7 @@ def test_backend_gets_the_model_settings_from_env_and_reads_the_baked_store(
 
 # Settings the API never reads: ingestion's corpus, chunking and index-retention knobs,
 # and the BM25 document parameters (BM25 queries carry unit weights; ADR 0009).
-BACKEND_UNUSED_PREFIXES = ("corpus_", "chunk_", "index_", "embedding_bm25_")
+BACKEND_UNUSED_PREFIXES = ("corpus_", "chunk", "index_", "embedding_bm25_")
 BACKEND_FIXED = {
     "POSTGRES_HOST": "postgres",
     "POSTGRES_PORT": "5432",

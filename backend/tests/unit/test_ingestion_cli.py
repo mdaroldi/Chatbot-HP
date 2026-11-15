@@ -16,6 +16,7 @@ from qdrant_client import AsyncQdrantClient
 from app.core.settings import Settings, get_settings
 from app.domain.ingestion import (
     Bm25Params,
+    ChunkerKind,
     CorpusDownloadError,
     ModelDownloadError,
     ModelIntegrityError,
@@ -29,10 +30,12 @@ from app.infra.fastembed_embedder import FastembedEmbedder
 from app.infra.manifest_repository import SqlManifestStore
 from app.infra.model_files import PinnedModelSource
 from app.infra.qdrant_index import QdrantIndex
-from app.ingestion import cli
+from app.ingestion import cli, naive
 from app.ingestion.chunking import VERSION, StructureChunker
 from app.ingestion.cli import Runtime, main, open_runtime
+from app.ingestion.naive import NaiveChunker
 from app.ingestion.pipeline import StructureProcessor
+from app.ingestion.publish import collection_prefix
 from tests.unit.ingest_fakes import DENSE, DOCUMENTS, PINS, SPARSE
 from tests.unit.test_infra_fastembed import FakeDense, FakeSparse
 from tests.unit.test_ingestion_pipeline import CONFIG, World
@@ -107,6 +110,23 @@ def test_force_always_builds(world: World) -> None:
     assert main(["--force"], runtime=runtime_of(world)) == 0
 
     assert len(world.manifest.builds) == 2
+
+
+@pytest.mark.parametrize(("value", "version"), [(None, VERSION), ("naive", naive.VERSION)])
+def test_the_chunker_setting_picks_the_chunking_version_the_build_records(
+    world: World, monkeypatch: pytest.MonkeyPatch, value: str | None, version: str
+) -> None:
+    if value is not None:
+        monkeypatch.setenv("CHUNKER", value)
+    world.version = version
+
+    assert main(["--force"], runtime=runtime_of(world)) == 0
+    world.later()
+    assert main(["--if-needed"], runtime=runtime_of(world)) == 0  # current: skipped
+
+    [build] = world.manifest.builds
+    assert build.chunking_version == version
+    assert build.collection.startswith(collection_prefix(version))
 
 
 @pytest.mark.parametrize(
@@ -290,6 +310,26 @@ async def test_the_runtime_wires_the_real_adapters_from_settings(tmp_path: pathl
     assert isinstance(ports.corpus, HttpCorpusSource)
     with pytest.raises(RuntimeError):  # the HTTP client is closed with the runtime
         await ports.corpus._client.get("https://example.invalid")
+
+
+async def test_the_runtime_builds_the_naive_chunker_when_set(tmp_path: pathlib.Path) -> None:
+    settings = Settings(
+        postgres_password=SecretStr("unit-test-only"),
+        embedding_cache_dir=tmp_path / "models",
+        chunker=ChunkerKind.NAIVE,
+    )
+    dense = VerifiedModel(files=DENSE, path=tmp_path / "dense")
+
+    async with open_runtime(
+        settings,
+        qdrant_class=FakeQdrantClient,  # type: ignore[arg-type]  # only url and close()
+        token_class=FakeDense,
+    ) as runtime:
+        processor = runtime.ports.processor(dense)
+
+    assert isinstance(processor, StructureProcessor)  # same parsing and cleaning
+    assert isinstance(processor.chunker, NaiveChunker)
+    assert (processor.chunker.window_tokens, processor.chunker.overlap_tokens) == (256, 64)
 
 
 def test_main_uses_the_real_runtime_by_default() -> None:

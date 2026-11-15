@@ -56,6 +56,7 @@ def test_content_types_match_the_payload_contract() -> None:
         "parts",
         "regulatory",
         "front_matter",
+        "text",  # the naive baseline chunker's windows (Phase 5)
     }
 
 

@@ -106,13 +106,21 @@ def test_a_build_id_outside_lowercase_letters_digits_and_dashes_is_rejected(
         collection_name("v1", build_id)
 
 
-@pytest.mark.parametrize("version", ["", "V1", "v1_", "v 1", "v1-x"])
-def test_a_chunking_version_outside_lowercase_letters_and_digits_is_rejected(
+@pytest.mark.parametrize("version", ["", "V1", "v1_", "v 1", "naive_v1", "-v1", "v1-", "v1--x"])
+def test_a_chunking_version_outside_dash_separated_letters_and_digits_is_rejected(
     version: str,
 ) -> None:
     assert collection_prefix("v10") == "hpdocs_chunks_v10_"
+    assert collection_prefix("naive-v1") == "hpdocs_chunks_naive-v1_"
     with pytest.raises(ValueError, match="chunking version"):
         collection_prefix(version)
+
+
+@pytest.mark.parametrize(("one", "other"), [("v2", "v2-x"), ("naive", "naive-v1"), ("v1", "v10")])
+def test_no_version_prefix_covers_another_versions_collections(one: str, other: str) -> None:
+    """Pruning lists collections by prefix: it must never reach another chunker's builds."""
+    assert not collection_name(other, "b1").startswith(collection_prefix(one))
+    assert not collection_name(one, "b1").startswith(collection_prefix(other))
 
 
 # ------------------------------------------------------------------ success

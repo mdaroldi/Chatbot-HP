@@ -339,6 +339,7 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `EMBEDDING_BM25_AVG_LEN` | `256.0` | BM25 average document length for the stored sparse vectors, or `auto` for the mean of the chunks being built; recorded per build (ADR 0009). |
 | `CHUNK_MAX_TOKENS` | `450` | Largest chunk in dense-model tokens, prefix included; bge-small reads at most 512 (ADR 0005). |
 | `CHUNK_MIN_TOKENS` | `65` | Sections below this many tokens merge with the next one under the same parent (ADR 0005). |
+| `CHUNKER` | `structure` | `structure` (chunking v2, ADR 0005) or `naive` (fixed 256-token windows, the Phase 5 ablation baseline; build it under its own alias). |
 | `RETRIEVAL_MODE` | `hybrid` | `dense`, `sparse` or `hybrid` (dense and BM25 fused with RRF). |
 | `RETRIEVAL_RERANK_ENABLED` | `true` | Rerank the candidates with the cross-encoder. |
 | `RETRIEVAL_TOP_K` | `5` | Chunks returned per question. |

@@ -31,6 +31,12 @@ class ContentType(StrEnum):
     PARTS = "parts"
     REGULATORY = "regulatory"
     FRONT_MATTER = "front_matter"
+    TEXT = "text"
+
+
+class ChunkerKind(StrEnum):
+    STRUCTURE = "structure"
+    NAIVE = "naive"
 
 
 class DropReason(StrEnum):
