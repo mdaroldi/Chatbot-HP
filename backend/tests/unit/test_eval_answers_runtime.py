@@ -6,14 +6,21 @@ from contextlib import nullcontext
 from typing import cast
 
 import pytest
+from pydantic import SecretStr
 from qdrant_client import AsyncQdrantClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.settings import Settings
 from app.domain.ingestion import IndexBuild, ManifestStore
 from app.evaluation.answers.ask import ApiBackend, IndexRef
+from app.evaluation.answers.batch_api import AnthropicBatch
 from app.evaluation.answers.excerpts import QdrantChunkSource
-from app.evaluation.answers.runtime import ManifestIndexResolver, open_ask_runtime
+from app.evaluation.answers.runtime import (
+    ManifestIndexResolver,
+    MissingKeyError,
+    open_ask_runtime,
+    open_judge_runtime,
+)
 from app.evaluation.answers.store import SqlAnswerRows
 
 
@@ -88,3 +95,58 @@ async def test_the_runtime_wires_the_adapters_and_closes_every_handle(fails: boo
                 raise RuntimeError
     assert closed(qdrant)
     assert closed(engine)
+
+
+KEY = "placeholder-not-a-key"  # not a real key
+
+
+class ScrollingQdrant(Closable):
+    def __init__(self) -> None:
+        super().__init__()
+        self.scrolled: list[str] = []
+
+    async def scroll(self, collection: str, **_: object) -> tuple[list[object], None]:
+        self.scrolled.append(collection)
+        return [], None
+
+
+@pytest.mark.parametrize("fails", [False, True])
+async def test_the_judge_runtime_scrolls_the_alias_and_closes_every_handle(fails: bool) -> None:
+    qdrant, batch = ScrollingQdrant(), Closable()
+    keys: list[str] = []
+
+    def batch_factory(key: SecretStr) -> AnthropicBatch:
+        keys.append(key.get_secret_value())
+        return cast(AnthropicBatch, batch)
+
+    runtime_cm = open_judge_runtime(
+        Settings(anthropic_api_key=SecretStr(KEY)),
+        qdrant_factory=lambda _: cast(AsyncQdrantClient, qdrant),
+        batch_factory=batch_factory,
+    )
+    with pytest.raises(RuntimeError) if fails else nullcontext():
+        async with runtime_cm as runtime:
+            assert runtime.port is cast(AnthropicBatch, batch)
+            assert await runtime.chunks("hpdocs_chunks") == []
+            assert qdrant.scrolled == ["hpdocs_chunks"]
+            assert not closed(qdrant)
+            assert not closed(batch)
+            if fails:
+                raise RuntimeError
+    assert keys == [KEY]
+    assert closed(qdrant)
+    assert closed(batch)
+
+
+async def test_the_judge_runtime_needs_the_key_before_opening_anything() -> None:
+    def no_qdrant(_: Settings) -> AsyncQdrantClient:
+        raise AssertionError("opened without a key")
+
+    def no_batch(_: SecretStr) -> AnthropicBatch:
+        raise AssertionError("opened without a key")
+
+    with pytest.raises(MissingKeyError, match="ANTHROPIC_API_KEY"):
+        async with open_judge_runtime(
+            Settings(anthropic_api_key=None), qdrant_factory=no_qdrant, batch_factory=no_batch
+        ):
+            pass

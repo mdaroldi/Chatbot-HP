@@ -12,6 +12,13 @@
   invalid (more than 5% errors). `--provider stub` (both commands) is the free
   pipeline check of `make test-eval-int`: the stub matrix ($0 models), and the run
   directory with its own ledger under `answer-runs/stub/`.
+- `judge --run NAME` judges the run's answers through the Message Batches API
+  (`judge_run.judge_run`), inside the backend image: it needs Qdrant for the gold
+  passages and, unlike `ask`, the API key. Only rows with `judge = true` are judged.
+  `--limit N` is the smoke: a spread of N first passes, no repeat pass. Without it the
+  run must be finished, so the repeat sample is drawn from its final judged items.
+  Verdicts are cached across runs (`answer-runs/judge-cache.jsonl`); a second call
+  collects an open batch or reuses recorded verdicts and pays nothing again.
 - `drive --run NAME --eval-dir DIR` is the host side (`make eval-answers`): it restarts
   the backend for the run, checks its env, runs `ask` in a harness container with the
   same run options and restores the defaults (`driver.drive`). It never opens a
@@ -57,7 +64,7 @@ from app.evaluation.answers.budget import (
     RunNotFundedError,
     UnsoundBoundError,
 )
-from app.evaluation.answers.config_check import ConfigMismatchError
+from app.evaluation.answers.config_check import ConfigMismatchError, run_settings
 from app.evaluation.answers.dataset import load_dataset
 from app.evaluation.answers.driver import (
     CommandRunner,
@@ -69,9 +76,24 @@ from app.evaluation.answers.driver import (
 from app.evaluation.answers.estimate import plan, render, typical_tokens
 from app.evaluation.answers.excerpts import ExcerptError
 from app.evaluation.answers.freeze import run_items
-from app.evaluation.answers.journal import JournalError, read_journal, retried_items
-from app.evaluation.answers.runtime import AskRuntime, open_ask_runtime
+from app.evaluation.answers.journal import JournalError, latest, read_journal, retried_items
+from app.evaluation.answers.judge import repeat_sample
+from app.evaluation.answers.judge_inputs import (
+    JudgeInputError,
+    RunNotFinishedError,
+    judge_inputs,
+    require_finished,
+)
+from app.evaluation.answers.judge_run import JudgeFiles, JudgeOptions, JudgeRunError, judge_run
+from app.evaluation.answers.runtime import (
+    AskRuntime,
+    JudgeRuntime,
+    MissingKeyError,
+    open_ask_runtime,
+    open_judge_runtime,
+)
 from app.evaluation.answers.settle import StoreMismatchError
+from app.evaluation.answers.traces import TraceError, read_traces
 from app.evaluation.runner import HeldoutRefusedError
 from app.ingestion.corpus import load_corpus
 
@@ -82,11 +104,17 @@ _STOPS = (
     DriverError,
     ExcerptError,
     JournalError,
+    JudgeInputError,
+    JudgeRunError,
+    MissingKeyError,
+    RunNotFinishedError,
     RunNotFundedError,
     StoreMismatchError,
+    TraceError,
     UnsoundBoundError,
 )
 AskRuntimeFactory = Callable[[Settings, str], AbstractAsyncContextManager[AskRuntime]]
+JudgeRuntimeFactory = Callable[[Settings], AbstractAsyncContextManager[JudgeRuntime]]
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +124,9 @@ LEDGER_FILE = RUNS_DIR / "ledger.jsonl"
 STUB_DIR = "stub"
 DEFAULT_EVAL_DIR = Path("/eval")
 DEFAULT_API_URL = "http://backend:8000"
+JUDGE_CACHE_FILE = RUNS_DIR / "judge-cache.jsonl"
+JUDGE_FILE = "judge.jsonl"
+JUDGE_BATCHES_FILE = "judge-batches.jsonl"
 # The API's message limit as compose sets it by default; turns longer than this fail
 # dataset validation instead of a 422 in the middle of a paid run.
 MAX_TURN_CHARS: int = Settings.model_fields["chat_message_max_chars"].default
@@ -127,6 +158,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     ask.add_argument("--eval-dir", type=Path, default=DEFAULT_EVAL_DIR, help="the eval/ directory")
     ask.add_argument("--api-url", default=DEFAULT_API_URL, help="the backend API base URL")
+    judge = commands.add_parser(
+        "judge", help="judge one run's answers via the Batch API (inside the backend image)"
+    )
+    judge.add_argument("--run", required=True, help="the matrix run name")
+    judge.add_argument("--limit", type=int, help="judge a spread of N answers once (smoke)")
+    judge.add_argument("--allow-heldout", action="store_true", help="the heldout run only")
+    judge.add_argument(
+        "--eval-dir", type=Path, default=DEFAULT_EVAL_DIR, help="the eval/ directory"
+    )
     drive = commands.add_parser(
         "drive", parents=[run_options], help="drive one run from the host (restart, check, ask)"
     )
@@ -225,6 +265,55 @@ async def _ask(args: argparse.Namespace, settings: Settings, ask_runtime: AskRun
     return 0
 
 
+async def _judge(
+    args: argparse.Namespace, settings: Settings, judge_runtime: JudgeRuntimeFactory
+) -> int:
+    matrix = _matrix(args.eval_dir, LLMProviderName.ANTHROPIC)
+    run = matrix.run(args.run)
+    if not run.judge:
+        raise _RefusedError(f"run {run.name} is not judged (judge = false in the matrix)")
+    doc_ids = {document.doc_id for document in load_corpus()}
+    dataset = load_dataset(args.eval_dir, doc_ids, max_turn_chars=MAX_TURN_CHARS)
+    items = _items_by_run(matrix, dataset, run, allow_heldout=args.allow_heldout)[run.name]
+    files = _run_files(args.eval_dir, run.name, LLMProviderName.ANTHROPIC)
+    results = latest(read_journal(files.results))
+    if args.limit is None:
+        require_finished(items, results)
+    traces = read_traces(files.traces).latest()
+    judge_files = JudgeFiles(
+        verdicts=files.run_dir / JUDGE_FILE,
+        batches=files.run_dir / JUDGE_BATCHES_FILE,
+        cache=args.eval_dir / JUDGE_CACHE_FILE,
+    )
+    async with judge_runtime(settings) as runtime:
+        chunks = await runtime.chunks(run_settings(run).alias)
+        inputs = judge_inputs(items, results, traces, chunks)
+        repeat = repeat_sample([judged.item_id for judged in inputs], run.judge_repeat, matrix.seed)
+        summary = await judge_run(
+            matrix,
+            run.name,
+            inputs,
+            repeat,
+            judge_files,
+            runtime.port,
+            Ledger(files.ledger),
+            asyncio.sleep,
+            JudgeOptions(limit=args.limit),
+        )
+    logger.info(
+        "judge pass done",
+        extra={
+            "run": run.name,
+            "judged_items": len(inputs),
+            "submitted": summary.submitted,
+            "cached": summary.cached,
+            "recorded": summary.judged,
+            "errors": summary.errors,
+        },
+    )
+    return 0
+
+
 def _ask_args(args: argparse.Namespace) -> tuple[str, ...]:
     """The run options given to `drive`, passed on to `ask` unchanged."""
     flags = [
@@ -279,13 +368,14 @@ _INVALID_FILES: tuple[tuple[type[Exception] | tuple[type[Exception], ...], str],
 )
 
 
-def main(
+def main(  # noqa: PLR0913 - keyword-only test seams, one per external system
     argv: Sequence[str] | None = None,
     *,
     stdout: TextIO = sys.stdout,
     ask_runtime: AskRuntimeFactory = open_ask_runtime,
     drive_runner: Callable[[Path], CommandRunner] = subprocess_runner,
     environ: Mapping[str, str] = os.environ,
+    judge_runtime: JudgeRuntimeFactory = open_judge_runtime,
 ) -> int:
     args = _parser().parse_args(argv)
     configure_logging("INFO")
@@ -294,6 +384,8 @@ def main(
             return asyncio.run(_ask(args, get_settings(), ask_runtime))
         if args.command == "drive":
             return _drive(args, drive_runner, environ)
+        if args.command == "judge":
+            return asyncio.run(_judge(args, get_settings(), judge_runtime))
         return _estimate(args, stdout)
     except Exception as exc:  # every failure maps to an exit code and one log line
         code, message, extra = _failure(exc)

@@ -52,6 +52,9 @@ class AnthropicBatch:
         batch = await self._client.messages.batches.retrieve(batch_id)
         return batch.processing_status == ENDED
 
+    async def close(self) -> None:
+        await self._client.close()
+
     async def results(self, batch_id: str) -> list[BatchOutcome]:
         decoder = await self._client.messages.batches.results(batch_id)
         return [_outcome(response) async for response in decoder]

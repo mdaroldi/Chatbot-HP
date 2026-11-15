@@ -18,7 +18,7 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 .PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int test-ui-int test-eval-int smoke-llm \
 	fetch-test-assets models \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins \
-	purge eval-retrieval eval-estimate eval-answers eval load check
+	purge eval-retrieval eval-estimate eval-answers eval-judge eval load check
 
 help: ## List available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -168,6 +168,18 @@ ANSWER_ARGS ?=
 eval-answers: ## Billed: one answer run via the host driver (needs `make up`); ANSWER_ARGS="--run reference-1 --limit 10"
 	cd $(BACKEND) && uv run --frozen python -m app.evaluation.answers drive \
 		--eval-dir "$(CURDIR)/eval" $(ANSWER_ARGS)
+
+# Billed: the judge pass of one run through the Message Batches API, in a one-off
+# backend container (Qdrant for the gold passages; ANTHROPIC_API_KEY from .env through
+# compose, which `ask` never gets). As the caller's user, like eval-retrieval. A second
+# call collects an open batch or reuses recorded verdicts; it never pays twice.
+# JUDGE_ARGS: --run NAME [--limit N] [--allow-heldout].
+JUDGE_ARGS ?=
+
+eval-judge: ## Billed: judge one run's answers via the Batch API (needs `make up`); JUDGE_ARGS="--run reference-1 --limit 3"
+	docker compose run --rm --no-deps --user "$$(id -u):$$(id -g)" \
+		--volume "$(CURDIR)/eval:/eval" \
+		--entrypoint python backend -m app.evaluation.answers judge $(JUDGE_ARGS)
 
 # Local only, like test-ui-int: the answer harness end to end on the stub provider, no
 # key and no spend. The driver pins the stub and the stub matrix's models, so it runs on

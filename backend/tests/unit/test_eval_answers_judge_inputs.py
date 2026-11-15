@@ -9,7 +9,13 @@ from app.domain.chat import AnswerFlags, RefusalReason
 from app.domain.evaluation import Anchor, IndexedChunk, Split
 from app.evaluation.answers.client import Answered, ItemResult
 from app.evaluation.answers.judge import JudgeInput
-from app.evaluation.answers.judge_inputs import JudgeInputError, gold_passages, judge_inputs
+from app.evaluation.answers.judge_inputs import (
+    JudgeInputError,
+    RunNotFinishedError,
+    gold_passages,
+    judge_inputs,
+    require_finished,
+)
 from app.evaluation.answers.scoring import Excerpt
 from app.evaluation.answers.sse import Done
 from app.evaluation.answers.traces import Trace
@@ -125,3 +131,14 @@ def test_an_item_whose_anchor_matches_no_chunk_stops_the_build_naming_the_item()
     lost = item("q-1", anchors=(Anchor("other-guide", ("tray",)),))
     with pytest.raises(JudgeInputError, match="q-1: anchor 1"):
         judge_inputs([lost], {"q-1": result("q-1")}, {"q-1": trace("q-1")}, CHUNKS)
+
+
+def test_a_run_with_every_item_recorded_is_finished_even_with_errors() -> None:
+    items = [item("q-1"), item("q-2")]
+    require_finished(items, {"q-1": result("q-1"), "q-2": result("q-2", error="read_timeout")})
+
+
+def test_a_run_with_items_not_recorded_is_not_finished_and_says_how_many() -> None:
+    items = [item("q-1"), item("q-2"), item("q-3")]
+    with pytest.raises(RunNotFinishedError, match="2 of 3 items"):
+        require_finished(items, {"q-1": result("q-1")})

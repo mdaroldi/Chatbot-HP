@@ -14,20 +14,24 @@ from pathlib import Path
 import pytest
 
 from app.core.settings import LLMProviderName, Settings
+from app.domain.evaluation import IndexedChunk
 from app.domain.retrieval import SearchHit
 from app.evaluation.answers import cli
 from app.evaluation.answers.answer_matrix import load_answer_matrix, stub_matrix
 from app.evaluation.answers.ask import AskError
 from app.evaluation.answers.budget import Kind, Ledger, charge
-from app.evaluation.answers.cli import LEDGER_FILE, RUNS_DIR, main
+from app.evaluation.answers.cli import JUDGE_CACHE_FILE, LEDGER_FILE, MAX_TURN_CHARS, RUNS_DIR, main
 from app.evaluation.answers.config_check import backend_env
+from app.evaluation.answers.dataset import load_dataset
 from app.evaluation.answers.driver import Completed
 from app.evaluation.answers.journal import read_journal
-from app.evaluation.answers.runtime import AskRuntime
+from app.evaluation.answers.judge_run import BatchOutcome, BatchPendingError, read_verdicts
+from app.evaluation.answers.runtime import AskRuntime, JudgeRuntime
 from app.ingestion.corpus import load_corpus
 from tests.unit.conftest import LogReader
 from tests.unit.test_eval_answers_ask import FakeBackend, FakeIndex, FakeRows, ready_body
-from tests.unit.test_eval_answers_budget import MATRIX, SONNET
+from tests.unit.test_eval_answers_budget import MATRIX, OPUS, SONNET
+from tests.unit.test_eval_answers_judge_run import VERDICT
 from tests.unit.test_eval_answers_pin import EVAL_DIR
 from tests.unit.test_eval_answers_settle import hit
 
@@ -427,3 +431,149 @@ class StubDriveRunners(DriveRunners):
 
         self.cwd.append(cwd)
         return run
+
+
+# ------------------------------------------------------------------ judge
+
+
+def anchor_chunks() -> list[IndexedChunk]:
+    """One indexed chunk per dataset anchor, so every anchor resolves as in the index."""
+    doc_ids = {document.doc_id for document in load_corpus()}
+    dataset = load_dataset(EVAL_DIR, doc_ids, max_turn_chars=MAX_TURN_CHARS)
+    anchors = {anchor for item in dataset.items for anchor in item.anchors}
+    return [
+        IndexedChunk(f"a-{n}", a.doc_id, (a.section or "Section",), " ".join(a.facts))
+        for n, a in enumerate(sorted(anchors, key=repr))
+    ]
+
+
+class FakePort:
+    def __init__(self, pending: bool = False) -> None:
+        self.sent: list[dict[str, Mapping[str, object]]] = []
+        self.pending = pending
+
+    async def submit(self, requests: Mapping[str, Mapping[str, object]]) -> str:
+        self.sent.append(dict(requests))
+        return f"batch-{len(self.sent)}"
+
+    async def ended(self, batch_id: str) -> bool:
+        if self.pending:
+            raise BatchPendingError(f"batch {batch_id} is still running")
+        return True
+
+    async def results(self, batch_id: str) -> list[BatchOutcome]:
+        sent = self.sent[int(batch_id.removeprefix("batch-")) - 1]
+        return [BatchOutcome(cid, VERDICT, 3000, 400, None) for cid in sent]
+
+
+class FakeJudgeRuntime:
+    def __init__(self, port: FakePort | None = None) -> None:
+        self.port = port or FakePort()
+        self.aliases: list[str] = []
+
+    @asynccontextmanager
+    async def __call__(self, settings: Settings) -> AsyncIterator[JudgeRuntime]:
+        assert isinstance(settings, Settings)
+        yield JudgeRuntime(self.port, self.chunks)
+
+    async def chunks(self, alias: str) -> list[IndexedChunk]:
+        self.aliases.append(alias)
+        return anchor_chunks()
+
+
+def run_judge(eval_dir: Path, runtime: FakeJudgeRuntime, *args: str) -> int:
+    return main(
+        ["judge", "--eval-dir", str(eval_dir), *args],
+        stdout=io.StringIO(),
+        judge_runtime=runtime,
+    )
+
+
+def test_a_judge_smoke_judges_a_spread_of_answers_once_and_charges_the_ledger(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    run_ask(eval_dir, FakeRuntime(), "--run", "reference-1", "--limit", "6")
+    runtime = FakeJudgeRuntime()
+
+    code = run_judge(eval_dir, runtime, "--run", "reference-1", "--limit", "2")
+
+    assert code == 0
+    assert runtime.aliases == ["hpdocs_chunks"]
+    [batch] = runtime.port.sent
+    assert len(batch) == 2
+    assert all(cid.endswith("--p1") for cid in batch)
+    assert {params["model"] for params in batch.values()} == {OPUS}
+    records = read_verdicts(eval_dir / RUNS_DIR / "reference-1" / "judge.jsonl")
+    assert [r.verdict is not None for r in records] == [True, True]
+    assert (eval_dir / JUDGE_CACHE_FILE).exists()
+    judge_charges = [c for c in Ledger(eval_dir / LEDGER_FILE).charges() if c.kind is Kind.JUDGE]
+    assert len(judge_charges) == 2
+    (done,) = [r for r in json_logs() if r["message"] == "judge pass done"]
+    assert (done["run"], done["submitted"], done["cached"], done["recorded"]) == (
+        "reference-1",
+        2,
+        0,
+        2,
+    )
+
+
+def test_a_full_judge_pass_judges_every_in_scope_answer_and_the_repeat_sample(
+    eval_dir: Path,
+) -> None:
+    run_ask(eval_dir, FakeRuntime(), "--run", "reference-1")
+    runtime = FakeJudgeRuntime()
+
+    assert run_judge(eval_dir, runtime, "--run", "reference-1") == 0
+
+    [batch] = runtime.port.sent
+    first = [cid for cid in batch if cid.endswith("--p1")]
+    second = [cid for cid in batch if cid.endswith("--p2")]
+    assert len(first) == 72  # every in-scope dev item (the fake answers all of them)
+    assert len(second) == 20  # judge_repeat in the matrix
+
+
+def test_a_second_judge_call_reuses_recorded_verdicts_and_pays_nothing(eval_dir: Path) -> None:
+    run_ask(eval_dir, FakeRuntime(), "--run", "reference-1", "--limit", "6")
+    run_judge(eval_dir, FakeJudgeRuntime(), "--run", "reference-1", "--limit", "2")
+    runtime = FakeJudgeRuntime()
+
+    assert run_judge(eval_dir, runtime, "--run", "reference-1", "--limit", "2") == 0
+    assert runtime.port.sent == []
+
+
+def test_a_full_pass_on_an_unfinished_run_stops_with_one_before_any_batch(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    run_ask(eval_dir, FakeRuntime(), "--run", "reference-1", "--limit", "3")
+    runtime = FakeJudgeRuntime()
+
+    assert run_judge(eval_dir, runtime, "--run", "reference-1") == 1
+    assert runtime.port.sent == []
+    (stopped,) = [r for r in json_logs() if r["message"] == "answer run stopped"]
+    assert stopped["error"] == "RunNotFinishedError"
+
+
+def test_a_run_the_matrix_does_not_judge_is_refused_with_two(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    assert run_judge(eval_dir, FakeJudgeRuntime(), "--run", "reference-2") == 2
+    assert any("not judged" in r["message"] for r in json_logs())
+
+
+def test_the_heldout_run_is_judged_only_with_allow_heldout(eval_dir: Path) -> None:
+    assert run_judge(eval_dir, FakeJudgeRuntime(), "--run", "heldout") == 2
+
+
+def test_a_batch_still_running_stops_with_one_and_names_the_batch(
+    eval_dir: Path, json_logs: LogReader
+) -> None:
+    run_ask(eval_dir, FakeRuntime(), "--run", "reference-1", "--limit", "6")
+
+    code = run_judge(
+        eval_dir, FakeJudgeRuntime(FakePort(pending=True)), "--run", "reference-1", "--limit", "1"
+    )
+
+    assert code == 1
+    (stopped,) = [r for r in json_logs() if r["message"] == "answer run stopped"]
+    assert stopped["error"] == "BatchPendingError"
+    assert "batch-1" in stopped["detail"]

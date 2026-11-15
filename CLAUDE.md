@@ -104,6 +104,7 @@ make purge        # delete conversations past CHAT_RETENTION_DAYS now (via compo
 make eval-retrieval  # retrieval benchmark via compose (EVAL_ARGS=preflight | run ...)
 make eval-estimate   # answer benchmark budget plan and spend (measured / estimated), no key
 make eval-answers    # billed: one answer run via the host driver (ANSWER_ARGS="--run NAME ...")
+make eval-judge      # billed: judge pass of a run via the Batch API (JUDGE_ARGS="--run NAME [--limit N]")
 make eval         # run the quality benchmark
 make load         # run the load test
 make check        # lint + typecheck + test + security (run before every commit)

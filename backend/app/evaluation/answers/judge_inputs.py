@@ -80,3 +80,16 @@ def judge_inputs(
         _input(by_id[item_id], answers[item_id], traces.get(item_id), chunks)
         for item_id in judged_ids(items, refused)
     )
+
+
+class RunNotFinishedError(Exception):
+    """A full judge pass needs the run's final answers: the repeat sample is drawn from
+    the judged items, so judging part of a run would draw a different sample.
+    """
+
+
+def require_finished(items: Sequence[EvalItem], results: Mapping[str, ItemResult]) -> None:
+    """Every item has a final result; an errored item counts (the run report shows it)."""
+    missing = [item.id for item in items if item.id not in results]
+    if missing:
+        raise RunNotFinishedError(f"{len(missing)} of {len(items)} items have no result yet")

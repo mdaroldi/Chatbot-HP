@@ -181,3 +181,9 @@ async def test_every_result_line_is_returned_keyed_by_custom_id() -> None:
 
     outcomes = await adapter(api).results(BATCH_ID)
     assert [o.custom_id for o in outcomes] == ["b--p1", "a--p1"]
+
+
+async def test_close_closes_the_http_client() -> None:
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(FakeBatchAPI().handle))
+    await open_batch(SecretStr(KEY), http_client=client).close()
+    assert client.is_closed
