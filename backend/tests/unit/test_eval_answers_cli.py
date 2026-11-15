@@ -27,7 +27,12 @@ from app.evaluation.answers.dataset import load_dataset
 from app.evaluation.answers.driver import Completed
 from app.evaluation.answers.journal import read_journal
 from app.evaluation.answers.judge_run import BatchOutcome, BatchPendingError, read_verdicts
-from app.evaluation.answers.labels import SHEET_COLUMNS, read_inputs
+from app.evaluation.answers.labels import (
+    CORRECTNESS_COLUMN,
+    FAITHFUL_COLUMN,
+    SHEET_COLUMNS,
+    read_inputs,
+)
 from app.evaluation.answers.runtime import AskRuntime, JudgeRuntime
 from app.ingestion.corpus import load_corpus
 from tests.unit.conftest import LogReader
@@ -608,7 +613,7 @@ def test_label_sheet_writes_twenty_unlabelled_rows_and_never_overwrites(
     with (run_dir / "labels.csv").open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 20
-    assert {(r["faithful"], r["correctness"]) for r in rows} == {("", "")}
+    assert {(r[FAITHFUL_COLUMN], r[CORRECTNESS_COLUMN]) for r in rows} == {("", "")}
 
     assert run_labels(eval_dir, "label-sheet")[0] == 1
     (failed,) = [r for r in json_logs() if r["message"] == "label files are invalid"]
@@ -622,8 +627,8 @@ def test_agreement_prints_both_measures_with_n(eval_dir: Path) -> None:
     with sheet.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     for row in rows:  # the fake judge says unfaithful and partial for every answer
-        row |= {"faithful": "no", "correctness": "partial"}
-    rows[0] |= {"faithful": "yes", "correctness": "correct"}
+        row |= {FAITHFUL_COLUMN: "no", CORRECTNESS_COLUMN: "partial"}
+    rows[0] |= {FAITHFUL_COLUMN: "yes", CORRECTNESS_COLUMN: "correct"}
     with sheet.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, SHEET_COLUMNS)
         writer.writeheader()

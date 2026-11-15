@@ -20,7 +20,7 @@
   Verdicts are cached across runs (`answer-runs/judge-cache.jsonl`); a second call
   collects an open batch or reuses recorded verdicts and pays nothing again.
 - `label-sheet --run NAME` writes `labels.csv` in the run directory: 20 judged items,
-  stratified by the judge's faithful verdict and the key-fact pass, verdicts hidden, from
+  stratified by key-fact pass and the judge's correctness, verdicts hidden, from
   the inputs the judge pass saved (files only; `make eval-label-sheet` on the host). An
   existing sheet is never overwritten. `agreement --run NAME` prints raw agreement and
   Cohen's kappa with n for faithful and correctness (`make eval-agreement`).

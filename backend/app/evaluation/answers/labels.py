@@ -1,11 +1,14 @@
 """Human labels for the judge's verdicts, and how far the judge agrees with them.
 
 The judge pass saves the exact inputs it judged (`write_inputs`), so the label sheet is
-built from files alone, on the host. Twenty first-pass items are sampled, stratified by
-the judge's faithful verdict and the code's key-fact pass (five per cell; a short cell is
-topped up from the other cells), with the matrix seed. The sheet shows what the judge saw
-(conversation, excerpts, reference, answer) and two blank columns; the verdict is hidden,
-so the labeller is not anchored on it. A sheet is never overwritten: labels may be in it.
+built from files alone, on the host. Twenty first-pass items are sampled with the matrix
+seed, stratified by the code's key-fact pass and the judge's correctness: one item per
+stratum per round, the agreement stratum (pass, correct) last, so every answer the judge
+did not mark correct and every item where the two disagree is taken while the rare strata
+are small. (Faithfulness does not stratify: on reference-1 the judge found every answer
+faithful.) The sheet shows what the judge saw (conversation, excerpts, reference, answer)
+and two blank columns whose names give the allowed values; the verdict is hidden, so the
+labeller is not anchored on it. A sheet is never overwritten: labels may be in it.
 
 Agreement is reported as k/n and Cohen's kappa for faithful and for correctness. Kappa is
 undefined (None) when chance agreement is 1, as when both raters use one label only.
@@ -28,18 +31,26 @@ from app.evaluation.answers.judge import Correctness, JudgeInput, Verdict, cache
 from app.evaluation.answers.judge_run import JudgeRecord
 from app.evaluation.answers.matching import match_key_facts
 
+FAITHFUL_COLUMN = "faithful (yes|no)"
+CORRECTNESS_COLUMN = "correctness (correct|partial|incorrect)"
 SHEET_COLUMNS = (
     "item_id",
     "conversation",
     "excerpts",
     "reference",
     "answer",
-    "faithful",
-    "correctness",
+    FAITHFUL_COLUMN,
+    CORRECTNESS_COLUMN,
 )
 SAMPLE_SIZE = 20
-# Judge faithful x key-fact pass, in a fixed order so the seed alone fixes the sample.
-CELLS = ((True, True), (True, False), (False, True), (False, False))
+# Key-fact pass x judge correctness in a fixed order (so the seed alone fixes the
+# sample): misses first, the agreement stratum (pass, correct) last.
+Stratum = tuple[bool, Correctness]
+STRATA: tuple[Stratum, ...] = tuple(
+    (passed, correctness)
+    for passed in (False, True)
+    for correctness in (Correctness.INCORRECT, Correctness.PARTIAL, Correctness.CORRECT)
+)
 _FAITHFUL = {"yes": True, "no": False}
 
 
@@ -119,17 +130,22 @@ def read_inputs(path: Path) -> dict[str, JudgeInput]:
 
 
 def label_sample(
-    cells: Mapping[str, tuple[bool, bool]], seed: int, size: int = SAMPLE_SIZE
+    strata: Mapping[str, Stratum], seed: int, size: int = SAMPLE_SIZE
 ) -> tuple[str, ...]:
-    """`cells` maps a judged item to (judge faithful, key-fact pass)."""
+    """`strata` maps a judged item to (key-fact pass, judge correctness). Each stratum
+    is shuffled with the seed, then one item is taken per stratum per round.
+    """
     rng = random.Random(seed)  # noqa: S311  # nosec B311 - a reproducible sample, not a secret
-    per_cell = size // len(CELLS)
+    pools = []
+    for stratum in STRATA:
+        pool = sorted(item_id for item_id, found in strata.items() if found == stratum)
+        rng.shuffle(pool)
+        pools.append(pool)
     picked: list[str] = []
-    for cell in CELLS:
-        pool = sorted(item_id for item_id, found in cells.items() if found == cell)
-        picked += rng.sample(pool, min(per_cell, len(pool)))
-    rest = sorted(set(cells) - set(picked))
-    picked += rng.sample(rest, min(size - len(picked), len(rest)))
+    while len(picked) < size and any(pools):
+        for pool in pools:
+            if pool and len(picked) < size:
+                picked.append(pool.pop(0))
     return tuple(sorted(picked))
 
 
@@ -144,8 +160,8 @@ def sheet_row(judged: JudgeInput) -> dict[str, str]:
         "excerpts": "\n\n".join(judged.excerpts),
         "reference": "\n\n".join([*judged.passages, f"Key facts:\n{facts}"]),
         "answer": judged.answer,
-        "faithful": "",
-        "correctness": "",
+        FAITHFUL_COLUMN: "",
+        CORRECTNESS_COLUMN: "",
     }
 
 
@@ -164,11 +180,11 @@ def write_sheet(path: Path, inputs: Iterable[JudgeInput]) -> None:
 
 
 def _label(row: Mapping[str, str | None], where: str) -> Label:
-    faithful = _FAITHFUL.get((row["faithful"] or "").strip().lower())
+    faithful = _FAITHFUL.get((row[FAITHFUL_COLUMN] or "").strip().lower())
     if faithful is None:
         raise LabelError(f"{where}: faithful must be yes or no")
     try:
-        correctness = Correctness((row["correctness"] or "").strip().lower())
+        correctness = Correctness((row[CORRECTNESS_COLUMN] or "").strip().lower())
     except ValueError:
         raise LabelError(f"{where}: correctness must be correct, partial or incorrect") from None
     return Label(faithful, correctness)
@@ -181,7 +197,7 @@ def read_labels(path: Path) -> dict[str, Label]:
         raise LabelError(f"{path.name}: no label sheet") from None
     with handle:
         reader = csv.DictReader(handle)
-        if not {"item_id", "faithful", "correctness"} <= set(reader.fieldnames or ()):
+        if not {"item_id", FAITHFUL_COLUMN, CORRECTNESS_COLUMN} <= set(reader.fieldnames or ()):
             raise LabelError(f"{path.name}: the label columns are missing")
         labels = {}
         for number, row in enumerate(reader, start=1):
@@ -229,13 +245,14 @@ def sheet_items(
     """The sample, each input checked against its verdict's cache key: the sheet must
     show exactly what the judge saw.
     """
-    cells = {}
+    strata = {}
     for item_id, (key, verdict) in _first_verdicts(records).items():
         shown = inputs.get(item_id)
         if shown is None or cache_key(model, shown) != key:
             raise LabelError(f"{item_id}: the saved inputs are not what the judge saw")
-        cells[item_id] = (verdict.faithful, match_key_facts(shown.key_facts, shown.answer).passed)
-    return [inputs[item_id] for item_id in label_sample(cells, seed)]
+        passed = match_key_facts(shown.key_facts, shown.answer).passed
+        strata[item_id] = (passed, verdict.correctness)
+    return [inputs[item_id] for item_id in label_sample(strata, seed)]
 
 
 def compare(

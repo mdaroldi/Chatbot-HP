@@ -10,6 +10,8 @@ import pytest
 from app.evaluation.answers.judge import Correctness, JudgeInput, Verdict, cache_key
 from app.evaluation.answers.judge_run import JudgeRecord
 from app.evaluation.answers.labels import (
+    CORRECTNESS_COLUMN,
+    FAITHFUL_COLUMN,
     SHEET_COLUMNS,
     Agreement,
     Label,
@@ -64,10 +66,13 @@ def test_a_bad_inputs_line_names_the_line_only(tmp_path: Path) -> None:
 
 # ---------------------------------------------------------------- sample
 
+OK, PART, WRONG = Correctness.CORRECT, Correctness.PARTIAL, Correctness.INCORRECT
 
-def cells(counts: dict[tuple[bool, bool], int]) -> dict[str, tuple[bool, bool]]:
+
+def strata(counts: dict[tuple[bool, Correctness], int]) -> dict[str, tuple[bool, Correctness]]:
+    """Item ids start with the stratum: p/m (key facts pass/miss) + c/p/i (judge)."""
     return {
-        f"{'f' if cell[0] else 'u'}{'p' if cell[1] else 'm'}-{n:02d}": cell
+        f"{'p' if cell[0] else 'm'}{cell[1].value[0]}-{n:02d}": cell
         for cell, count in counts.items()
         for n in range(count)
     }
@@ -80,35 +85,40 @@ def by_cell(ids: tuple[str, ...]) -> dict[str, int]:
     return found
 
 
-FULL = {(True, True): 30, (True, False): 10, (False, True): 8, (False, False): 6}
+# The reference-1 shape: one dominant agreement cell and four rare items.
+REFERENCE = {(True, OK): 63, (True, PART): 1, (False, OK): 1, (False, PART): 1, (False, WRONG): 1}
 
 
-def test_the_sample_takes_five_from_each_cell_when_every_cell_has_five() -> None:
-    sample = label_sample(cells(FULL), seed=7)
+def test_every_rare_item_is_taken_and_the_rest_comes_from_the_dominant_cell() -> None:
+    sample = label_sample(strata(REFERENCE), seed=7)
     assert len(sample) == 20
-    assert by_cell(sample) == {"fp": 5, "fm": 5, "up": 5, "um": 5}
+    assert by_cell(sample) == {"pc": 16, "pp": 1, "mc": 1, "mp": 1, "mi": 1}
 
 
-def test_short_cells_are_topped_up_from_the_other_cells() -> None:
-    short = {(True, True): 30, (True, False): 10, (False, True): 2, (False, False): 0}
-    sample = label_sample(cells(short), seed=7)
-    assert len(sample) == 20
-    found = by_cell(sample)
-    assert found["up"] == 2
-    assert found["fp"] + found["fm"] == 18
-    assert found["fp"] >= 5
-    assert found["fm"] >= 5
+def test_the_strata_are_filled_as_evenly_as_their_sizes_allow() -> None:
+    sizes = {
+        (True, OK): 30,
+        (True, PART): 2,
+        (True, WRONG): 6,
+        (False, OK): 6,
+        (False, PART): 6,
+        (False, WRONG): 6,
+    }
+    found = by_cell(label_sample(strata(sizes), seed=7))
+    # One item per stratum per round, misses first, the agreement cell (pass, correct)
+    # last: the two-item stratum gives both, the last round stops after three strata.
+    assert found == {"mi": 4, "mp": 4, "mc": 4, "pi": 3, "pp": 2, "pc": 3}
 
 
 def test_the_sample_is_reproducible_from_the_seed_and_sorted() -> None:
-    first = label_sample(cells(FULL), seed=7)
-    assert first == label_sample(cells(FULL), seed=7)
+    first = label_sample(strata(REFERENCE), seed=7)
+    assert first == label_sample(strata(REFERENCE), seed=7)
     assert first == tuple(sorted(first))
-    assert first != label_sample(cells(FULL), seed=8)
+    assert first != label_sample(strata(REFERENCE), seed=8)
 
 
 def test_fewer_items_than_the_sample_size_are_all_taken() -> None:
-    few = cells({(True, True): 3, (False, False): 2})
+    few = strata({(True, OK): 3, (False, WRONG): 2})
     assert label_sample(few, seed=7) == tuple(sorted(few))
 
 
@@ -125,7 +135,13 @@ def test_a_sheet_row_shows_what_the_judge_saw_and_blank_labels() -> None:
         "Gold one.\n\nGold two.\n\nKey facts:\n- 3 seconds | pattern: 3 ?s\n- power"
     )
     assert row["answer"] == "Hold it 3 seconds [S1]."
-    assert (row["faithful"], row["correctness"]) == ("", "")
+    assert (row[FAITHFUL_COLUMN], row[CORRECTNESS_COLUMN]) == ("", "")
+
+
+def test_the_label_columns_name_their_allowed_values() -> None:
+    assert FAITHFUL_COLUMN == "faithful (yes|no)"
+    assert CORRECTNESS_COLUMN == "correctness (correct|partial|incorrect)"
+    assert SHEET_COLUMNS[-2:] == (FAITHFUL_COLUMN, CORRECTNESS_COLUMN)
 
 
 def test_the_sheet_is_a_csv_with_one_row_per_item(tmp_path: Path) -> None:
@@ -155,7 +171,7 @@ def labelled(tmp_path: Path, *rows: tuple[str, str, str]) -> Path:
         writer.writeheader()
         for item_id, faithful, correctness in rows:
             row = dict.fromkeys(SHEET_COLUMNS, "x")
-            row |= {"item_id": item_id, "faithful": faithful, "correctness": correctness}
+            row |= {"item_id": item_id, FAITHFUL_COLUMN: faithful, CORRECTNESS_COLUMN: correctness}
             writer.writerow(row)
     return path
 
@@ -182,7 +198,7 @@ def test_a_missing_or_unknown_label_names_the_row_and_field(
 
 def test_a_sheet_without_the_label_columns_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "labels.csv"
-    path.write_text("item_id,answer\nq-1,a\n", encoding="utf-8")
+    path.write_text("item_id,faithful,correctness\nq-1,yes,correct\n", encoding="utf-8")
     with pytest.raises(LabelError, match="columns"):
         read_labels(path)
 
@@ -255,21 +271,27 @@ def with_answer(item_id: str, answer: str) -> JudgeInput:
     )
 
 
-def test_sheet_items_sample_first_pass_verdicts_by_faithful_and_key_fact_pass() -> None:
+def test_sheet_items_stratify_first_pass_verdicts_by_key_fact_pass_and_correctness() -> None:
     passing = "Hold it 3 seconds, power."  # both key-fact groups match
+    counts = {"pc": 30, "pp": 3, "mc": 3, "mi": 3}
     inputs = {
-        f"{kind}-{n}": with_answer(f"{kind}-{n}", passing if kind[1] == "p" else "Nothing.")
-        for kind in ("fp", "fm", "up", "um")
-        for n in range(6)
+        f"{kind}-{n}": with_answer(f"{kind}-{n}", passing if kind[0] == "p" else "Nothing.")
+        for kind, count in counts.items()
+        for n in range(count)
     }
-    records = [record(j, faithful=item_id[0] == "f") for item_id, j in inputs.items()]
-    records += [record(inputs["fp-0"], judge_pass=2)]  # repeat passes are not labelled
+    judged_as = {"c": "correct", "p": "partial", "i": "incorrect"}
+    # Faithfulness no longer stratifies: half the agreement cell is unfaithful, every
+    # rare item faithful, and still every rare item is taken.
+    records = [
+        record(j, faithful=item_id[:2] != "pc" or n % 2 == 0, correctness=judged_as[item_id[1]])
+        for n, (item_id, j) in enumerate(inputs.items())
+    ]
+    records += [record(inputs["pc-0"], judge_pass=2)]  # repeat passes are not labelled
     records += [JudgeRecord("err-1", 1, "k", None, "refusal", cached=False)]  # judge errors
 
     chosen = sheet_items(records, inputs, MODEL, seed=7)
 
-    assert len(chosen) == 20
-    assert by_cell(tuple(j.item_id for j in chosen)) == {"fp": 5, "fm": 5, "up": 5, "um": 5}
+    assert by_cell(tuple(j.item_id for j in chosen)) == {"pc": 11, "pp": 3, "mc": 3, "mi": 3}
 
 
 def test_sheet_items_refuse_inputs_that_are_not_what_the_judge_saw() -> None:
