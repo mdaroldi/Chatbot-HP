@@ -5,7 +5,7 @@
 version: 2
 updates:
   - package-ecosystem: uv
-    directories: ["/backend", "/frontend"]
+    directories: ["/backend", "/frontend", "/loadtest"]
     schedule:
       interval: weekly
     cooldown:

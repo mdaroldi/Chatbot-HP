@@ -17,7 +17,7 @@ REPO = pathlib.Path(__file__).resolve().parents[3]
 WORKFLOWS = sorted((REPO / ".github" / "workflows").glob("*.yml"))
 CI = REPO / ".github" / "workflows" / "ci.yml"
 MAKEFILE = REPO / "Makefile"
-PYPROJECTS = [REPO / "backend" / "pyproject.toml", REPO / "frontend" / "pyproject.toml"]
+PYPROJECTS = [REPO / project / "pyproject.toml" for project in ("backend", "frontend", "loadtest")]
 
 SHA_PINNED = re.compile(r"^[\w.-]+(/[\w.-]+)+@[0-9a-f]{40}$")
 USES_LINE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)(.*)$")
@@ -177,8 +177,8 @@ def test_pytest_never_shows_locals() -> None:
     ]
     workflow_text = "\n".join(path.read_text() for path in WORKFLOWS)
 
-    assert len(commands) >= 3
-    assert len(addopts) == 2
+    assert len(commands) >= 4
+    assert len(addopts) == 3
     for options in [*commands, *addopts]:
         assert "--showlocals" not in options
         assert not re.search(r"(^|\s)-l(\s|$)", options)

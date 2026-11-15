@@ -32,6 +32,12 @@ repos:
         entry: bash -c 'cd frontend && uv run --frozen mypy'
         files: ^frontend/.*\.py$
         pass_filenames: false
+      - id: mypy-loadtest
+        name: mypy (loadtest)
+        language: system
+        entry: bash -c 'cd loadtest && uv run --frozen mypy'
+        files: ^loadtest/.*\.py$
+        pass_filenames: false
       - id: gitleaks
         name: gitleaks (staged changes)
         language: docker_image

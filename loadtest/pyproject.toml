@@ -1,0 +1,68 @@
+[project]
+name = "hp-docs-loadtest"
+version = "0.1.0"
+description = "Locust load tests for the HP Docs chat API (Phase 6)"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+dependencies = [
+    # Load generator (MIT). Runs on the host against the load stack's API.
+    "locust>=2.47.0",
+]
+
+[dependency-groups]
+dev = [
+    "bandit>=1.9.4",
+    "mypy>=2.4.1",
+    "pip-audit>=2.10.1",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.4",
+]
+
+[tool.uv]
+# Tooling, not a library: dependencies are installed, the code is not packaged.
+package = false
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["."]
+
+[tool.ruff.lint]
+select = [
+  "E", "W", "F", "I", "B", "UP", "N", "S", "C4", "SIM", "RUF",
+  "PT", "RET", "ARG", "PL", "TRY", "ERA", "T20",
+]
+ignore = [
+  "PLR2004", # magic values are fine in tests and HTTP status checks
+  "TRY003",  # explicit exception messages are clearer than a subclass per message
+]
+
+[tool.ruff.lint.per-file-ignores]
+# S311: tests seed random.Random on purpose, for reproducible client IDs and workloads.
+"tests/**" = ["S101", "S311"]
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+files = ["hpdocs_load", "tests"]
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers --strict-config"
+filterwarnings = ["error"]
+
+# ---------------------------------------------------------------- coverage
+[tool.coverage.run]
+branch = true
+source = ["."]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true

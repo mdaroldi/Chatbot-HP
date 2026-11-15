@@ -6,7 +6,8 @@ SHELL := /bin/bash
 
 BACKEND := backend
 FRONTEND := frontend
-PROJECTS := $(BACKEND) $(FRONTEND)
+LOADTEST := loadtest
+PROJECTS := $(BACKEND) $(FRONTEND) $(LOADTEST)
 TEST_COMPOSE := docker compose -f docker-compose.test.yml
 GITLEAKS_IMAGE := zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
 TRIVY_IMAGE := aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
@@ -24,13 +25,13 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 help: ## List available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
 
-install: ## Install locked dependencies for both projects (what CI runs)
+install: ## Install locked dependencies for every project (what CI runs)
 	for project in $(PROJECTS); do uv sync --frozen --project $$project || exit 1; done
 
 setup: install ## install + pre-commit hooks (local development)
 	uv run --frozen --project $(BACKEND) pre-commit install
 
-lint: ## ruff check + ruff format --check (backend and frontend)
+lint: ## ruff check + ruff format --check (every project)
 	for project in $(PROJECTS); do \
 		(cd $$project && uv run --frozen ruff check . && uv run --frozen ruff format --check .) \
 			|| exit 1; \
@@ -39,18 +40,19 @@ lint: ## ruff check + ruff format --check (backend and frontend)
 lint-workflows: ## actionlint on .github/workflows
 	docker run --rm -v "$(CURDIR)":/repo --workdir /repo $(ACTIONLINT_IMAGE) -color
 
-format: ## Apply ruff fixes and formatting (backend and frontend)
+format: ## Apply ruff fixes and formatting (every project)
 	for project in $(PROJECTS); do \
 		(cd $$project && uv run --frozen ruff check --fix . && uv run --frozen ruff format .) \
 			|| exit 1; \
 	done
 
-typecheck: ## mypy --strict (backend and frontend)
+typecheck: ## mypy --strict (every project)
 	for project in $(PROJECTS); do (cd $$project && uv run --frozen mypy) || exit 1; done
 
-test: ## Unit tests with branch coverage gate, fail under 90 (backend and frontend)
+test: ## Unit tests with branch coverage gate, fail under 90 (every project)
 	cd $(BACKEND) && uv run --frozen pytest tests/unit --cov --cov-report=term-missing
 	cd $(FRONTEND) && uv run --frozen pytest --cov --cov-report=term-missing
+	cd $(LOADTEST) && uv run --frozen pytest --cov --cov-report=term-missing
 
 docs-config: ## Print the README configuration table generated from Settings
 	@cd $(BACKEND) && uv run --frozen python -c \
@@ -87,9 +89,10 @@ UI_IT_BACKEND_URL ?= http://127.0.0.1:$${API_PORT:-8000}
 test-ui-int: ## UI integration tests against the running stub stack (local only)
 	cd $(FRONTEND) && UI_IT_BACKEND_URL="$(UI_IT_BACKEND_URL)" uv run --frozen pytest tests/integration -m integration
 
-security: ## bandit, pip-audit (both lock files), gitleaks
+security: ## bandit, pip-audit (every lock file), gitleaks
 	cd $(BACKEND) && uv run --frozen bandit -q -c pyproject.toml -r app
 	cd $(FRONTEND) && uv run --frozen bandit -q -r app.py hpdocs_ui
+	cd $(LOADTEST) && uv run --frozen bandit -q -r hpdocs_load
 	for project in $(PROJECTS); do \
 		(cd $$project && uv run --frozen pip-audit --strict --progress-spinner off) || exit 1; \
 	done
