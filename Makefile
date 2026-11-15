@@ -276,6 +276,7 @@ load-down: ## Stop the load stack (its volumes are kept)
 LOAD_ENV := LOAD_RUN="$(LOAD_RUN)" LOAD_STEPS="$(LOAD_STEPS)" LOAD_STEP_SECONDS="$(LOAD_STEP_SECONDS)" LOAD_WARMUP_SECONDS="$(LOAD_WARMUP_SECONDS)" LOAD_SPAWN_RATE="$(LOAD_SPAWN_RATE)" LOAD_SEED="$(LOAD_SEED)" LOAD_SAMPLE_SECONDS="$(LOAD_SAMPLE_SECONDS)"
 load: ## Run a load test: LOAD_RUN=name [LOAD_STEPS=1,5,10 LOAD_STEP_SECONDS LOAD_WARMUP_SECONDS LOAD_SPAWN_RATE LOAD_SEED LOAD_SAMPLE_SECONDS]
 	@test -n "$(LOAD_RUN)" || { echo "set LOAD_RUN=<name>"; exit 2; }
-	cd $(LOADTEST) && $(LOAD_ENV) uv run --frozen locust -f locustfile.py --headless --host $(LOAD_API_URL) --only-summary --loglevel WARNING
+	cd $(LOADTEST) && $(LOAD_ENV) uv run --frozen locust -f locustfile.py --headless --host $(LOAD_API_URL) --only-summary --loglevel WARNING --exit-code-on-error 0
+	cd $(LOADTEST) && uv run --frozen python -m hpdocs_load.report results/$(LOAD_RUN)
 
 check: lint typecheck test security ## Run before every commit

@@ -9,6 +9,7 @@ import pytest
 from hpdocs_load.metrics import RequestRecord, read_records
 from hpdocs_load.run_files import RunFiles
 from hpdocs_load.samplers import GeneratorSample, HostSample
+from hpdocs_load.stages import StageRow, read_stages
 
 RECORD = RequestRecord("list", 1.0, 20.0, 200, None, False, None)
 
@@ -69,3 +70,12 @@ def test_closing_twice_is_harmless(tmp_path: pathlib.Path) -> None:
 
     with pytest.raises(ValueError, match="closed"):
         files.add_request(RECORD)
+
+
+def test_stage_rows_round_trip(tmp_path: pathlib.Path) -> None:
+    rows = [StageRow(1.0, "r1", "retrieval", {"rerank_ms": 1800.0})]
+
+    with RunFiles.create(tmp_path, "r") as files:
+        files.add_stages(rows)
+
+    assert read_stages(tmp_path / "r" / "stages.jsonl") == rows

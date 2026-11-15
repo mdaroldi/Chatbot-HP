@@ -24,6 +24,7 @@ from hpdocs_load.ramp import measured_windows, tick
 from hpdocs_load.run_files import RunFiles
 from hpdocs_load.samplers import run_command, take_samples
 from hpdocs_load.session import Reply, Session, StreamReply
+from hpdocs_load.stages import logs_command, parse_stage_logs
 from hpdocs_load.workload import GOLDEN, load_question_pool, page_open, plan_conversation
 
 CONFIG = config_from_env(os.environ)
@@ -134,6 +135,8 @@ def _start(environment: Environment, **_: object) -> None:
 def _stop(**_: object) -> None:
     files: RunFiles = STATE["files"]  # type: ignore[assignment]
     STATE["sampler"].kill()  # type: ignore[attr-defined]
+    started: float = STATE["meta"]["started_at"]  # type: ignore[index]
+    files.add_stages(parse_stage_logs(run_command(logs_command(started))))
     files.write_meta({**STATE["meta"], "ended_at": time.time()})  # type: ignore[dict-item]
     files.close()
 

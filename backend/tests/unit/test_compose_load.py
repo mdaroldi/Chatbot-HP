@@ -220,3 +220,14 @@ def test_load_needs_a_run_name_and_passes_the_run_settings_on() -> None:
         "LOAD_SAMPLE_SECONDS",
     ):
         assert f'{name}="$({name})"' in env.split(), name
+
+
+def test_load_ends_with_the_capacity_table_even_when_requests_failed() -> None:
+    lines = recipe("load").splitlines()
+    locust = next(i for i, line in enumerate(lines) if " locust " in line)
+
+    # A 429 or 5xx must not stop make before the table: Locust exits 0 on request errors.
+    assert "--exit-code-on-error 0" in lines[locust]
+    assert lines[locust + 1].strip() == (
+        "cd $(LOADTEST) && uv run --frozen python -m hpdocs_load.report results/$(LOAD_RUN)"
+    )

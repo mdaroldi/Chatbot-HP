@@ -1,5 +1,6 @@
 """One directory per run under the git-ignored results/ (rule 8): run.json, plus
-requests.jsonl and samples.jsonl, flushed per line so a cut run keeps what it measured."""
+requests.jsonl and samples.jsonl, flushed per line so a cut run keeps what it measured,
+and stages.jsonl from the backend's logs at the end."""
 
 import json
 import pathlib
@@ -10,6 +11,7 @@ from typing import TextIO
 
 from hpdocs_load.metrics import RequestRecord, write_record
 from hpdocs_load.samplers import Sample
+from hpdocs_load.stages import StageRow, stage_line
 
 
 class RunFiles:
@@ -48,6 +50,11 @@ class RunFiles:
         trace: TracebackType | None,
     ) -> None:
         self.close()
+
+    def add_stages(self, rows: Iterable[StageRow]) -> None:
+        """Written once at the end of a run, from the backend's logs."""
+        with (self.directory / "stages.jsonl").open("x") as out:
+            out.writelines(stage_line(row) + "\n" for row in rows)
 
     def close(self) -> None:
         self._requests.close()
