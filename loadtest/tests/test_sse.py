@@ -3,7 +3,13 @@ line of JSON, a blank line ends the event, `:` lines are keepalives."""
 
 import pytest
 
-from hpdocs_load.sse import SseEvent, SseProtocolError, parse_events, summarize_stream
+from hpdocs_load.sse import (
+    SseEvent,
+    SseProtocolError,
+    parse_events,
+    summarize_stream,
+    timed_events,
+)
 
 
 def test_parses_events_in_order_and_skips_keepalives() -> None:
@@ -135,3 +141,25 @@ def test_events_after_done_are_a_protocol_error() -> None:
 def test_malformed_events_raise(name: str, data: dict[str, object]) -> None:
     with pytest.raises(SseProtocolError):
         summarize_stream(0.0, _timed((1.0, name, data)))
+
+
+def test_timed_events_carry_the_time_of_the_line_that_ends_them() -> None:
+    lines = [
+        (1.0, "event: token"),
+        (1.0, 'data: {"text": "a"}'),
+        (1.2, ""),
+        (1.5, ": keepalive"),
+        (2.0, "event: done"),
+        (2.1, 'data: {"outcome": "completed"}'),
+        (2.1, ""),
+    ]
+
+    assert list(timed_events(lines)) == [
+        (1.2, SseEvent("token", {"text": "a"})),
+        (2.1, SseEvent("done", {"outcome": "completed"})),
+    ]
+
+
+def test_timed_events_raise_on_a_broken_stream() -> None:
+    with pytest.raises(SseProtocolError):
+        list(timed_events([(1.0, "event: token"), (1.1, "")]))

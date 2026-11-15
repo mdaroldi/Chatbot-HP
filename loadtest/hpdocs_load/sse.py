@@ -108,3 +108,16 @@ def summarize_stream(start: float, events: Iterable[tuple[float, SseEvent]]) -> 
         return None if at is None else (at - start) * 1000
 
     return StreamResult(_ms(first), _ms(last), tokens, outcome, error_code)
+
+
+def timed_events(lines: Iterable[tuple[float, str]]) -> Iterator[tuple[float, SseEvent]]:
+    """Each event with the arrival time of the blank line that completes it."""
+    clock = [0.0]
+
+    def untimed() -> Iterator[str]:
+        for at, line in lines:
+            clock[0] = at
+            yield line
+
+    for event in parse_events(untimed()):
+        yield clock[0], event

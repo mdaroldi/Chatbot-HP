@@ -7,6 +7,9 @@ license = "MIT"
 dependencies = [
     # Load generator (MIT). Runs on the host against the load stack's API.
     "locust>=2.47.0",
+    # Host memory, swap and the generator's own CPU (rule 10). Already locked as a
+    # Locust dependency; listed because the samplers import it directly.
+    "psutil>=7.2.2",
 ]
 
 [dependency-groups]
@@ -48,7 +51,12 @@ ignore = [
 python_version = "3.12"
 strict = true
 warn_unreachable = true
-files = ["hpdocs_load", "tests"]
+files = ["hpdocs_load", "tests", "locustfile.py"]
+
+[[tool.mypy.overrides]]
+# Locust's runtime libraries ship no type information; only the glue imports them.
+module = ["gevent", "gevent.*", "psutil", "psutil.*"]
+ignore_missing_imports = true
 
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]
@@ -61,7 +69,8 @@ filterwarnings = ["error"]
 [tool.coverage.run]
 branch = true
 source = ["."]
-omit = ["tests/*"]
+# locustfile.py is glue with no branching of its own (ADR 0013); a test pins this list.
+omit = ["tests/*", "locustfile.py"]
 
 [tool.coverage.report]
 fail_under = 90

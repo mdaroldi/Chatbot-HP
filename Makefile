@@ -271,7 +271,11 @@ load-reset: ## Same starting state: clear conversations (index kept), fresh back
 load-down: ## Stop the load stack (its volumes are kept)
 	$(LOAD_COMPOSE) down
 
-load: ## Run the load test
-	@echo "not implemented yet"; exit 1
+# Locust runs on the host (ADR 0013), records into loadtest/results/$(LOAD_RUN) (git-ignored).
+# Unset values reach Locust empty and mean the defaults in hpdocs_load.config.
+LOAD_ENV := LOAD_RUN="$(LOAD_RUN)" LOAD_STEPS="$(LOAD_STEPS)" LOAD_STEP_SECONDS="$(LOAD_STEP_SECONDS)" LOAD_WARMUP_SECONDS="$(LOAD_WARMUP_SECONDS)" LOAD_SPAWN_RATE="$(LOAD_SPAWN_RATE)" LOAD_SEED="$(LOAD_SEED)" LOAD_SAMPLE_SECONDS="$(LOAD_SAMPLE_SECONDS)"
+load: ## Run a load test: LOAD_RUN=name [LOAD_STEPS=1,5,10 LOAD_STEP_SECONDS LOAD_WARMUP_SECONDS LOAD_SPAWN_RATE LOAD_SEED LOAD_SAMPLE_SECONDS]
+	@test -n "$(LOAD_RUN)" || { echo "set LOAD_RUN=<name>"; exit 2; }
+	cd $(LOADTEST) && $(LOAD_ENV) uv run --frozen locust -f locustfile.py --headless --host $(LOAD_API_URL) --only-summary --loglevel WARNING
 
 check: lint typecheck test security ## Run before every commit

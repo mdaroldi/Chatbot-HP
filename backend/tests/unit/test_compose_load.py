@@ -192,3 +192,31 @@ def test_load_targets_never_touch_the_main_project() -> None:
         for line in recipe(target).splitlines():
             if "docker compose" in line or "$(LOAD_COMPOSE)" in line:
                 assert "$(LOAD_COMPOSE)" in line, (target, line)
+
+
+def test_load_runs_locust_headless_on_the_host_against_the_load_api() -> None:
+    body = recipe("load")
+    locust = next(line for line in body.splitlines() if " locust " in line)
+
+    assert "cd $(LOADTEST) && $(LOAD_ENV) uv run" in locust
+    assert "uv run --frozen locust -f locustfile.py --headless" in locust
+    assert "--host $(LOAD_API_URL)" in locust
+    assert make_line("LOAD_API_URL") == "http://127.0.0.1:8100"
+    assert "docker" not in locust
+
+
+def test_load_needs_a_run_name_and_passes_the_run_settings_on() -> None:
+    body = recipe("load")
+    env = make_line("LOAD_ENV")
+
+    assert 'test -n "$(LOAD_RUN)"' in body
+    for name in (
+        "LOAD_RUN",
+        "LOAD_STEPS",
+        "LOAD_STEP_SECONDS",
+        "LOAD_WARMUP_SECONDS",
+        "LOAD_SPAWN_RATE",
+        "LOAD_SEED",
+        "LOAD_SAMPLE_SECONDS",
+    ):
+        assert f'{name}="$({name})"' in env.split(), name
