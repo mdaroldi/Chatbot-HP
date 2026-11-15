@@ -45,7 +45,8 @@ Correctness: correct 64, partial 2, incorrect 1. Judge errors: none.
 |---|---|---|---|---|
 | repeatability, faithful | 20 | 20 | 1.000 | n/a |
 | repeatability, correctness | 20 | 20 | 1.000 | 1.000 |
-| human labels | not measured |  |  |  |
+| human labels, faithful | 20 | 20 | 1.000 | n/a |
+| human labels, correctness | 20 | 20 | 1.000 | 1.000 |
 
 Negative controls (5 corrupted answers): correctness flagged 5, lenient faithfulness 4, strict faithfulness 5. Missed by lenient: nc-omen-procedure-001.
 
@@ -74,7 +75,7 @@ Negative controls (5 corrupted answers): correctness flagged 5, lenient faithful
 - models: answer claude-sonnet-5-5, rewrite claude-haiku-5-5, judge claude-opus-5-5 (judge-v1 6c8d87315639)
 - index_build_ids: 20261113t173108z
 - datasets: retrieval-v1.toml 1.0.1 91e754f19cba, answers-v1.toml 1.0.0 2aac464af1c6, slices-v1.toml 1.0.0 b9ec7a354bb6
-- git_sha: 93ff7a4abe1cc5534cf431d5b94c269967210e46
+- git_sha: c9421f38a8385dd8b387f69f1cde9024893171da
 - health: valid, 0 errors
 
 | metric | k/n | rate | Wilson 95% |
