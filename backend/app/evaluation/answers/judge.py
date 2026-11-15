@@ -140,6 +140,13 @@ class Verdict(_Strict):
     def faithful(self) -> bool:
         return all(claim.support is not Support.UNSUPPORTED for claim in self.claims)
 
+    @property
+    def fully_supported(self) -> bool:
+        """The strict view: the negative controls showed the judge can grade a wrong
+        value "partial", which the lenient `faithful` lets through.
+        """
+        return all(claim.support is Support.SUPPORTED for claim in self.claims)
+
 
 def parse_verdict(text: str) -> Verdict:
     try:

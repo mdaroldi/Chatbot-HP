@@ -80,7 +80,8 @@ def judge_section(
     verdicts = [r.verdict for r in records if r.judge_pass == 1 and r.verdict is not None]
     correctness = Counter(v.correctness for v in verdicts)
     return {
-        "faithful": proportion(Proportion.of(v.faithful for v in verdicts)),
+        "faithful_lenient": proportion(Proportion.of(v.faithful for v in verdicts)),
+        "faithful_strict": proportion(Proportion.of(v.fully_supported for v in verdicts)),
         "correctness": {c.value: correctness[c] for c in Correctness},
         "errors": dict(sorted(Counter(r.error for r in records if r.error).items())),
         "repeatability": _repeatability(records),
@@ -242,7 +243,13 @@ def _judge_lines(judge: Record | None) -> list[str]:
     return [
         "## Judge",
         "",
-        *_table(_SHARE_HEAD, [["faithful", *_share(judge["faithful"])]]),
+        *_table(
+            _SHARE_HEAD,
+            [
+                ["faithful, lenient (no unsupported claim)", *_share(judge["faithful_lenient"])],
+                ["faithful, strict (every claim supported)", *_share(judge["faithful_strict"])],
+            ],
+        ),
         *_counts("correctness", judge["correctness"]),
         f"Judge errors: {judge['errors'] or 'none'}",
         "",

@@ -117,6 +117,21 @@ def test_faithful_is_computed_from_the_claims(supports: tuple[str, ...], faithfu
     assert parse_verdict(verdict(*supports)).faithful is faithful
 
 
+@pytest.mark.parametrize(
+    ("supports", "fully_supported"),
+    [
+        (("supported", "supported"), True),
+        (("supported", "partial"), False),  # the strict view: partial is not support
+        (("partial",), False),
+        (("supported", "unsupported"), False),
+    ],
+)
+def test_fully_supported_needs_every_claim_supported(
+    supports: tuple[str, ...], fully_supported: bool
+) -> None:
+    assert parse_verdict(verdict(*supports)).fully_supported is fully_supported
+
+
 def test_a_valid_verdict_keeps_correctness_reasons_and_tags() -> None:
     parsed = parse_verdict(
         verdict("partial", correctness="partial", reasons=("missing_step", "wrong_value"))

@@ -11,6 +11,7 @@ from app.domain.answer_dataset import EvalItem, Slice
 from app.domain.chat import RefusalReason
 from app.domain.evaluation import OosKind, Split
 from app.evaluation.answers.health import RunHealth
+from app.evaluation.answers.judge import Verdict
 from app.evaluation.answers.judge_run import JudgeRecord
 from app.evaluation.answers.labels import Agreement
 from app.evaluation.answers.report import (
@@ -137,7 +138,7 @@ def test_the_record_holds_secondary_metrics_slices_and_server_latency() -> None:
 def test_the_record_is_plain_json() -> None:
     found = run_record(HEADER, SCORES, HEALTH, judge=judge_section([], human=None))
     assert json.loads(json.dumps(found)) == found
-    assert found["judge"]["faithful"] == proportion(Proportion(0, 0))
+    assert found["judge"]["faithful_strict"] == proportion(Proportion(0, 0))
     assert found["latency_ms"]["total_p50"] == pytest.approx(4000.0)
 
 
@@ -153,13 +154,40 @@ def test_the_judge_section_counts_first_passes_repeatability_and_human_agreement
 
     found = judge_section(records, human=human)
 
-    assert (found["faithful"]["k"], found["faithful"]["n"]) == (1, 2)
+    assert (found["faithful_lenient"]["k"], found["faithful_lenient"]["n"]) == (1, 2)
     assert found["correctness"] == {"correct": 1, "partial": 1, "incorrect": 0}
     assert found["errors"] == {"refusal": 1}
     assert found["repeatability"]["faithful"] == {"n": 2, "agreed": 1, "kappa": 0.0}
     assert found["repeatability"]["correctness"]["agreed"] == 2
     assert found["human"]["faithful"] == {"n": 20, "agreed": 19, "kappa": 0.5}
     assert found["human"]["correctness"]["kappa"] is None
+
+
+def claims_record(item_id: str, *supports: str) -> JudgeRecord:
+    found = Verdict.model_validate(
+        {
+            "claims": [{"claim": "c", "support": s, "tags": []} for s in supports],
+            "correctness": "correct",
+            "reasons": ["none"],
+        }
+    )
+    return JudgeRecord(item_id, 1, "k", found, None, cached=False)
+
+
+def test_faithfulness_is_reported_lenient_and_strict_from_the_claims() -> None:
+    # A wrong value graded "partial" passes the lenient view (no unsupported claim) and
+    # fails the strict one (every claim supported); both come from the stored claims.
+    records = [
+        claims_record("q-1", "supported", "supported"),
+        claims_record("q-2", "supported", "partial"),
+        claims_record("q-3", "unsupported"),
+    ]
+
+    found = judge_section(records, human=None)
+
+    assert (found["faithful_lenient"]["k"], found["faithful_lenient"]["n"]) == (2, 3)
+    assert (found["faithful_strict"]["k"], found["faithful_strict"]["n"]) == (1, 3)
+    assert "faithful" not in found  # no unqualified figure to misread
 
 
 def test_without_labels_the_judge_section_has_no_human_agreement() -> None:
@@ -174,7 +202,8 @@ def test_the_markdown_shows_ids_and_numbers_from_the_record() -> None:
     assert "INVALID" in page  # the health verdict is visible at once
     assert "| primary (strict key-fact pass) | 1/3 | 0.333 | [0.061, 0.792] |" in page
     assert "| q-3 | below_threshold |" in page
-    assert "| faithful | 1/1 |" in page
+    assert "| faithful, lenient (no unsupported claim) | 1/1 |" in page
+    assert "| faithful, strict (every claim supported) | 1/1 |" in page
     assert "Q?" not in page  # never question wording
 
 
