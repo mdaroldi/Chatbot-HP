@@ -22,7 +22,7 @@ user still completes about 1.9-2.1 questions per minute, as at 1 user (2.1), so 
 system keeps up; but rerank p95 grows from 2.1 s (4 users) to 3.9 s (12 users), and at
 12 users first-question TTFT p95 is 4.45 s against a bound of 4.14 s. Throughput levels
 off only at 24 users, where backend CPU reaches about 305% and rerank p50 grows from
-1.7 s to 6-12 s. The bottleneck analysis follows in `bottleneck.md`.
+1.7 s to 6-12 s. The bottleneck analysis is in [`bottleneck.md`](bottleneck.md).
 
 The grid between 8 (pass) and 12 (fail) is coarse; the tuning round re-measures 8 and 10
 users and then 9 or 11 to find the highest passing step on a finer grid.
