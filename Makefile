@@ -20,7 +20,7 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 	fetch-test-assets models \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins \
 	purge eval-retrieval eval-estimate eval-answers eval-ablation eval-judge \
-	eval-label-sheet eval-agreement eval-report eval-summary eval load load-up load-reset load-down check
+	eval-label-sheet eval-agreement eval-report eval-summary eval load load-measured load-up load-reset load-down check
 
 help: ## List available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -278,5 +278,10 @@ load: ## Run a load test: LOAD_RUN=name [LOAD_STEPS=1,5,10 LOAD_STEP_SECONDS LOA
 	@test -n "$(LOAD_RUN)" || { echo "set LOAD_RUN=<name>"; exit 2; }
 	cd $(LOADTEST) && $(LOAD_ENV) uv run --frozen locust -f locustfile.py --headless --host $(LOAD_API_URL) --only-summary --loglevel WARNING --exit-code-on-error 0
 	cd $(LOADTEST) && uv run --frozen python -m hpdocs_load.report results/$(LOAD_RUN)
+
+# A run that counts (ADR 0013): kept awake, reset first, host snapshots, void on sleep/wake.
+load-measured: ## Measured run: caffeinate + load-reset + host snapshots + load + pmset check (same variables as load)
+	@test -n "$(LOAD_RUN)" || { echo "set LOAD_RUN=<name>"; exit 2; }
+	MAKE="$(MAKE)" $(LOADTEST)/measured_run.sh "$(LOAD_RUN)" $(LOAD_ENV)
 
 check: lint typecheck test security ## Run before every commit
