@@ -294,6 +294,43 @@ async def test_models_from_settings_build_the_adapters_with_the_settings_and_the
     assert len(warm_up) == settings.retrieval_rerank_candidates
 
 
+async def test_a_dedicated_embedding_pool_takes_the_embedder_and_never_the_reranker(
+    executor: ThreadPoolExecutor, make_settings: SettingsFactory
+) -> None:
+    """Query embeddings stop queueing behind reranks (loadtest/reports/bottleneck.md)."""
+    settings = make_settings(
+        embedding_dense_model="demo/dense",
+        embedding_sparse_model="demo/bm25",
+        reranker_model="demo/rerank-a",
+    )
+    seen: list[tuple[str, object]] = []
+    builds = Builds()
+
+    def embedder_factory(
+        _: Settings, dense: VerifiedModel, sparse: VerifiedModel, pool: Executor
+    ) -> QueryEmbedder:
+        seen.append(("embedder", pool))
+        return builds.embedder(dense, sparse)
+
+    def reranker_factory(_: Settings, model: VerifiedModel, pool: Executor | None) -> Reranker:
+        seen.append(("reranker", pool))
+        return builds.reranker(model)
+
+    with ThreadPoolExecutor(max_workers=1) as embed_pool:
+        subject = QueryModels.from_settings(
+            settings,
+            executor,
+            embed_pool,
+            source=FakeSource(),
+            embedder_factory=embedder_factory,
+            reranker_factory=reranker_factory,
+        )
+        await subject.load()
+
+    assert subject.state is ModelsState.READY
+    assert seen == [("embedder", embed_pool), ("reranker", executor)]
+
+
 async def test_the_verified_model_files_are_known_once_loaded(
     executor: ThreadPoolExecutor,
 ) -> None:

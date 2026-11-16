@@ -472,6 +472,7 @@ def test_retrieval_defaults_are_hybrid_with_rerank_and_the_calibrated_threshold(
     assert settings.reranker_model == "Xenova/ms-marco-MiniLM-L-6-v2"
     assert settings.inference_workers == 2
     assert settings.inference_onnx_threads == 2
+    assert settings.inference_embed_workers == 0  # embeddings share the inference pool
     assert settings.qdrant_search_timeout_seconds == 2.0
     assert settings.query_max_chars == 1000
     assert settings.search_endpoint_enabled is False
@@ -495,6 +496,7 @@ def test_retrieval_settings_are_read_from_environment(monkeypatch: pytest.Monkey
         "QDRANT_SEARCH_TIMEOUT_SECONDS": "0.5",
         "QUERY_MAX_CHARS": "500",
         "SEARCH_ENDPOINT_ENABLED": "true",
+        "INFERENCE_EMBED_WORKERS": "1",
     }
     for name, value in values.items():
         monkeypatch.setenv(name, value)
@@ -514,6 +516,7 @@ def test_retrieval_settings_are_read_from_environment(monkeypatch: pytest.Monkey
     assert settings.retrieval_dense_query_prefix == "Represent this sentence: "
     assert settings.reranker_model == "BAAI/bge-reranker-base"
     assert (settings.inference_workers, settings.inference_onnx_threads) == (4, 1)
+    assert settings.inference_embed_workers == 1
     assert settings.qdrant_search_timeout_seconds == 0.5
     assert settings.query_max_chars == 500
     assert settings.search_endpoint_enabled is True
@@ -539,6 +542,8 @@ def test_retrieval_settings_are_read_from_environment(monkeypatch: pytest.Monkey
         ("INFERENCE_WORKERS", "33"),
         ("INFERENCE_ONNX_THREADS", "0"),
         ("INFERENCE_ONNX_THREADS", "33"),
+        ("INFERENCE_EMBED_WORKERS", "-1"),
+        ("INFERENCE_EMBED_WORKERS", "33"),
         ("QDRANT_SEARCH_TIMEOUT_SECONDS", "0"),
         ("QDRANT_SEARCH_TIMEOUT_SECONDS", "31"),
         ("QUERY_MAX_CHARS", "0"),

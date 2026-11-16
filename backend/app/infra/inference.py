@@ -80,8 +80,8 @@ def warn_if_oversubscribed(workers: int, threads: int, allowance: CpuAllowance) 
     return True
 
 
-def create_inference_executor(workers: int) -> ThreadPoolExecutor:
-    return ThreadPoolExecutor(max_workers=workers, thread_name_prefix="inference")
+def create_inference_executor(workers: int, name: str = "inference") -> ThreadPoolExecutor:
+    return ThreadPoolExecutor(max_workers=workers, thread_name_prefix=name)
 
 
 async def run_inference[T](executor: Executor | None, call: Callable[[], T]) -> T:

@@ -26,6 +26,9 @@ from app.infra.probes import PostgresProbe, QdrantProbe
 from app.infra.qdrant_search import IndexProbe, create_qdrant_client, dense_dimension
 from app.infra.query_models import ModelsProbe, QueryModels
 
+# Settings, the inference pool, and the query-embedding pool (None: the inference pool).
+ModelsFactory = Callable[[Settings, Executor, Executor | None], QueryModels]
+
 
 @dataclass(frozen=True)
 class Infrastructure:
@@ -45,7 +48,7 @@ async def open_infrastructure(  # noqa: PLR0913 - settings plus keyword-only fac
     *,
     engine_factory: Callable[[Settings], AsyncEngine] = create_engine,
     http_client_factory: Callable[[Settings], httpx.AsyncClient] = create_qdrant_http_client,
-    models_factory: Callable[[Settings, Executor], QueryModels] = QueryModels.from_settings,
+    models_factory: ModelsFactory = QueryModels.from_settings,
     cpu_allowance_factory: Callable[[], CpuAllowance] = cpu_allowance,
     qdrant_client_factory: Callable[[Settings], AsyncQdrantClient] = create_qdrant_client,
 ) -> AsyncIterator[Infrastructure]:
@@ -63,10 +66,18 @@ async def open_infrastructure(  # noqa: PLR0913 - settings plus keyword-only fac
         executor = create_inference_executor(settings.inference_workers)
         # A model build in progress cannot be interrupted; do not wait for it on exit.
         stack.callback(executor.shutdown, wait=False, cancel_futures=True)
+        embed_executor = None
+        if settings.inference_embed_workers > 0:
+            embed_executor = create_inference_executor(
+                settings.inference_embed_workers, "embedding"
+            )
+            stack.callback(embed_executor.shutdown, wait=False, cancel_futures=True)
         warn_if_oversubscribed(
-            settings.inference_workers, settings.inference_onnx_threads, cpu_allowance_factory()
+            settings.inference_workers + settings.inference_embed_workers,
+            settings.inference_onnx_threads,
+            cpu_allowance_factory(),
         )
-        models = models_factory(settings, executor)
+        models = models_factory(settings, executor, embed_executor)
         qdrant = qdrant_client_factory(settings)
         stack.push_async_callback(qdrant.close)
         index_probe = IndexProbe(

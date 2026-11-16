@@ -374,6 +374,7 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `RERANKER_MODEL` | `Xenova/ms-marco-MiniLM-L-6-v2` | fastembed cross-encoder; must be pinned in `models.toml`. |
 | `INFERENCE_WORKERS` | `2` | Threads that run embedding and reranking for requests. |
 | `INFERENCE_ONNX_THREADS` | `2` | ONNX intra-op threads per model call; workers times threads should fit the container's CPUs. |
+| `INFERENCE_EMBED_WORKERS` | `0` | Threads of a separate pool for query embeddings, so they do not wait behind reranks; 0 runs them on the inference pool. |
 | `QDRANT_SEARCH_TIMEOUT_SECONDS` | `2.0` | Deadline for one Qdrant search. |
 | `QUERY_MAX_CHARS` | `1000` | Longest accepted question, in characters. |
 | `RATE_LIMIT_CONVERSATIONS_PER_MINUTE` | `120` | Conversation create, list, read and delete calls per client ID per minute. |

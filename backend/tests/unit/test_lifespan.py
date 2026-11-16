@@ -68,6 +68,7 @@ class Factories:
         self.source = source or FakeSource()
         self.models: QueryModels | None = None
         self.executor: Executor | None = None
+        self.embed_executor: Executor | None = None
         self.qdrant = SpyQdrant()
 
     def qdrant_factory(self, _: Settings) -> AsyncQdrantClient:
@@ -82,9 +83,11 @@ class Factories:
         self.client = httpx.AsyncClient()
         return self.client
 
-    def models_factory(self, _: Settings, executor: Executor) -> QueryModels:
+    def models_factory(
+        self, _: Settings, executor: Executor, embed_executor: Executor | None
+    ) -> QueryModels:
         builds = Builds()
-        self.executor = executor
+        self.executor, self.embed_executor = executor, embed_executor
         self.models = QueryModels(
             self.source,
             ModelNames("demo/dense", "demo/bm25", "demo/rerank-a"),
@@ -218,6 +221,83 @@ async def test_more_inference_threads_than_cpus_is_logged_at_startup(
     with caplog.at_level(logging.WARNING, logger="app.infra.inference"):
         async with open_infrastructure(
             make_settings(inference_workers=2, inference_onnx_threads=2),
+            engine_factory=factories.engine_factory,
+            http_client_factory=factories.http_client_factory,
+            models_factory=factories.models_factory,
+            qdrant_client_factory=factories.qdrant_factory,
+            cpu_allowance_factory=lambda: within(2),
+        ):
+            pass
+
+    assert [r.__dict__["inference_threads"] for r in caplog.records] == [4]
+
+
+async def test_query_embeddings_share_the_inference_pool_by_default(
+    make_settings: SettingsFactory,
+) -> None:
+    factories = Factories()
+
+    async with open_infrastructure(
+        make_settings(),
+        engine_factory=factories.engine_factory,
+        http_client_factory=factories.http_client_factory,
+        models_factory=factories.models_factory,
+        qdrant_client_factory=factories.qdrant_factory,
+        cpu_allowance_factory=lambda: within(8),
+    ):
+        assert factories.embed_executor is None
+
+
+async def test_a_dedicated_embedding_pool_is_sized_by_its_setting_and_shut_down(
+    make_settings: SettingsFactory,
+) -> None:
+    factories = Factories()
+
+    async with open_infrastructure(
+        make_settings(inference_embed_workers=1),
+        engine_factory=factories.engine_factory,
+        http_client_factory=factories.http_client_factory,
+        models_factory=factories.models_factory,
+        qdrant_client_factory=factories.qdrant_factory,
+        cpu_allowance_factory=lambda: within(8),
+    ):
+        pool = factories.embed_executor
+        assert isinstance(pool, ThreadPoolExecutor)
+        assert pool is not factories.executor
+        assert pool._max_workers == 1
+        assert pool._thread_name_prefix == "embedding"
+        assert not is_shut_down(pool)
+
+    assert is_shut_down(pool)
+
+
+async def test_the_embedding_pool_is_shut_down_when_a_later_startup_step_fails(
+    make_settings: SettingsFactory,
+) -> None:
+    factories = Factories()
+
+    with pytest.raises(LookupError):
+        async with open_infrastructure(
+            make_settings(inference_embed_workers=2),
+            engine_factory=factories.engine_factory,
+            http_client_factory=factories.http_client_factory,
+            models_factory=factories.models_factory,
+            qdrant_client_factory=factories.qdrant_factory,
+            cpu_allowance_factory=lambda: within(8),
+        ):
+            raise LookupError
+
+    assert is_shut_down(factories.embed_executor)
+
+
+async def test_the_embedding_pool_threads_count_toward_the_cpu_warning(
+    make_settings: SettingsFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    factories = Factories()
+
+    with caplog.at_level(logging.WARNING, logger="app.infra.inference"):
+        async with open_infrastructure(
+            make_settings(inference_workers=1, inference_onnx_threads=2, inference_embed_workers=1),
             engine_factory=factories.engine_factory,
             http_client_factory=factories.http_client_factory,
             models_factory=factories.models_factory,

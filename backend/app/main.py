@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from concurrent.futures import Executor
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import NoReturn
@@ -26,7 +25,7 @@ from app.domain.chat_store import ChatStore
 from app.domain.llm import LLMProvider
 from app.domain.retrieval import ProductName
 from app.infra.chat_store import SqlChatStore
-from app.infra.lifecycle import Infrastructure, open_infrastructure
+from app.infra.lifecycle import Infrastructure, ModelsFactory, open_infrastructure
 from app.infra.llm_anthropic import AnthropicProvider, anthropic_config_from_settings
 from app.infra.llm_stub import StubProvider
 from app.infra.manifest_repository import SqlManifestStore
@@ -38,8 +37,6 @@ from app.services.chat import ChatService, chat_config_from_settings
 from app.services.retention import purge_expired, purge_periodically
 from app.services.retrieval import RetrievalService, config_from_settings, product_names
 from app.services.rewrite import QueryRewriter, rewrite_config_from_settings
-
-ModelsFactory = Callable[[Settings, Executor], QueryModels]
 
 _logger = logging.getLogger(__name__)
 

@@ -15,6 +15,7 @@ from app.core.middleware import REQUEST_ID_HEADER, resolve_request_id
 from app.core.settings import Settings
 from app.domain.ingestion import PageRange
 from app.domain.retrieval import ModelsNotReadyError, RetrievalUnavailableError
+from app.infra.lifecycle import ModelsFactory
 from app.infra.query_models import ModelNames, QueryModels
 from app.main import create_app
 from app.services.retrieval import RetrievalService
@@ -449,8 +450,8 @@ async def test_an_invalid_client_id_is_never_echoed_or_logged(
 # ------------------------------------------------------------------ wiring
 
 
-def fake_models(source: FakeSource) -> Callable[[Settings, Executor], QueryModels]:
-    def factory(_: Settings, executor: Executor) -> QueryModels:
+def fake_models(source: FakeSource) -> ModelsFactory:
+    def factory(_: Settings, executor: Executor, __: Executor | None) -> QueryModels:
         builds = Builds()
         return QueryModels(
             source,

@@ -95,22 +95,27 @@ class QueryModels:
         self._warm_up_batch = [WARM_UP_DOCUMENT] * warm_up_candidates
 
     @classmethod
-    def from_settings(
+    def from_settings(  # noqa: PLR0913 - settings, two pools, three injectable collaborators
         cls,
         settings: Settings,
         executor: Executor,
+        embed_executor: Executor | None = None,
         *,
         source: ModelSource | None = None,
         embedder_factory: EmbedderFactory = FastembedEmbedder.for_queries,
         reranker_factory: RerankerFactory = FastembedReranker.from_settings,
     ) -> Self:
-        """The API's models: pinned files from the baked store, no downloads."""
+        """The API's models: pinned files from the baked store, no downloads.
+
+        With `embed_executor`, query embeddings run there and only reranks use
+        `executor`, so a question's embedding does not queue behind other reranks.
+        """
         store = source or PinnedModelSource(
             load_pins(), settings.embedding_cache_dir, _NoDownloads()
         )
 
         def embedder(dense: VerifiedModel, sparse: VerifiedModel) -> QueryEmbedder:
-            return embedder_factory(settings, dense, sparse, executor)
+            return embedder_factory(settings, dense, sparse, embed_executor or executor)
 
         def reranker(model: VerifiedModel) -> Reranker:
             return reranker_factory(settings, model, executor)

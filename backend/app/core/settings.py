@@ -260,6 +260,13 @@ class Settings(BaseSettings):
         description="ONNX intra-op threads per model call; workers times threads should "
         "fit the container's CPUs.",
     )
+    inference_embed_workers: int = Field(
+        default=0,
+        ge=0,
+        le=32,
+        description="Threads of a separate pool for query embeddings, so they do not wait "
+        "behind reranks; 0 runs them on the inference pool.",
+    )
     qdrant_search_timeout_seconds: float = Field(
         default=2.0, gt=0, le=30, description="Deadline for one Qdrant search."
     )
