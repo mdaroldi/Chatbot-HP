@@ -14,6 +14,7 @@ from hpdocs_load.report import (
     GENERATOR_SATURATED_PERCENT,
     MAX_PAGEOUTS_PER_MINUTE,
     MAX_RUN_SWAP_GROWTH_BYTES,
+    MAX_SAMPLE_GAP_SECONDS,
     MIN_WINDOW_SECONDS,
     Bound,
     Slo,
@@ -359,6 +360,7 @@ def test_page_outs_are_a_rate_over_the_window_and_the_limit_is_inclusive() -> No
     samples = [
         sample(150.0, "generator"),
         host(120.0, swap=100 * _MIB, pageouts=1000),
+        *(host(120.0 + s, swap=100 * _MIB, pageouts=1000) for s in range(10, 120, 10)),
         host(240.0, swap=160 * _MIB, pageouts=1000 + 2 * limit),  # two minutes later
         host(400.0, pageouts=10**9),  # after the window: ignored
     ]
@@ -422,6 +424,54 @@ def test_a_run_whose_swap_grew_too_much_does_not_count() -> None:
 
 def test_no_host_samples_give_no_span() -> None:
     assert host_span([sample(1.0, "generator")]) is None
+
+
+# ---------------------------------------------------------------- sleep or stall
+
+
+def test_a_gap_between_host_samples_beyond_the_limit_voids_the_step() -> None:
+    gap = MAX_SAMPLE_GAP_SECONDS
+    steady = [sample(150.0, "generator"), host(120.0), host(127.0), host(127.0 + gap)]
+    stalled = [sample(150.0, "generator"), host(120.0), host(120.0 + gap + 0.1)]
+
+    (ok,) = build_rows(meta(WINDOW), [message(150.0)], steady, [])
+    (bad,) = build_rows(meta(WINDOW), [message(150.0)], stalled, [])
+
+    assert ok.max_sample_gap_seconds == gap
+    assert ok.sampling_ok
+    assert ok.counts
+    assert bad.max_sample_gap_seconds == pytest.approx(gap + 0.1)
+    assert not bad.sampling_ok
+    assert not bad.counts
+    assert "no (stall)" in render([bad], SLO)
+
+
+def test_a_single_host_sample_has_no_gap() -> None:
+    (row,) = build_rows(meta(WINDOW), [message(150.0)], [host(150.0)], [])
+
+    assert row.max_sample_gap_seconds is None
+    assert row.sampling_ok
+
+
+def test_the_report_names_a_sleep_or_stall_anywhere_in_the_run() -> None:
+    span = host_span([host(10.0), host(17.0), host(60.0)])  # e.g. during warm-up
+
+    assert span is not None
+    assert span.max_gap_seconds == 43.0
+
+    text = render(rows_for(message(150.0)), SLO, span)
+
+    assert "largest sampler gap 43 s" in text
+    assert "Sleep or stall" in text
+
+
+def test_a_steady_run_has_no_stall_warning() -> None:
+    span = host_span([host(10.0), host(17.0)])
+
+    text = render(rows_for(message(150.0)), SLO, span)
+
+    assert "largest sampler gap 7 s" in text
+    assert "Sleep or stall" not in text
 
 
 def test_render_states_the_host_at_start_and_end() -> None:

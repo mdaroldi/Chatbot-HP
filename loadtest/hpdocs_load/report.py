@@ -4,7 +4,9 @@ One row per step, judged on the whole measured window (per-minute values are sta
 evidence, not the verdict). A step counts when its window is at least 3 minutes (rule 2),
 the generator never reached Locust's own CPU warning level (rule 10) and the host did not
 page out more than a few thousand pages a minute (the 8 GB host may start with residual
-swap). A run whose swap grew by more than 500 MiB does not count at all.
+swap). A run whose swap grew by more than 500 MiB does not count at all. A gap of more
+than 15 s between host samples (taken every 5 s) means the host slept or stalled: that
+step does not count, and the report names the largest gap of the run.
 
 First questions and follow-ups are two SLO classes: a follow-up is rewritten into a
 standalone query before retrieval, which adds its own wait. Each class has its own p95
@@ -16,6 +18,7 @@ that met the SLO.
 """
 
 import argparse
+import itertools
 import json
 import pathlib
 import re
@@ -32,6 +35,7 @@ GENERATOR_SATURATED_PERCENT = 90.0  # Locust warns at 90% CPU
 MIN_WINDOW_SECONDS = 180.0
 MAX_PAGEOUTS_PER_MINUTE = 3000.0  # "a few thousand", about 47 MiB/min at 16 KiB pages
 MAX_RUN_SWAP_GROWTH_BYTES = 500 * 1024**2
+MAX_SAMPLE_GAP_SECONDS = 15.0  # sampled every 5 s; one docker stats call takes about 2 s
 DEFAULT_SLO = pathlib.Path(__file__).resolve().parents[1] / "SLO.md"
 _CONTAINERS = {"backend": "backend", "postgres": "postgres", "qdrant": "qdrant"}
 _TOML_BLOCK = re.compile(r"```toml\n(.*?)```", re.DOTALL)
@@ -101,6 +105,7 @@ class StepRow:
     swap_max_bytes: float | None
     swap_growth_bytes: float | None
     pageouts_per_minute: float | None
+    max_sample_gap_seconds: float | None
     stage_p50_p95: dict[str, tuple[float | None, float | None]]
 
     @property
@@ -118,12 +123,18 @@ class StepRow:
         return rate is None or rate <= MAX_PAGEOUTS_PER_MINUTE
 
     @property
+    def sampling_ok(self) -> bool:
+        gap = self.max_sample_gap_seconds
+        return gap is None or gap <= MAX_SAMPLE_GAP_SECONDS
+
+    @property
     def counts(self) -> bool:
         return (
             self.long_enough
             and self.generator_ok
             and self.generator_cpu_max is not None
             and self.memory_ok
+            and self.sampling_ok
         )
 
     def slo_met(self, slo: Slo) -> bool:
@@ -163,6 +174,11 @@ def _paging(host: Sequence[Sample]) -> tuple[float | None, float | None]:
     growth = float(last["swap_used_bytes"]) - float(first["swap_used_bytes"])  # type: ignore[arg-type]
     paged = float(last["pageouts"]) - float(first["pageouts"])  # type: ignore[arg-type]
     return growth, paged / minutes
+
+
+def _max_gap(host: Sequence[Sample]) -> float | None:
+    times = _numbers(host, "at")
+    return _max([later - earlier for earlier, later in itertools.pairwise(times)])
 
 
 def _stages(rows: list[StageRow]) -> dict[str, tuple[float | None, float | None]]:
@@ -218,6 +234,7 @@ def _row(
         swap_max_bytes=_max(_numbers(host, "swap_used_bytes")),
         swap_growth_bytes=swap_growth,
         pageouts_per_minute=pageouts_per_minute,
+        max_sample_gap_seconds=_max_gap(host),
         stage_p50_p95=_stages([r for r in stages if start < r.at <= end]),
     )
 
@@ -243,6 +260,7 @@ class HostSpan:
     mem_percent_end: float
     pageins: float
     pageouts: float
+    max_gap_seconds: float | None
 
     @property
     def counts(self) -> bool:
@@ -267,6 +285,7 @@ def host_span(samples: Iterable[Sample]) -> HostSpan | None:
         mem_percent_end=float(last["mem_percent"]),  # type: ignore[arg-type]
         pageins=delta("pageins"),
         pageouts=delta("pageouts"),
+        max_gap_seconds=_max_gap(host),
     )
 
 
@@ -298,6 +317,8 @@ def _counts(row: StepRow) -> str:
         return "no (short)"
     if not row.memory_ok:
         return "no (memory)"
+    if not row.sampling_ok:
+        return "no (stall)"
     return "yes" if row.counts else "no (generator)"
 
 
@@ -350,7 +371,8 @@ def _host_line(span: HostSpan) -> str:
         f"Host: swap {span.swap_start_bytes / _MIB:.0f} -> {span.swap_end_bytes / _MIB:.0f} MiB "
         f"(peak growth {span.swap_growth_bytes / _MIB:.0f} MiB), memory used "
         f"{span.mem_percent_start:.0f}% -> {span.mem_percent_end:.0f}%, "
-        f"page-ins +{span.pageins:.0f}, page-outs +{span.pageouts:.0f}."
+        f"page-ins +{span.pageins:.0f}, page-outs +{span.pageouts:.0f}, "
+        f"largest sampler gap {_num(span.max_gap_seconds)} s."
     )
 
 
@@ -359,6 +381,12 @@ def render(rows: Sequence[StepRow], slo: Slo | None, span: HostSpan | None = Non
     lines = [_HEADER, separator, *(_line(r, slo) for r in rows), ""]
     if span is not None:
         lines.append(_host_line(span))
+    gap = None if span is None else span.max_gap_seconds
+    if gap is not None and gap > MAX_SAMPLE_GAP_SECONDS:
+        lines.append(
+            f"Sleep or stall: a {gap:.0f} s gap between host samples "
+            f"(limit {MAX_SAMPLE_GAP_SECONDS:.0f} s); check pmset -g log for this run."
+        )
     if span is not None and not span.counts:
         lines.append(
             f"Run does not count: swap grew by {span.swap_growth_bytes / _MIB:.0f} MiB "
