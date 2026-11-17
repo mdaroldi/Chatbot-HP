@@ -90,6 +90,12 @@ Compose refuses to start without `POSTGRES_PASSWORD`. Only the API and the front
 are published, on `127.0.0.1` by default. On a remote VM set `BIND_ADDRESS=0.0.0.0`
 in `.env` to reach them from outside, and restrict access with the VM's firewall.
 
+`docker-compose.yml` names the project `hpdocs`, so a second copy of the repository on
+the same machine shares the first copy's volumes and ports. To run a second copy, stop
+the first, or start it with `docker compose -p <other-name>` (separate volumes; the
+published ports still clash unless the first copy is stopped). Never run `down -v` in a
+copy whose volumes you want to keep.
+
 **The first `up` needs network access and takes a minute or more:** the image build
 downloads the pinned models from the Hugging Face hub (about 150 MB, verified file by
 file; ADR 0008), and `ingest` downloads the two manuals from HP, then builds the index.
