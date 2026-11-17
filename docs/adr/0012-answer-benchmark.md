@@ -191,3 +191,48 @@ next steps, by item id:
 - `make eval-answers`, `eval-judge`, `eval-report` and `eval-summary` reproduce any row
   within the budget; `make eval` runs the reference once. The answers differ run to run,
   so a rerun matches within the noise floor, not exactly.
+
+## Update (Phase 7, 2026-11-17): earlier turns of multi-turn items
+
+The text above is kept as written. The Phase 7 demo check found a false refusal that the
+benchmark did not show.
+
+- **Scoring rule.** A multi-turn item is scored on its final turn only. The harness
+  replays the earlier turns as real turns; a refused earlier turn stays in the history, as
+  it would for a user, and is counted per item as `setup_refused` in the run's
+  `results.jsonl`. No report or summary shows that count. The multi-turn figures above
+  (10/10 for the reference, 7/10 with rewrite off) are therefore final-turn scores, not
+  per-turn scores.
+- **The case: mt-006.** Turn 2, "Is there anything dangerous I should avoid doing to
+  it?", was refused at layer 1 (`below_threshold`) in both real runs with rewrite on that
+  asked it: reference-1 (top rerank score -7.16 against the -6.54 threshold, a 1,234 ms
+  rewrite call that returned no query) and the Phase 7 demo check
+  (`rewrite_fallback=incomplete`, a 1,007 ms rewrite call). The rewrite did not produce a
+  standalone query, so retrieval searched for the raw follow-up and found nothing above
+  the threshold. The item still passed, because its third turn is the one scored. Its
+  `setup_refused` is 1 in reference-1 (and in rewrite-off, where it is expected); no other
+  item in any stored run has a refused earlier turn. Why the rewrite stopped early is not
+  known: the stop reason was not logged. `88dcd05` now logs it, as a code only.
+- **Fallback counts, from the stored run records only (no new calls).** For an earlier
+  turn, the fallback code is not stored; a fallback shows as a rewrite time with no
+  rewritten query. The code is stored for final turns, in the `done` flags.
+
+  | run | multi-turn items | follow-up turns with a rewrite call | fallbacks, by code |
+  |---|---|---|---|
+  | reference-1 (dev) | 10 | 10 | 2: mt-006 turn 2 of 3 (earlier turn, code not stored; `incomplete` in the demo check), mt-008 turn 2 of 2 (`invalid_output`) |
+  | held-out | 3 | 3 | 0 |
+
+  mt-008's fallback was on the scored turn: it answered from the raw question and passed,
+  so it is already in the figures above. One more follow-up turn, mt-001 turn 2, made no
+  rewrite call. Its previous answer (1,190 output tokens) was over the rewrite history
+  budget (`CHAT_REWRITE_HISTORY_TOKENS=1000`), so the question went to retrieval as
+  written. It answered and passed. The other dev runs (reference-2, reference-3 and the
+  ablation rows except rewrite-off) did not include the multi-turn slice.
+- **Next steps.** (1) Report per-turn outcomes and `setup_refused` in the run report and
+  the summary, so an earlier-turn refusal is visible. (2) With the stop reason now logged,
+  find out why the mt-006 rewrite stops early. Possible causes are the 100-token limit
+  (`LLM_REWRITE_MAX_TOKENS`) or a provider refusal. Raising the limit or changing the
+  rewrite was out of Phase 7 scope: it changes a setting these runs depend on, so the
+  reference runs would have to be redone. (3) A follow-up after a long answer goes to
+  retrieval unrewritten (mt-001). A budget that keeps the question and a trimmed answer
+  would cover it.
