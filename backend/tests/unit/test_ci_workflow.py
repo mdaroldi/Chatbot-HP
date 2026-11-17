@@ -156,12 +156,111 @@ def test_the_corpus_job_turns_third_party_telemetry_off(corpus_job: dict[str, An
     assert {k: corpus_job.get("env", {}).get(k) for k in TELEMETRY_OFF} == TELEMETRY_OFF
 
 
-def test_ci_needs_no_env_file_and_builds_images_without_compose() -> None:
+@pytest.fixture(scope="module")
+def stack_job() -> dict[str, Any]:
+    candidates = [
+        job
+        for job in jobs(CI).values()
+        if any(step.get("run") == "make test-log-audit" for step in job["steps"])
+    ]
+    assert len(candidates) == 1, "exactly one job runs the stack log audit"
+    return candidates[0]
+
+
+def step_text(step: Step) -> str:
+    return str(step.get("run", ""))
+
+
+def test_only_the_stack_job_writes_an_env_file_and_no_job_builds_with_compose(
+    stack_job: dict[str, Any],
+) -> None:
+    other_jobs = [job for job in jobs(CI).values() if job != stack_job]
+    other_text = yaml.safe_dump(other_jobs)
     text = "\n".join(path.read_text() for path in WORKFLOWS)
 
-    assert "make images" in text
-    assert ".env" not in text
+    assert other_jobs
+    assert ".env" not in other_text
+    assert "make images" in other_text
+    assert "make images" in yaml.safe_dump(stack_job)
     assert "compose build" not in text
+    assert "--build" not in text
+
+
+def env_step(stack_job: dict[str, Any]) -> Step:
+    steps: list[Step] = stack_job["steps"]
+    return steps[index(steps, lambda s: "> .env" in step_text(s))]
+
+
+def test_the_stack_env_comes_from_the_example_with_the_stub_and_no_key(
+    stack_job: dict[str, Any],
+) -> None:
+    script = step_text(env_step(stack_job))
+
+    assert ".env.example" in script
+    assert "LLM_PROVIDER=stub" in script
+    assert re.search(r"ANTHROPIC_API_KEY=(\s|$|/)", script)
+    assert re.search(r"LLM_STUB_TOKEN_DELAY_MS=[1-9]", script)
+    assert "secrets." not in yaml.safe_dump(stack_job)
+
+
+def test_the_stack_password_is_generated_and_masked_before_anything_can_print_it(
+    stack_job: dict[str, Any],
+) -> None:
+    lines = [ln.strip() for ln in step_text(env_step(stack_job)).splitlines() if ln.strip()]
+    generate = [i for i, ln in enumerate(lines) if ln.startswith("password=")]
+    mask = [i for i, ln in enumerate(lines) if ln.startswith('echo "::add-mask::${password}"')]
+
+    assert len(generate) == 1
+    assert "openssl rand" in lines[generate[0]]
+    assert mask == [generate[0] + 1]
+    assert "set -x" not in step_text(env_step(stack_job))
+    assert "change-me" not in step_text(env_step(stack_job)).split("s/^POSTGRES_PASSWORD=")[-1]
+
+
+def test_no_stack_step_prints_the_env_file(stack_job: dict[str, Any]) -> None:
+    for step in stack_job["steps"]:
+        script = step_text(step)
+        assert not re.search(r"\b(cat|less|more|head|tail)\b[^\n|]*\.env\b", script)
+        assert "docker compose config" not in script
+        assert "printenv" not in script
+
+
+def test_the_stack_job_runs_the_contract_tests_then_the_audit_in_order(
+    stack_job: dict[str, Any],
+) -> None:
+    steps: list[Step] = stack_job["steps"]
+    order = [
+        index(steps, lambda s: step_text(s) == "make images"),
+        index(steps, lambda s: "> .env" in step_text(s)),
+        index(steps, lambda s: step_text(s) == "docker compose up --detach --wait"),
+        index(steps, lambda s: step_text(s) == "make test-ui-int"),
+        index(steps, lambda s: step_text(s) == "make test-eval-int"),
+        index(steps, lambda s: step_text(s) == "make test-log-audit"),
+    ]
+
+    assert order == sorted(order)
+    assert {"if", "continue-on-error"} & set(stack_job) == set()
+    assert [s for s in steps if "continue-on-error" in s] == []
+
+
+def test_container_logs_are_dumped_on_failure_only_if_the_audit_did_not_fail(
+    stack_job: dict[str, Any],
+) -> None:
+    steps: list[Step] = stack_job["steps"]
+    audit = steps[index(steps, lambda s: step_text(s) == "make test-log-audit")]
+    dump = index(steps, lambda s: "docker compose logs" in step_text(s))
+
+    assert steps[dump]["if"] == f"failure() && steps.{audit['id']}.outcome != 'failure'"
+    assert dump > steps.index(audit)
+
+
+def test_the_stack_is_always_torn_down_with_its_volumes_last(
+    stack_job: dict[str, Any],
+) -> None:
+    steps: list[Step] = stack_job["steps"]
+
+    assert step_text(steps[-1]) == "docker compose down --volumes"
+    assert steps[-1]["if"] == "always()"
 
 
 def pytest_commands() -> list[str]:

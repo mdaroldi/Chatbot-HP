@@ -91,8 +91,9 @@ make lint         # ruff check + ruff format --check
 make typecheck    # mypy --strict
 make test         # unit tests with coverage gate (branch coverage, fail under 90)
 make test-int     # integration, corpus and model tests (needs Docker)
-make test-ui-int  # UI integration tests against the running stub stack (local only)
-make test-eval-int  # answer harness end to end on the stub provider (local only, no key)
+make test-ui-int  # UI integration tests against the running stub stack (also CI's stack job)
+make test-eval-int  # answer harness end to end on the stub provider (no key; also CI's stack job)
+make test-log-audit  # stack log audit: canaries through every chat path, then every container's logs
 make fetch-test-assets  # download and verify the HP manuals and models for test-int (CI step)
 make models       # download and verify every pinned model into backend/models (model tests)
 make security     # bandit, pip-audit, gitleaks
@@ -186,7 +187,9 @@ Rules:
   dependencies through lock files. Do not adopt a release in its first 5 days
   (matches the Dependabot cooldown), except for security fixes.
 - Relax container hardening only after showing it breaks, and document why.
-- CI must not need .env: build images with `docker build`, not `docker compose build`.
+- CI builds images with `docker build`, never `docker compose build`. Image builds,
+  unit and integration jobs need no .env; only the stack job writes one, from
+  .env.example, with the stub provider, no key and a generated, masked Postgres password.
 - Integration tests fail, never skip, when their services are missing.
 - Set the author identity repo-locally; never rely on the global git config.
 

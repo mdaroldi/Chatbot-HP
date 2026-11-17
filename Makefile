@@ -82,11 +82,11 @@ test-int: ## Integration tests (real Postgres and Qdrant, needs Docker), corpus 
 	status=0; (cd $(BACKEND) && uv run --frozen pytest tests/integration tests/corpus tests/embeddings -m "$(TEST_INT_MARKERS)") \
 		|| status=$$?; $(TEST_COMPOSE) down -v; exit $$status
 
-# Local only, not in test-int or CI (ADR 0011): it needs both images built and the
-# index ingested. Start the stub stack first (README, testing); the tests fail when the
-# backend is down and abort before sending anything unless /ready reports the stub.
+# Not in test-int (ADR 0011): it needs both images built and the index ingested, so it
+# runs in CI's stack job. Start the stub stack first (README, testing); the tests fail
+# when the backend is down and abort before sending anything unless /ready reports the stub.
 UI_IT_BACKEND_URL ?= http://127.0.0.1:$${API_PORT:-8000}
-test-ui-int: ## UI integration tests against the running stub stack (local only)
+test-ui-int: ## UI integration tests against the running stub stack (also in CI's stack job)
 	cd $(FRONTEND) && UI_IT_BACKEND_URL="$(UI_IT_BACKEND_URL)" uv run --frozen pytest tests/integration -m integration
 
 # Against the running stub stack, like test-ui-int (and in CI's stack job): a chat
@@ -215,7 +215,7 @@ eval-agreement: ## Judge agreement with the human labels (raw and Cohen's kappa)
 	cd $(BACKEND) && uv run --frozen python -m app.evaluation.answers agreement \
 		--eval-dir ../eval --run $(LABEL_RUN)
 
-# Local only, like test-ui-int: the answer harness end to end on the stub provider, no
+# Like test-ui-int (stub stack; CI's stack job): the answer harness end to end on the stub provider, no
 # key and no spend. The driver pins the stub and the stub matrix's models, so it runs on
 # any .env, and puts the backend back on .env after. Its files (with their own ledger)
 # live in eval/answer-runs/stub/, cleared first. The second call resumes the same run.

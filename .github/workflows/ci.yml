@@ -125,3 +125,47 @@ jobs:
       - run: make images
       - run: make scan-images
       - run: make scan-config
+
+  # The full stack on the stub provider: the contract between the backend, the UI and
+  # the answer harness (ADR 0011), then the stack log audit. It is the one job that
+  # writes a .env, from .env.example: stub provider, no key, and a Postgres password
+  # generated here and masked before any step can print it. The manuals are downloaded
+  # by the ingest service and stay inside its volume, which is removed at the end.
+  stack:
+    name: Full stack (stub LLM), UI and harness contract tests, log audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: make install
+      - run: make images
+      - name: Write .env from .env.example (stub provider, no key, generated password)
+        run: |
+          password="$(openssl rand -hex 24)"
+          echo "::add-mask::${password}"
+          sed -e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${password}/" \
+            -e "s/^LLM_PROVIDER=.*/LLM_PROVIDER=stub/" \
+            -e "s/^ANTHROPIC_API_KEY=.*/ANTHROPIC_API_KEY=/" \
+            -e "s/^LLM_STUB_TOKEN_DELAY_MS=.*/LLM_STUB_TOKEN_DELAY_MS=50/" \
+            .env.example > .env
+          grep -qx 'LLM_PROVIDER=stub' .env
+          grep -qx 'ANTHROPIC_API_KEY=' .env
+      - run: docker compose up --detach --wait
+      - run: make test-ui-int
+      - run: make test-eval-int
+      # A failure prints container, canary id and line count only.
+      - id: log-audit
+        run: make test-log-audit
+      # Raw container logs only when the audit passed or never ran: if it failed, the
+      # lines may hold the canaries' surroundings, and these logs are public.
+      - name: Container logs (failure, audit not failed)
+        if: failure() && steps.log-audit.outcome != 'failure'
+        run: docker compose logs --no-color --timestamps
+      - if: always()
+        run: docker compose down --volumes
