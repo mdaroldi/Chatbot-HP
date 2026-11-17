@@ -1,7 +1,7 @@
 """Behavior of the readiness check across dependency probes."""
 
+import asyncio
 import json
-import time
 
 import pytest
 
@@ -56,13 +56,18 @@ async def test_failing_probe_is_down_unreachable_and_others_still_checked() -> N
 
 
 async def test_hanging_probe_is_down_timeout_after_the_timeout() -> None:
-    started = time.perf_counter()
+    """The probe never answers: the check ends anyway (the outer guard would fail a hang)
+    and not before its timeout, read on the event loop's clock that asyncio.timeout uses.
+    No upper bound on elapsed time: a slow runner may wake the loop late.
+    """
+    loop = asyncio.get_running_loop()
+    started = loop.time()
 
-    report = await check_readiness([FakeProbe("qdrant", hang=True)], timeout_seconds=0.05)
+    async with asyncio.timeout(5):
+        report = await check_readiness([FakeProbe("qdrant", hang=True)], timeout_seconds=0.05)
 
-    elapsed = time.perf_counter() - started
     assert report.results == (ProbeResult("qdrant", ProbeStatus.DOWN, FailureReason.TIMEOUT),)
-    assert 0.05 <= elapsed < 0.5
+    assert loop.time() - started >= 0.05
 
 
 async def test_probe_raising_timeout_itself_is_reported_as_timeout() -> None:
@@ -71,20 +76,33 @@ async def test_probe_raising_timeout_itself_is_reported_as_timeout() -> None:
     assert report.results[0].detail is FailureReason.TIMEOUT
 
 
+class BarrierProbe:
+    """A probe that finishes only once every probe of its group has started."""
+
+    def __init__(self, name: str, barrier: asyncio.Barrier) -> None:
+        self.name = name
+        self._barrier = barrier
+        self.started = False
+
+    async def ping(self) -> dict[str, str] | None:
+        self.started = True
+        await self._barrier.wait()
+        return None
+
+
 async def test_probes_run_concurrently() -> None:
-    probes = [
-        FakeProbe("a", delay_seconds=0.1),
-        FakeProbe("b", delay_seconds=0.1),
-        FakeProbe("c", delay_seconds=0.15),
-    ]
-    started = time.perf_counter()
+    """Structural, not timed: the barrier opens only when all three probes are inside
+    ping() at once, so a sequential check blocks on the first probe and the outer
+    timeout fails the test. A concurrent one passes at once, however slow the runner.
+    """
+    barrier = asyncio.Barrier(3)
+    probes = [BarrierProbe(name, barrier) for name in ("a", "b", "c")]
 
-    report = await check_readiness(probes, TIMEOUT)
+    async with asyncio.timeout(5):
+        report = await check_readiness(probes, timeout_seconds=30)
 
-    elapsed = time.perf_counter() - started
     assert report.ready is True
-    # Sequential would take the sum (0.35 s); concurrent takes about the slowest (0.15 s).
-    assert 0.15 <= elapsed < 0.25
+    assert [probe.started for probe in probes] == [True, True, True]
 
 
 async def test_unexpected_exception_is_down_unreachable_and_logs_only_its_type(
