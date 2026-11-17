@@ -167,3 +167,28 @@ never reach the logs (CLAUDE.md).
   - The UI integration test is not in CI yet.
 - Changing a field the page reads needs the frontend model and the stack test
   updated together.
+
+## Update (Phase 7, 2026-11-17)
+
+The text above is kept as written. Two of its statements no longer hold:
+
+- **The UI integration test runs in CI** (`a2928b3`), in a `stack` job that builds both
+  images with `docker build`, writes `.env` from `.env.example` (stub provider, no key, a
+  generated Postgres password masked before any step can print it), starts the stack
+  and runs `make test-ui-int`, `make test-eval-int` and `make test-log-audit`. On a
+  failure it dumps `docker compose logs` only if the log audit passed or did not run;
+  a failed audit prints only its summary, never raw lines.
+- **CI reaches the HP download hosts.** The integration job downloads and verifies the
+  manuals on every run (`make fetch-test-assets`, "4 downloads verified" in run
+  44063027104 and in run 27), so no separate reachability check was needed.
+
+Job times of CI run 27 (44079454498, commit `6c97d05`, all green):
+
+| Job | Time |
+|---|---|
+| Full stack (stub LLM): UI test 8 passed, answer harness, log audit 4 passed | 3 min 25 s |
+| Integration, corpus and model tests (live HP manuals, verbatim audit) | 2 min 19 s |
+| Unit tests (coverage gate) | 1 min 31 s |
+| Docker images (build and Trivy) | 1 min 11 s |
+| Lint and typecheck | 58 s |
+| Security (bandit, pip-audit, gitleaks) | 28 s |

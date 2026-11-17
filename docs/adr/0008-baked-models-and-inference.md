@@ -269,3 +269,25 @@ each, then one start after a forced index build.
   warm-up done) and each step has a warm-up window, so cold versus warm does not
   affect the capacity numbers. The 10.1 s of commit 10c stays unexplained and is
   closed as not reproduced on this hardware.
+
+### Update (Phase 7, 2026-11-17): image sizes
+
+Earlier sizes in this ADR mixed units (MiB from `du`, MB from Docker). From Phase 7 every
+document uses one method, in decimal MB, on images built with `make images` at the
+threat-model commit (Docker 29.1.2, overlayfs, containerd image store):
+
+- **Compressed:** `docker image inspect -f '{{.Size}}' IMAGE` (bytes; with the
+  containerd store this is the compressed content), divided by 10^6.
+- **Unpacked:** `docker run --rm --network none --user 0 --entrypoint du IMAGE -skx /`
+  (KiB, root so no directory is skipped), times 1024, divided by 10^6.
+
+| Image | Unpacked | Compressed |
+|---|---|---|
+| backend | 686 MB (670,104 KiB) | 305 MB (304,727,779 bytes) |
+| frontend | 632 MB (617,416 KiB) | 185 MB (184,611,525 bytes) |
+
+The backend's 686 MB is the image of the "618 MB" row above, rebuilt since, measured in another
+unit (618 MiB is about 648 MB); the remaining 38 MB were added after that row and are not
+broken down here.
+A separate ingest image without the API stack, or an API image without pdfplumber, is a
+next step, not built.

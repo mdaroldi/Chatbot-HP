@@ -68,3 +68,26 @@ cheap to build and easy to verify.
   CVE-2026-85091 (zlib1g), which the pinned base image still ships. Remove it once
   the base digest is bumped past the fixed zlib1g and `make scan-images` passes
   without it.
+
+## Update (Phase 7, 2026-11-17)
+
+The text above is kept as written; this section records where its deferred items stand
+at the end of Phase 7. The security review is in the
+[threat model](../security/threat-model.md).
+
+- **Frontend image:** measured on the Phase 7 builds at 632 MB unpacked and 185 MB
+  compressed (decimal MB; method in
+  [ADR 0008](0008-baked-models-and-inference.md#update-phase-7-2026-11-17-image-sizes)),
+  not "about 830 MB". The cause is unchanged: Streamlit's dependencies.
+- **`apt-get upgrade`:** still needed. The pinned base digest still ships the `+b1`
+  build of `zlib1g`; the fix is in `+deb13u1`. Trivy passes with the upgrade in place.
+- **Next step: `pool_timeout`.** Still not set (SQLAlchemy's 30 s default). In the Phase 6
+  load test the bottleneck was the reranker and Postgres stayed at about 1% CPU
+  ([ADR 0013](0013-load-testing.md)), so it stayed deferred. Add an
+  explicit `POSTGRES_POOL_TIMEOUT_SECONDS`, shorter than the request deadline, before
+  running several replicas.
+- **Next step: an injected clock in the Anthropic adapter.** Two adapter tests check
+  that a deadline fires, against the real clock. After the wall-clock audit that followed a
+  flaky CI run, they were given 1 s of slack (`6c97d05`). A clock passed into the adapter would make them
+  deterministic, like the access-log duration test (`0a3d309`). The adapter was not
+  changed in Phase 7.

@@ -1,18 +1,22 @@
 # HP Docs Chatbot
 
+[![CI](https://github.com/mdaroldi/Chatbot-HP/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mdaroldi/Chatbot-HP/actions/workflows/ci.yml)
+
 A chatbot that answers questions about two public HP documents using
 Retrieval-Augmented Generation (RAG):
 
 - HP ENVY 6000 All-in-One series User Guide
 - OMEN 17.3 inch Gaming Laptop PC Maintenance and Service Guide
 
-> **Status: Phase 6 (load testing) done.** `docker compose up` downloads the two
-> manuals, verifies them against pinned checksums and builds a hybrid (dense + BM25)
+> **Status: Phases 0 to 6 done; Phase 7 (hardening) in progress.**
+> `docker compose up` downloads the two manuals, verifies them against pinned checksums and builds a hybrid (dense + BM25)
 > Qdrant index of them. The API answers questions over SSE with citations, keeps
 > conversations in Postgres and refuses when the manuals do not hold the answer
 > ([Chat](#chat)). The Streamlit page at http://localhost:8501 is the chat
 > ([Chat UI](#chat-ui)). Answer quality is benchmarked ([Answer quality](#answer-quality))
-> and capacity is load tested ([Load testing](#load-testing)); see [Status](#status).
+> and capacity is load tested ([Load testing](#load-testing)); the
+> [threat model](docs/security/threat-model.md) records the security review; see
+> [Status](#status).
 
 ## Architecture
 
@@ -643,11 +647,13 @@ are not redistributed.
   checked once per session, so a failed send in an already open page shows "The chat
   service can't be reached right now." and the copyable question but no Retry until
   the page is reloaded ([ADR 0011](docs/adr/0011-chat-ui.md)).
-- The frontend image is about 830 MB, mostly Streamlit's own dependencies. The
-  backend image carries the ingestion stack (pdfplumber, fastembed, onnxruntime) and
-  the baked models (152 MB): 618 MiB unpacked and 300 MB compressed
-  ([ADR 0008](docs/adr/0008-baked-models-and-inference.md)); a separate ingest image is
-  on the Phase 7 list.
+- **Image sizes** (Phase 7, decimal MB; compressed is `docker image inspect -f
+  '{{.Size}}'`, unpacked is `du -skx /` run as root inside the image): backend 686 MB
+  unpacked, 305 MB compressed; frontend 632 MB unpacked, 185 MB compressed. The
+  backend carries the ingestion stack (pdfplumber, fastembed, onnxruntime) and the
+  baked models; the frontend is mostly Streamlit's own dependencies
+  ([ADR 0008](docs/adr/0008-baked-models-and-inference.md#update-phase-7-2026-11-17-image-sizes)). A separate,
+  smaller ingest image is a next step, not built.
 - **Retrieval latency:** the rerank dominates retrieval time and bounds capacity. With
   the 1 × 4 default it takes about 1.0 s p50 per query on the test laptop, in isolation
   and up to 16 users ([tuning report](loadtest/reports/tuning.md)).
@@ -684,9 +690,8 @@ are not redistributed.
   which one ([ADR 0004](docs/adr/0004-pdf-parsing.md)).
 - A few chunking artifacts are known and kept by design; they are listed in
   [ADR 0005](docs/adr/0005-chunking-v1.md#known-residue-phase-1-commit-10b-review).
-- The Hugging Face hub prints its warning about unauthenticated requests twice
-  during the first download: once as plain text, outside the JSON log format, and
-  once as a JSON log line.
+- The Hugging Face hub prints its warning about unauthenticated requests once during
+  the model download in the image build, as plain text outside the JSON log format.
 - The runtime images run `apt-get upgrade` to pick up two zlib security fixes that
   the pinned base image lacks; it goes away with the next base image bump.
 
@@ -703,7 +708,7 @@ The full list, with the reasoning, is in [ADR 0001](docs/adr/0001-architecture-o
 | 4 | Frontend: Streamlit chat UI with conversations and sources | done |
 | 5 | Benchmark: generation metrics, ablation, report | done |
 | 6 | Load testing: Locust profiles, tuning, capacity report | done |
-| 7 | Hardening: security review, docs, demo script | pending |
+| 7 | Hardening: security review, docs, demo script | in progress |
 
 ## License
 

@@ -212,6 +212,6 @@ Rules:
 | 4 | Frontend: Streamlit chat UI with conversations and sources | done |
 | 5 | Benchmark: generation metrics, ablation, report | done |
 | 6 | Load testing: Locust profiles, tuning, capacity report | done |
-| 7 | Hardening: security review, docs, demo script | pending |
+| 7 | Hardening: security review, docs, demo script | in progress |
 
 Update the status column when a phase is completed.
