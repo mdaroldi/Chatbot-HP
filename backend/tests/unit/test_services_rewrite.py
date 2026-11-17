@@ -253,6 +253,46 @@ async def test_a_rewritten_query_logs_no_rejection_or_lengths(json_logs: LogRead
     assert "output_chars" not in done
 
 
+@pytest.mark.parametrize("stop", [StopReason.MAX_TOKENS, StopReason.REFUSAL, StopReason.OTHER])
+async def test_an_unfinished_rewrite_logs_its_stop_reason_but_never_the_text(
+    stop: StopReason, json_logs: LogReader
+) -> None:
+    provider = FakeProvider((f"query {CANARY}",), stop=stop)
+
+    await rewriter(provider).rewrite(f"follow-up {CANARY}", HISTORY)
+
+    lines = json_logs()
+    assert CANARY not in json.dumps(lines)
+    (done,) = [line for line in lines if line["message"] == "query rewrite"]
+    assert (done["outcome"], done["stop_reason"]) == ("incomplete", stop.value)
+
+
+@pytest.mark.parametrize(
+    ("pieces", "outcome"), [(("remove the fan",), "rewritten"), (("a\nb",), "invalid_output")]
+)
+async def test_a_finished_rewrite_logs_the_end_of_turn_stop(
+    pieces: tuple[str, ...], outcome: str, json_logs: LogReader
+) -> None:
+    await rewriter(FakeProvider(pieces)).rewrite("And the fan?", HISTORY)
+
+    (done,) = [line for line in json_logs() if line["message"] == "query rewrite"]
+    assert (done["outcome"], done["stop_reason"]) == (outcome, "end_turn")
+
+
+async def test_a_rewrite_without_a_stop_logs_no_stop_reason(json_logs: LogReader) -> None:
+    failed = FakeProvider(("x",), error=LLMUnavailableError())
+    stalled = FakeProvider(("never",), stall=True)
+
+    await rewriter(failed).rewrite("And the fan?", HISTORY)
+    await rewriter(stalled, RewriteConfig("m", 60, None, 0.01, BUDGET)).rewrite(
+        "And the fan?", HISTORY
+    )
+
+    done = [line for line in json_logs() if line["message"] == "query rewrite"]
+    assert [line["outcome"] for line in done] == ["llm_error", "timeout"]
+    assert all("stop_reason" not in line for line in done)
+
+
 async def test_other_fallbacks_carry_no_rejection() -> None:
     provider = FakeProvider(("remove the fan",), stop=StopReason.MAX_TOKENS)
 

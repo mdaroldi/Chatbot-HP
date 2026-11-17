@@ -97,13 +97,16 @@ class QueryRewriter:
             effort=self._config.effort,
         )
         start = self._clock()
-        fallback, check = await self._generate(request)
+        fallback, check, stop = await self._generate(request)
         elapsed_ms = (self._clock() - start) * 1000
         extra: dict[str, object] = {
             "outcome": fallback or _REWRITTEN,
             "rewrite_ms": elapsed_ms,
             "history_turns": len(turns),
         }
+        if stop is not None:
+            # The code alone tells max_tokens from a refusal in an incomplete rewrite.
+            extra["stop_reason"] = stop.value
         rejection = None if check is None else check.rejection
         if check is not None and rejection is not None:
             # Sizes only: they tell a label or a second line from an overlong query.
@@ -120,21 +123,24 @@ class QueryRewriter:
 
     async def _generate(
         self, request: GenerationRequest
-    ) -> tuple[RewriteFallback | None, RewriteCheck | None]:
-        """The fallback, if any, and the output check when the model finished its turn."""
+    ) -> tuple[RewriteFallback | None, RewriteCheck | None, StopReason | None]:
+        """The fallback, if any, the output check when the model finished its turn, and
+        the stop reason when the stream ended (none after an error or a timeout).
+        """
         try:
             async with asyncio.timeout(self._config.timeout_seconds):
                 async with self._provider.stream(request) as stream:
                     text = "".join([piece async for piece in stream])
                     stop = stream.stop_reason
         except LLMError:
-            return RewriteFallback.LLM_ERROR, None
+            return RewriteFallback.LLM_ERROR, None, None
         except TimeoutError:
-            return RewriteFallback.TIMEOUT, None
+            return RewriteFallback.TIMEOUT, None, None
         if stop is not StopReason.END_TURN:
-            return RewriteFallback.INCOMPLETE, None
+            return RewriteFallback.INCOMPLETE, None, stop
         check = check_rewrite(text)
-        return (None if check.query is not None else RewriteFallback.INVALID_OUTPUT), check
+        fallback = None if check.query is not None else RewriteFallback.INVALID_OUTPUT
+        return fallback, check, stop
 
 
 def rewrite_config_from_settings(settings: Settings) -> RewriteConfig:
