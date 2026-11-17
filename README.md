@@ -6,12 +6,13 @@ Retrieval-Augmented Generation (RAG):
 - HP ENVY 6000 All-in-One series User Guide
 - OMEN 17.3 inch Gaming Laptop PC Maintenance and Service Guide
 
-> **Status: Phase 4 (chat UI) built.** `docker compose up` downloads the two
+> **Status: Phase 6 (load testing) done.** `docker compose up` downloads the two
 > manuals, verifies them against pinned checksums and builds a hybrid (dense + BM25)
 > Qdrant index of them. The API answers questions over SSE with citations, keeps
 > conversations in Postgres and refuses when the manuals do not hold the answer
 > ([Chat](#chat)). The Streamlit page at http://localhost:8501 is the chat
-> ([Chat UI](#chat-ui)); see [Status](#status).
+> ([Chat UI](#chat-ui)). Answer quality is benchmarked ([Answer quality](#answer-quality))
+> and capacity is load tested ([Load testing](#load-testing)); see [Status](#status).
 
 ## Architecture
 
@@ -324,6 +325,40 @@ The page reloaded while the backend is down, with the Retry button:
 
 ![The message "The chat service can't be reached right now." with a Retry button](docs/img/chat-error.png)
 
+## Load testing
+
+**16 users, 32.9 completed questions per minute (87.9 requests per minute), SLO met,**
+on one backend replica limited to 4 CPUs and 2 GiB, with the stub LLM (Profile A).
+
+- **Unit:** completed questions per minute (streams that reached `done`) at the SLO, on
+  one replica. Requests per minute counts every request the simulated users send:
+  messages plus the conversation calls the UI makes around them.
+- **SLO** ([`loadtest/SLO.md`](loadtest/SLO.md)), fixed from a single-user baseline
+  before any ramp: p95 time to first token and p95 time to `done` at most 2× the
+  single-user value, for first questions (4.14 s and 10.10 s) and follow-ups (9.12 s
+  and 15.16 s) separately, and errors under 1%.
+- **Hardware:** Apple M2 (4 performance + 4 efficiency cores), 8 GB memory, Docker
+  Desktop. **The machine is shared:** Locust runs on the same laptop, and runs started
+  with residual swap. Profile A's time to first token excludes provider latency.
+- **Tuning:** the bottleneck is reranking on the inference pool. Splitting the backend's
+  4 CPUs as 1 worker × 4 ONNX threads instead of 2 × 2 doubled the headline (from
+  8 users and 15.8 questions per minute) with bit-identical retrieval scores.
+- **Rate limits on** ([report](loadtest/reports/rate-limits.md)): a flooding client was
+  held to its quota while 16 normal users got no 429 and no 5xx, but their latency rose
+  past the SLO; a flood limit belongs in front of the API.
+- **Profile B, real LLM** ([report](loadtest/reports/profile-b.md)): one capped run of
+  4 users, 67 questions, 0 errors, at most $0.53 spent. Its results are bounded by
+  provider limits and are not a capacity figure.
+
+```bash
+make load-up                                            # load stack on port 8100 (stub)
+make load-measured LOAD_RUN=my-run LOAD_STEPS=4,8,16    # reset, run, report; void on sleep
+make load-down
+```
+
+How to run and read a report: [loadtest/README.md](loadtest/README.md). Decisions,
+findings and limitations: [ADR 0013](docs/adr/0013-load-testing.md).
+
 ## Configuration
 
 Everything is configured through environment variables (`.env` for Compose).
@@ -438,7 +473,10 @@ A unit test fails if this table, `.env.example` and the `Settings` class disagre
 | `make purge` | Delete conversations older than `CHAT_RETENTION_DAYS` now (needs `make up`); prints the counts |
 | `make eval-retrieval` | Retrieval benchmark against the running stack (`EVAL_ARGS=preflight` or `run ...`; see [eval/README.md](eval/README.md)) |
 | `make eval` | Answer benchmark: the reference run on dev, its report and the summary (billed; `EVAL_PROVIDER=stub` for the free pipeline check; the other `eval-*` targets in [eval/README.md](eval/README.md)) |
-| `make load` | Later phase; prints "not implemented yet" and fails |
+| `make load-up` / `make load-down` | Start or stop the load stack: backend and dependencies only, own project, port 8100 (`LOAD_PROVIDER=anthropic` for Profile B) |
+| `make load-reset` | Same starting state for a load run: clear conversations (index kept), fresh backend, wait for `/ready` |
+| `make load` | Run a load test and print its table (`LOAD_RUN=name LOAD_STEPS=...`; see [loadtest/README.md](loadtest/README.md)) |
+| `make load-measured` | The run that counts: `caffeinate`, `load-reset`, host snapshots, `load`, void on sleep or wake |
 
 ## Repository layout
 
@@ -460,7 +498,7 @@ backend/            FastAPI app (uv project, own lock file)
   tests/embeddings/ the real models (marker `model`)
 frontend/           Streamlit app (uv project, own lock file)
 eval/               golden set, retrieval matrix and benchmark reports (Phase 2), generation metrics (Phase 5)
-loadtest/           placeholder for Phase 6
+loadtest/           Locust load tests (uv project), SLO and capacity reports (Phase 6)
 docs/adr/           architecture decision records
 docker-compose.yml       full stack
 docker-compose.test.yml  throwaway Postgres and Qdrant for integration tests
@@ -606,9 +644,13 @@ are not redistributed.
   the baked models (152 MB): 618 MiB unpacked and 300 MB compressed
   ([ADR 0008](docs/adr/0008-baked-models-and-inference.md)); a separate ingest image is
   on the Phase 7 list.
-- **Retrieval latency:** the rerank takes about 2 s p50 per query on the benchmark
-  laptop, about 97% of retrieval time. Latency decisions are left to the Phase 6 load
-  tests.
+- **Retrieval latency:** the rerank dominates retrieval time and bounds capacity. With
+  the 1 × 4 default it takes about 1.0 s p50 per query on the test laptop, in isolation
+  and up to 16 users ([tuning report](loadtest/reports/tuning.md)).
+- **Load test figures come from one shared 8 GB laptop** with Locust on the same
+  machine, and from the stub LLM; they hold for that hardware and one replica only.
+  Replicas need a reverse proxy, a single migration job and a shared rate-limit store
+  ([ADR 0013](docs/adr/0013-load-testing.md)).
 - **Out-of-scope detection:** the relevance threshold catches unrelated questions but
   not ones close to the manuals' domain (0 of 4 on the dev split); those are left to
   the answer prompt's refusal marker, whose rate Phase 5 measures
@@ -656,7 +698,7 @@ The full list, with the reasoning, is in [ADR 0001](docs/adr/0001-architecture-o
 | 3 | Chat API: LLM gateway, prompt, citations, streaming, history | done |
 | 4 | Frontend: Streamlit chat UI with conversations and sources | done |
 | 5 | Benchmark: generation metrics, ablation, report | done |
-| 6 | Load testing: Locust profiles, tuning, capacity report | pending |
+| 6 | Load testing: Locust profiles, tuning, capacity report | done |
 | 7 | Hardening: security review, docs, demo script | pending |
 
 ## License

@@ -115,6 +115,7 @@ make load-up      # start the load stack (own project, backend + dependencies, l
 make load-reset   # clear load-stack conversations (index kept), fresh backend, wait for /ready
 make load-down    # stop the load stack
 make load         # run the load test
+make load-measured  # the run that counts: caffeinate, load-reset, host snapshots, load, void on sleep
 make check        # lint + typecheck + test + security (run before every commit)
 ```
 
@@ -207,7 +208,7 @@ Rules:
 | 3 | Chat API: LLM gateway, prompt, citations, streaming, history | done |
 | 4 | Frontend: Streamlit chat UI with conversations and sources | done |
 | 5 | Benchmark: generation metrics, ablation, report | done |
-| 6 | Load testing: Locust profiles, tuning, capacity report | pending |
+| 6 | Load testing: Locust profiles, tuning, capacity report | done |
 | 7 | Hardening: security review, docs, demo script | pending |
 
 Update the status column when a phase is completed.
