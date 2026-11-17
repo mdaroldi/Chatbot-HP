@@ -520,6 +520,13 @@ async def test_a_response_that_never_starts_is_a_first_token_timeout() -> None:
     assert_fixed(raised.value, LLMTimeoutError)
 
 
+# Deadlines are what these tests check, so they run on the real clock. Each piece
+# that must arrive in time gets SLACK_SECONDS of margin, about 4x the stall a shared
+# CI runner showed (run 26); a deadline that must fire is never at risk.
+SLACK_SECONDS = 1.0
+GAP_SECONDS = 1.5 * SLACK_SECONDS
+
+
 async def test_after_the_first_token_only_the_total_deadline_applies() -> None:
     """A gap longer than the first-token deadline is fine once text arrived; a stall
     is cut at the total deadline.
@@ -529,14 +536,16 @@ async def test_after_the_first_token_only_the_total_deadline_applies() -> None:
     class SlowThenStall(Body):
         async def __aiter__(self) -> AsyncIterator[bytes]:
             yield first
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(GAP_SECONDS)  # longer than the first-token deadline
             yield sse([text_delta(0, " Late.")])
             await asyncio.Event().wait()
 
     body = SlowThenStall([])
     seen: list[str] = []
     adapter = provider(
-        FakeAPI([ok(body)]), first_token_timeout_seconds=0.1, total_timeout_seconds=0.4
+        FakeAPI([ok(body)]),
+        first_token_timeout_seconds=SLACK_SECONDS,
+        total_timeout_seconds=GAP_SECONDS + SLACK_SECONDS,
     )
     with pytest.raises(LLMError) as raised:
         await consume(adapter, seen)
@@ -552,7 +561,9 @@ async def test_the_deadlines_hold_when_each_piece_is_read_from_another_task() ->
     """
     body = Body([sse([message_start(), block_start(0, TEXT_BLOCK), text_delta(0, "One.")])], 1)
     async with provider(
-        FakeAPI([ok(body)]), first_token_timeout_seconds=0.1, total_timeout_seconds=0.2
+        FakeAPI([ok(body)]),
+        first_token_timeout_seconds=SLACK_SECONDS,
+        total_timeout_seconds=2 * SLACK_SECONDS,
     ).stream(request()) as stream:
         pieces = aiter(stream)
         assert await asyncio.ensure_future(anext(pieces)) == "One."
