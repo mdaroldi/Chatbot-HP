@@ -6,8 +6,9 @@ backend runs Profile B with LLM_MAX_RETRIES=0, so one call is one attempt. A cal
 usage is known only after it ends, so each call is charged its worst case before the
 question is sent: the Phase 5 token bounds at the dated prices (eval/answer-matrix.toml).
 A first question is one answer call; a follow-up adds one rewrite call. A question that
-then fails stays charged. A refused question is not sent, and from then on nothing is:
-the guard tells the run to stop, once.
+then fails stays charged. A refused question is not sent, and from then on nothing is;
+the run's shape then ends the run on Locust's normal stop path (`until_spent`). Calling
+`runner.quit()` from a user instead fires Locust's stop event twice.
 """
 
 from collections.abc import Callable
@@ -46,9 +47,8 @@ class SpendGuard:
     happen as one step.
     """
 
-    def __init__(self, budget: Budget, on_spent: Callable[[], None]) -> None:
+    def __init__(self, budget: Budget) -> None:
         self._budget = budget
-        self._on_spent = on_spent
         self.questions = 0
         self.calls = 0
         self.charged_micro_usd = 0
@@ -64,7 +64,6 @@ class SpendGuard:
             or self.charged_micro_usd + charge > budget.cap_micro_usd
         ):
             self.stopped = True
-            self._on_spent()
             return False
         self.questions += 1
         self.calls += 2 if follow_up else 1
@@ -89,3 +88,8 @@ def admit_all(*, follow_up: bool) -> bool:  # noqa: ARG001 - same signature as a
 def admission(*, enabled: bool, guard: SpendGuard) -> Callable[..., bool]:
     """Profile A (stub) runs unguarded; Profile B never runs without the guard."""
     return guard.admit if enabled else admit_all
+
+
+def until_spent(result: tuple[int, float] | None, guard: SpendGuard) -> tuple[int, float] | None:
+    """The shape's tick: None ends the run, as at the end of the last step."""
+    return None if guard.stopped else result

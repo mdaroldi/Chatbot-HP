@@ -18,7 +18,7 @@ import requests
 from locust import HttpUser, LoadTestShape, constant, events, task
 from locust.env import Environment
 
-from hpdocs_load.budget import PROFILE_B, SpendGuard, admission
+from hpdocs_load.budget import PROFILE_B, SpendGuard, admission, until_spent
 from hpdocs_load.burst import BURST_USERS, burst_questions, shape_users
 from hpdocs_load.client_id import new_client_id
 from hpdocs_load.config import config_from_env
@@ -47,14 +47,8 @@ STATE: dict[str, object] = {}
 # seeds as in a capacity run.
 BURST_CLIENT_ID = new_client_id(random.Random(f"burst-{CONFIG.seed}"))  # noqa: S311 - see SEEDS
 
-
-def _quit_run() -> None:
-    # Spawned: the refused user's own greenlet must not be the one that kills all users.
-    gevent.spawn(STATE["environment"].runner.quit)  # type: ignore[attr-defined]
-
-
 # Profile B (LOAD_BUDGET=1) stops at the $3.00 cap or 90 questions (hpdocs_load.budget).
-GUARD = SpendGuard(PROFILE_B, _quit_run)
+GUARD = SpendGuard(PROFILE_B)
 ADMIT = admission(enabled=CONFIG.budget, guard=GUARD)
 
 
@@ -133,7 +127,7 @@ class Burst(HttpUser):
 class StepShape(LoadTestShape):
     def tick(self) -> tuple[int, float] | None:
         now = self.get_run_time()  # type: ignore[no-untyped-call]  # Locust
-        return shape_users(tick(CONFIG.plan, now), burst=CONFIG.burst)
+        return until_spent(shape_users(tick(CONFIG.plan, now), burst=CONFIG.burst), GUARD)
 
 
 def _sample_forever(files: RunFiles) -> None:
@@ -171,7 +165,6 @@ def _meta(environment: Environment, started_at: float) -> dict[str, object]:
 def _start(environment: Environment, **_: object) -> None:
     files = RunFiles.create(RESULTS, CONFIG.name)
     STATE["files"] = files
-    STATE["environment"] = environment
     STATE["meta"] = _meta(environment, time.time())
     files.write_meta(STATE["meta"])  # type: ignore[arg-type]
     STATE["sampler"] = gevent.spawn(_sample_forever, files)

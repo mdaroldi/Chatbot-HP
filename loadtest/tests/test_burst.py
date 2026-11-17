@@ -109,7 +109,7 @@ def test_normal_users_never_record_into_the_burst_file() -> None:
 def test_the_shape_adds_the_burst_user_only_through_the_config_flag() -> None:
     source = ast.unparse(_class("StepShape"))
 
-    assert "return shape_users(tick(CONFIG.plan, now), burst=CONFIG.burst)" in source
+    assert "shape_users(tick(CONFIG.plan, now), burst=CONFIG.burst)" in source
     assert "now = self.get_run_time()" in source
 
 
