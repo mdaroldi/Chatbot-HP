@@ -81,3 +81,29 @@ def test_stage_rows_round_trip(tmp_path: pathlib.Path) -> None:
         files.add_stages(rows)
 
     assert read_stages(tmp_path / "r" / "stages.jsonl") == rows
+
+
+def test_burst_records_go_to_their_own_file(tmp_path: pathlib.Path) -> None:
+    burst = RequestRecord("message", 2.0, 5.0, 429, None, False, "rate_limited")
+
+    with RunFiles.create(tmp_path, "r") as files:
+        files.add_request(RECORD)
+        files.add_burst_request(burst)
+
+        assert read_records(files.directory / "requests.jsonl") == [RECORD]
+        assert read_records(files.directory / "burst.jsonl") == [burst]
+
+
+def test_a_run_without_a_burst_client_has_an_empty_burst_file(tmp_path: pathlib.Path) -> None:
+    with RunFiles.create(tmp_path, "r") as files:
+        files.add_request(RECORD)
+
+    assert read_records(tmp_path / "r" / "burst.jsonl") == []
+
+
+def test_the_burst_file_closes_with_the_run(tmp_path: pathlib.Path) -> None:
+    files = RunFiles.create(tmp_path, "r")
+    files.close()
+
+    with pytest.raises(ValueError, match="closed"):
+        files.add_burst_request(RECORD)

@@ -18,6 +18,7 @@ import requests
 from locust import HttpUser, LoadTestShape, constant, events, task
 from locust.env import Environment
 
+from hpdocs_load.burst import burst_questions, shape_users
 from hpdocs_load.client_id import new_client_id
 from hpdocs_load.config import config_from_env
 from hpdocs_load.ramp import measured_windows, tick
@@ -25,7 +26,14 @@ from hpdocs_load.run_files import RunFiles
 from hpdocs_load.samplers import HostProbes, run_command, take_samples
 from hpdocs_load.session import Reply, Session, StreamReply
 from hpdocs_load.stages import logs_command, parse_stage_logs
-from hpdocs_load.workload import GOLDEN, load_question_pool, page_open, plan_conversation
+from hpdocs_load.workload import (
+    CREATE,
+    GOLDEN,
+    Action,
+    load_question_pool,
+    page_open,
+    plan_conversation,
+)
 
 CONFIG = config_from_env(os.environ)
 POOL = load_question_pool(GOLDEN)
@@ -89,9 +97,31 @@ class Browser(HttpUser):
         self.session.run(plan_conversation(self.rng, POOL))
 
 
+class Burst(HttpUser):
+    """The rate-limits run's burst client (hpdocs_load.burst): only with LOAD_BURST=1."""
+
+    abstract = not CONFIG.burst
+    fixed_count = 1
+    wait_time = constant(0)
+
+    def on_start(self) -> None:
+        # Its own generator, so the normal users draw the same seeds as in a capacity run.
+        rng = random.Random(f"burst-{CONFIG.seed}")  # noqa: S311 - reproducible, see SEEDS
+        files: RunFiles = STATE["files"]  # type: ignore[assignment]
+        transport = LocustTransport(self, new_client_id(rng))
+        self.session = Session(transport, Clock(), files.add_burst_request)
+        self.questions = burst_questions(POOL)
+        self.session.run((Action(CREATE),))
+
+    @task
+    def ask(self) -> None:
+        self.session.run((next(self.questions),))
+
+
 class StepShape(LoadTestShape):
     def tick(self) -> tuple[int, float] | None:
-        return tick(CONFIG.plan, self.get_run_time())  # type: ignore[no-untyped-call]  # Locust
+        now = self.get_run_time()  # type: ignore[no-untyped-call]  # Locust
+        return shape_users(tick(CONFIG.plan, now), burst=CONFIG.burst)
 
 
 def _sample_forever(files: RunFiles) -> None:
@@ -112,6 +142,7 @@ def _sample_forever(files: RunFiles) -> None:
 def _meta(environment: Environment, started_at: float) -> dict[str, object]:
     return {
         "run": CONFIG.name,
+        "burst": CONFIG.burst,
         "host": environment.host,
         "seed": CONFIG.seed,
         "sample_seconds": CONFIG.sample_seconds,

@@ -15,7 +15,9 @@ _DEFAULTS = {
     "LOAD_STEP_SECONDS": "300",
     "LOAD_WARMUP_SECONDS": "60",
     "LOAD_SPAWN_RATE": "1",
+    "LOAD_BURST": "0",
 }
+_SWITCH = {"0": False, "1": True}
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,8 @@ class RunConfig:
     seed: int
     sample_seconds: float
     plan: StepPlan
+    # The rate-limits run's burst client (hpdocs_load.burst); never on in a capacity run.
+    burst: bool = False
 
 
 def _positive(text: str) -> float:
@@ -31,6 +35,13 @@ def _positive(text: str) -> float:
     if not math.isfinite(value) or value <= 0:
         raise ValueError
     return value
+
+
+def _switch(text: str) -> bool:
+    """Only 0 or 1: a typo must stop the run, not decide whether the burst client runs."""
+    if text not in _SWITCH:
+        raise ValueError
+    return _SWITCH[text]
 
 
 def config_from_env(env: Mapping[str, str]) -> RunConfig:
@@ -55,4 +66,5 @@ def config_from_env(env: Mapping[str, str]) -> RunConfig:
             warmup_seconds=value("LOAD_WARMUP_SECONDS", float),  # StepPlan bounds it
             spawn_rate=value("LOAD_SPAWN_RATE", _positive),
         ),
+        burst=value("LOAD_BURST", _switch),
     )

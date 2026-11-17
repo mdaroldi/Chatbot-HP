@@ -218,6 +218,7 @@ def test_load_needs_a_run_name_and_passes_the_run_settings_on() -> None:
         "LOAD_SPAWN_RATE",
         "LOAD_SEED",
         "LOAD_SAMPLE_SECONDS",
+        "LOAD_BURST",
     ):
         assert f'{name}="$({name})"' in env.split(), name
 

@@ -17,8 +17,10 @@ from hpdocs_load.report import (
     MAX_SAMPLE_GAP_SECONDS,
     MIN_WINDOW_SECONDS,
     Bound,
+    BurstRow,
     Slo,
     build_rows,
+    burst_rows,
     headline,
     host_span,
     main,
@@ -496,3 +498,98 @@ def test_the_module_runs_as_a_script(
         runpy.run_module("hpdocs_load.report", run_name="__main__")
 
     assert exit_.value.code == 0
+
+
+# ---------------------------------------------------------------- rate-limits run
+
+
+def burst_call(end: float, status: int = 429, code: str | None = "rate_limited") -> RequestRecord:
+    return RequestRecord("message", end - 0.005, 5.0, status, None, False, code)
+
+
+def test_burst_rows_count_statuses_and_codes_per_window() -> None:
+    records = [
+        message(150.0),
+        burst_call(160.0),
+        burst_call(170.0),
+        burst_call(180.0, status=503, code="llm_unavailable"),
+        burst_call(400.0),  # after the window
+    ]
+
+    (row,) = burst_rows(meta(WINDOW), records)
+
+    assert row == BurstRow(
+        users=5,
+        minutes=200.0 / 60,
+        requests=4,
+        statuses={200: 1, 429: 2, 503: 1},
+        error_codes={"llm_unavailable": 1, "rate_limited": 2},
+        questions_completed=1,
+    )
+
+
+def test_a_burst_window_without_records_is_all_zero() -> None:
+    (row,) = burst_rows(meta(WINDOW), [])
+
+    assert (row.requests, row.statuses, row.error_codes, row.questions_completed) == (0, {}, {}, 0)
+
+
+def burst_row() -> BurstRow:
+    return BurstRow(5, 4.0, 1200, {200: 40, 429: 1160}, {"rate_limited": 1160}, 40)
+
+
+def test_a_rate_limits_run_has_no_verdict_and_no_capacity_line() -> None:
+    text = render(rows_for(message(150.0)), SLO, burst=[burst_row()])
+
+    assert "Sustained:" not in text
+    assert "no SLO file" not in text
+    assert "| pass |" not in text
+    assert "| fail |" not in text
+    assert "outside the SLO" in text
+
+
+def test_a_rate_limits_run_reports_the_burst_client_per_window() -> None:
+    text = render(rows_for(message(150.0)), SLO, burst=[burst_row()])
+
+    assert "Burst client at 5 users: 1200 requests in 4.0 min (300.0/min)" in text
+    assert "statuses 200: 40, 429: 1160" in text
+    assert "error codes rate_limited: 1160" in text
+    assert "completed questions 40" in text
+
+
+def test_a_burst_window_without_codes_says_none() -> None:
+    quiet = BurstRow(5, 4.0, 0, {}, {}, 0)
+
+    text = render(rows_for(message(150.0)), SLO, burst=[quiet])
+
+    assert "statuses none; error codes none" in text
+
+
+def test_main_reports_the_burst_client_of_a_burst_run(tmp_path: pathlib.Path) -> None:
+    run = tmp_path / "run"
+    write_run(run)
+    (run / "run.json").write_text(json.dumps({**meta(WINDOW), "burst": True}))
+    with (run / "burst.jsonl").open("w") as out:
+        write_record(out, burst_call(160.0))
+    slo = tmp_path / "SLO.md"
+    slo.write_text(SLO_TEXT)
+
+    assert main([str(run), "--slo", str(slo)]) == 0
+
+    text = (run / "report.md").read_text()
+    assert "Burst client at 5 users: 1 requests" in text
+    assert "Sustained:" not in text
+
+
+def test_main_treats_runs_without_the_flag_as_capacity_runs(tmp_path: pathlib.Path) -> None:
+    run = tmp_path / "run"
+    write_run(run)  # run.json written before the burst flag existed
+    (run / "burst.jsonl").write_text("")
+    slo = tmp_path / "SLO.md"
+    slo.write_text(SLO_TEXT)
+
+    assert main([str(run), "--slo", str(slo)]) == 0
+
+    text = (run / "report.md").read_text()
+    assert "Burst client" not in text
+    assert "Sustained:" in text

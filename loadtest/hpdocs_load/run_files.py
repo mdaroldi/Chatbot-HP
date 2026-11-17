@@ -1,6 +1,8 @@
 """One directory per run under the git-ignored results/ (rule 8): run.json, plus
-requests.jsonl and samples.jsonl, flushed per line so a cut run keeps what it measured,
-and stages.jsonl from the backend's logs at the end."""
+requests.jsonl, burst.jsonl and samples.jsonl, flushed per line so a cut run keeps what
+it measured, and stages.jsonl from the backend's logs at the end. The burst client's
+requests (hpdocs_load.burst) have their own file, so the normal users' numbers never
+include them."""
 
 import json
 import pathlib
@@ -19,6 +21,7 @@ class RunFiles:
         self.directory = directory
         self._requests: TextIO = (directory / "requests.jsonl").open("x")
         self._samples: TextIO = (directory / "samples.jsonl").open("x")
+        self._burst: TextIO = (directory / "burst.jsonl").open("x")
 
     @classmethod
     def create(cls, root: pathlib.Path, name: str) -> "RunFiles":
@@ -34,6 +37,10 @@ class RunFiles:
     def add_request(self, record: RequestRecord) -> None:
         write_record(self._requests, record)
         self._requests.flush()
+
+    def add_burst_request(self, record: RequestRecord) -> None:
+        write_record(self._burst, record)
+        self._burst.flush()
 
     def add_samples(self, samples: Iterable[Sample]) -> None:
         for sample in samples:
@@ -59,3 +66,4 @@ class RunFiles:
     def close(self) -> None:
         self._requests.close()
         self._samples.close()
+        self._burst.close()

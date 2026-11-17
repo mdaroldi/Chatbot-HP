@@ -273,8 +273,8 @@ load-down: ## Stop the load stack (its volumes are kept)
 
 # Locust runs on the host (ADR 0013), records into loadtest/results/$(LOAD_RUN) (git-ignored).
 # Unset values reach Locust empty and mean the defaults in hpdocs_load.config.
-LOAD_ENV := LOAD_RUN="$(LOAD_RUN)" LOAD_STEPS="$(LOAD_STEPS)" LOAD_STEP_SECONDS="$(LOAD_STEP_SECONDS)" LOAD_WARMUP_SECONDS="$(LOAD_WARMUP_SECONDS)" LOAD_SPAWN_RATE="$(LOAD_SPAWN_RATE)" LOAD_SEED="$(LOAD_SEED)" LOAD_SAMPLE_SECONDS="$(LOAD_SAMPLE_SECONDS)"
-load: ## Run a load test: LOAD_RUN=name [LOAD_STEPS=1,5,10 LOAD_STEP_SECONDS LOAD_WARMUP_SECONDS LOAD_SPAWN_RATE LOAD_SEED LOAD_SAMPLE_SECONDS]
+LOAD_ENV := LOAD_RUN="$(LOAD_RUN)" LOAD_STEPS="$(LOAD_STEPS)" LOAD_STEP_SECONDS="$(LOAD_STEP_SECONDS)" LOAD_WARMUP_SECONDS="$(LOAD_WARMUP_SECONDS)" LOAD_SPAWN_RATE="$(LOAD_SPAWN_RATE)" LOAD_SEED="$(LOAD_SEED)" LOAD_SAMPLE_SECONDS="$(LOAD_SAMPLE_SECONDS)" LOAD_BURST="$(LOAD_BURST)"
+load: ## Run a load test: LOAD_RUN=name [LOAD_STEPS=1,5,10 LOAD_STEP_SECONDS LOAD_WARMUP_SECONDS LOAD_SPAWN_RATE LOAD_SEED LOAD_SAMPLE_SECONDS LOAD_BURST=1: rate-limits run]
 	@test -n "$(LOAD_RUN)" || { echo "set LOAD_RUN=<name>"; exit 2; }
 	cd $(LOADTEST) && $(LOAD_ENV) uv run --frozen locust -f locustfile.py --headless --host $(LOAD_API_URL) --only-summary --loglevel WARNING --exit-code-on-error 0
 	cd $(LOADTEST) && uv run --frozen python -m hpdocs_load.report results/$(LOAD_RUN)

@@ -24,6 +24,7 @@ import pathlib
 import re
 import sys
 import tomllib
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -250,6 +251,39 @@ def build_rows(
 
 
 @dataclass(frozen=True)
+class BurstRow:
+    """The burst client in one step's window: what it sent and what came back."""
+
+    users: int
+    minutes: float
+    requests: int
+    statuses: dict[int, int]
+    error_codes: dict[str, int]
+    questions_completed: int
+
+
+def burst_rows(meta: Mapping[str, object], records: list[RequestRecord]) -> list[BurstRow]:
+    """Same window rule as the steps: a request counts where it ends."""
+    windows: list[Mapping[str, float]] = meta["windows"]  # type: ignore[assignment]
+    rows = []
+    for w in windows:
+        inside = [r for r in records if w["start"] < r.end <= w["end"]]
+        rows.append(
+            BurstRow(
+                users=int(w["users"]),
+                minutes=(w["end"] - w["start"]) / 60,
+                requests=len(inside),
+                statuses=dict(sorted(Counter(r.status for r in inside).items())),
+                error_codes=dict(
+                    sorted(Counter(r.error_code for r in inside if r.error_code).items())
+                ),
+                questions_completed=sum(r.name == MESSAGE and r.reached_done for r in inside),
+            )
+        )
+    return rows
+
+
+@dataclass(frozen=True)
 class HostSpan:
     """The host from the first to the last sample of a run: the start and end record."""
 
@@ -376,9 +410,28 @@ def _host_line(span: HostSpan) -> str:
     )
 
 
-def render(rows: Sequence[StepRow], slo: Slo | None, span: HostSpan | None = None) -> str:
+def _counted(counts: Mapping[int, int] | Mapping[str, int]) -> str:
+    return ", ".join(f"{key}: {n}" for key, n in counts.items()) or "none"
+
+
+def _burst_line(row: BurstRow) -> str:
+    return (
+        f"Burst client at {row.users} users: {row.requests} requests in {row.minutes:.1f} min "
+        f"({row.requests / row.minutes:.1f}/min); statuses {_counted(row.statuses)}; "
+        f"error codes {_counted(row.error_codes)}; "
+        f"completed questions {row.questions_completed}."
+    )
+
+
+def render(
+    rows: Sequence[StepRow],
+    slo: Slo | None,
+    span: HostSpan | None = None,
+    burst: Sequence[BurstRow] | None = None,
+) -> str:
     separator = "|" + "---|" * _HEADER.count(" | ") + "---|"
-    lines = [_HEADER, separator, *(_line(r, slo) for r in rows), ""]
+    verdict = None if burst is not None else slo
+    lines = [_HEADER, separator, *(_line(r, verdict) for r in rows), ""]
     if span is not None:
         lines.append(_host_line(span))
     gap = None if span is None else span.max_gap_seconds
@@ -392,6 +445,12 @@ def render(rows: Sequence[StepRow], slo: Slo | None, span: HostSpan | None = Non
             f"Run does not count: swap grew by {span.swap_growth_bytes / _MIB:.0f} MiB "
             f"(limit {MAX_RUN_SWAP_GROWTH_BYTES / _MIB:.0f} MiB)."
         )
+    elif burst is not None:
+        lines.append(
+            "Rate-limits run: one burst client (one client ID, no think time) next to the "
+            "users above; outside the SLO, not a capacity result."
+        )
+        lines.extend(_burst_line(b) for b in burst)
     elif slo is None:
         lines.append("SLO: no SLO file yet, so no verdict.")
     else:
@@ -418,14 +477,17 @@ def main(argv: Sequence[str]) -> int:
     run: pathlib.Path = args.run
     stages_file = run / "stages.jsonl"
     samples = _jsonl(run / "samples.jsonl")
+    meta = json.loads((run / "run.json").read_text())
     rows = build_rows(
-        json.loads((run / "run.json").read_text()),
+        meta,
         read_records(run / "requests.jsonl"),
         samples,
         read_stages(stages_file) if stages_file.exists() else [],
     )
     slo = parse_slo(args.slo.read_text()) if args.slo.exists() else None
-    text = render(rows, slo, host_span(samples))
+    # Runs from before the flag existed are capacity runs.
+    burst = burst_rows(meta, read_records(run / "burst.jsonl")) if meta.get("burst") else None
+    text = render(rows, slo, host_span(samples), burst)
     (run / "report.md").write_text(text)
     print(text, end="")  # noqa: T201 - the CLI's output is the table
     return 0
