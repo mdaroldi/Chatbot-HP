@@ -469,7 +469,6 @@ async def test_access_log_uses_the_placeholder_without_an_app_or_route_in_scope(
 # ------------------------------------------------------------------ streaming responses
 
 CHUNK_GAP_SECONDS = 0.05
-POST_RESPONSE_WORK_SECONDS = 0.3
 
 
 class EventRecorder(logging.Handler):
@@ -527,7 +526,34 @@ async def test_streaming_duration_covers_every_chunk() -> None:
     assert durations[0] >= 2 * CHUNK_GAP_SECONDS * 1000
 
 
-async def test_streaming_duration_stops_at_final_chunk_not_post_response_work() -> None:
-    _, durations = await run_streaming(post_response_work=POST_RESPONSE_WORK_SECONDS)
+class FakeClock:
+    """Stands in for perf_counter: time moves only when the test moves it."""
 
-    assert durations[0] < POST_RESPONSE_WORK_SECONDS * 1000
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def perf_counter(self) -> float:
+        return self.now
+
+
+async def test_streaming_duration_stops_at_final_chunk_not_post_response_work(
+    monkeypatch: pytest.MonkeyPatch, json_logs: LogReader
+) -> None:
+    """Exact, not timed: 0.1 s pass while streaming and 300 s after the final chunk
+    (background work); the access log must record the 0.1 s only.
+    """
+    clock = FakeClock()
+    monkeypatch.setattr("app.core.middleware.time", clock)
+
+    async def streaming_app(scope: Scope, receive: Receive, send: Send) -> None:  # noqa: ARG001
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        clock.now += 0.1
+        await send({"type": "http.response.body", "body": b"done", "more_body": False})
+        clock.now += 300.0  # like Starlette BackgroundTasks
+
+    async def send(message: Message) -> None:  # noqa: ARG001
+        return
+
+    await RequestIdMiddleware(streaming_app)(http_scope([]), empty_receive, send)
+
+    assert [entry["duration_ms"] for entry in access_entries(json_logs)] == [100.0]
