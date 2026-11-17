@@ -8,7 +8,7 @@ Retrieval-Augmented Generation (RAG):
 - HP ENVY 6000 All-in-One series User Guide
 - OMEN 17.3 inch Gaming Laptop PC Maintenance and Service Guide
 
-> **Status: Phases 0 to 6 done; Phase 7 (hardening) in progress.**
+> **Status: Phases 0 to 7 done.**
 > `docker compose up` downloads the two manuals, verifies them against pinned checksums and builds a hybrid (dense + BM25)
 > Qdrant index of them. The API answers questions over SSE with citations, keeps
 > conversations in Postgres and refuses when the manuals do not hold the answer
@@ -727,7 +727,7 @@ The full list, with the reasoning, is in [ADR 0001](docs/adr/0001-architecture-o
 | 4 | Frontend: Streamlit chat UI with conversations and sources | done |
 | 5 | Benchmark: generation metrics, ablation, report | done |
 | 6 | Load testing: Locust profiles, tuning, capacity report | done |
-| 7 | Hardening: security review, docs, demo script | in progress |
+| 7 | Hardening: security review, docs, demo script | done |
 
 ## License
 
