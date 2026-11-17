@@ -103,6 +103,7 @@ markers = [
   "integration: needs real Postgres and Qdrant containers",
   "corpus: needs the real HP manuals (downloaded and verified into CORPUS_DIR)",
   "model: needs the real embedding models (downloaded into EMBEDDING_CACHE_DIR)",
+  "stack: needs the running compose stack on the stub provider (make test-log-audit)",
 ]
 filterwarnings = ["error"]
 

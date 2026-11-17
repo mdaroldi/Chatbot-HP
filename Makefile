@@ -16,7 +16,7 @@ IMAGES := hpdocs-backend:local hpdocs-frontend:local
 TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURDIR)":/src:ro \
 	-v trivy-cache:/root/.cache $(TRIVY_IMAGE)
 
-.PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int test-ui-int test-eval-int smoke-llm \
+.PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int test-ui-int test-eval-int test-log-audit smoke-llm \
 	fetch-test-assets models \
 	security images scan-images scan-config up down ingest inspect-chunks model-pins \
 	purge eval-retrieval eval-estimate eval-answers eval-ablation eval-judge \
@@ -88,6 +88,13 @@ test-int: ## Integration tests (real Postgres and Qdrant, needs Docker), corpus 
 UI_IT_BACKEND_URL ?= http://127.0.0.1:$${API_PORT:-8000}
 test-ui-int: ## UI integration tests against the running stub stack (local only)
 	cd $(FRONTEND) && UI_IT_BACKEND_URL="$(UI_IT_BACKEND_URL)" uv run --frozen pytest tests/integration -m integration
+
+# Against the running stub stack, like test-ui-int (and in CI's stack job): a chat
+# session full of canaries, then every service's `docker compose logs`. A failure prints
+# container, canary id and line count only, never a log line.
+LOG_AUDIT_API_URL ?= http://127.0.0.1:$${API_PORT:-8000}
+test-log-audit: ## Stack log audit: canaries through every chat path, then every container's logs (stub stack)
+	cd $(BACKEND) && LOG_AUDIT_API_URL="$(LOG_AUDIT_API_URL)" uv run --frozen pytest tests/stack -m stack -p no:cacheprovider
 
 security: ## bandit, pip-audit (every lock file), gitleaks
 	cd $(BACKEND) && uv run --frozen bandit -q -c pyproject.toml -r app
