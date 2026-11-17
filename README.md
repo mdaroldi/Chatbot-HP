@@ -93,14 +93,20 @@ in `.env` to reach them from outside, and restrict access with the VM's firewall
 **The first `up` needs network access and takes a minute or more:** the image build
 downloads the pinned models from the Hugging Face hub (about 150 MB, verified file by
 file; ADR 0008), and `ingest` downloads the two manuals from HP, then builds the index.
-Measured on a fresh clone with empty volumes (Apple M2, Docker Desktop with 8 CPUs and
-4 GB, November 2026): image build 38 s (`--no-cache`), first `docker compose up --wait`
-70 s, of which ingestion (download, parse, embed, upsert) is about 47 s (Phase 1, before
-the models moved into the image; the model step adds about 17 s to a build with an
-empty model cache, and a forced rebuild of the index takes about 60 s). Later runs need
-no network: the models are in the image, the verified PDFs stay in the `corpus-cache`
-volume, and a second `up` took 21 s (1.6 s of it in `ingest`, which found the index
-current and skipped the build). If a download or a checksum check fails, the image
+Measured in the Phase 7 rehearsal: a fresh clone of `main` at `08d5430` with empty
+volumes, on an Apple M2 with Docker Desktop 29.1.2 (8 CPUs, 4 GB), 2026-11-17:
+
+| Step | Time |
+|---|---|
+| Image build, cold (empty build cache, base images and models downloaded) | backend 48 s (models 9.6 s), frontend 28 s |
+| Image build, `--no-cache` with this machine's cached model and package downloads | 43 s, both images |
+| Image build, warm (no change since the last build) | 2 s |
+| First `docker compose up -d --wait`, empty volumes | 56 s, of which `ingest` 36 s (download, parse, embed, upsert; 287 chunks) |
+| Second `up` after `down`, volumes kept | 20 s, of which `ingest` 1.3 s (index current, build skipped) |
+
+The cold builds ran one after the other in a separate, empty buildx builder; `up --build`
+builds both images in parallel. Later runs need no network: the models are in the image
+and the verified PDFs stay in the `corpus-cache` volume. If a download or a checksum check fails, the image
 build or `ingest` stops, and **the backend does not start**, by design: the API never
 runs on a missing or unverified index or model. `docker compose logs ingest` shows the
 one structured error line; fix the network and run `docker compose up` again.
