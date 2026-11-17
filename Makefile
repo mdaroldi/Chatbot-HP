@@ -16,7 +16,7 @@ IMAGES := hpdocs-backend:local hpdocs-frontend:local
 TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURDIR)":/src:ro \
 	-v trivy-cache:/root/.cache $(TRIVY_IMAGE)
 
-.PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int test-ui-int test-eval-int test-log-audit smoke-llm \
+.PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int test-ui-int test-eval-int test-log-audit audit-verbatim smoke-llm \
 	fetch-test-assets models \
 	security images scan-images scan-config sbom up down ingest inspect-chunks model-pins \
 	purge eval-retrieval eval-estimate eval-answers eval-ablation eval-judge \
@@ -88,6 +88,15 @@ test-int: ## Integration tests (real Postgres and Qdrant, needs Docker), corpus 
 UI_IT_BACKEND_URL ?= http://127.0.0.1:$${API_PORT:-8000}
 test-ui-int: ## UI integration tests against the running stub stack (also in CI's stack job)
 	cd $(FRONTEND) && UI_IT_BACKEND_URL="$(UI_IT_BACKEND_URL)" uv run --frozen pytest tests/integration -m integration
+
+# Needs the verified manuals in backend/corpus (make fetch-test-assets); also in CI's
+# integration job. Prints counts and file:line only, never text. AUDIT_ARGS="--history
+# PATH" scans every past version of PATH instead of the tree and the commit messages.
+AUDIT_ARGS ?=
+audit-verbatim: ## 12-word audit: no 12 consecutive manual words in tracked files or any commit message
+	cd $(BACKEND) && uv run --frozen python -c \
+		"import sys; from app.audit.verbatim import main; sys.exit(main(sys.argv[1:]))" \
+		--repo .. $(AUDIT_ARGS)
 
 # Against the running stub stack, like test-ui-int (and in CI's stack job): a chat
 # session full of canaries, then every service's `docker compose logs`. A failure prints

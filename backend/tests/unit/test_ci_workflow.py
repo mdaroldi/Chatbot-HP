@@ -152,6 +152,22 @@ def test_the_corpus_job_runs_every_marker_and_is_never_optional(
     ]
 
 
+def test_the_corpus_job_runs_the_12_word_audit_on_the_verified_manuals(
+    corpus_job: dict[str, Any],
+) -> None:
+    steps: list[Step] = corpus_job["steps"]
+    download = index(steps, lambda s: s.get("run") == "make fetch-test-assets")
+    audit = index(steps, lambda s: s.get("run") == "make audit-verbatim")
+    tests = index(steps, lambda s: s.get("run") == "make test-int")
+    runs = [s["run"] for s in all_steps() if "audit-verbatim" in s.get("run", "")]
+
+    checkout = steps[index(steps, lambda s: action(s) == "actions/checkout")]
+
+    assert download < audit < tests
+    assert runs == ["make audit-verbatim"]  # no AUDIT_ARGS: the whole tree and history
+    assert checkout["with"]["fetch-depth"] == 0  # every commit message, not the last one
+
+
 def test_the_corpus_job_turns_third_party_telemetry_off(corpus_job: dict[str, Any]) -> None:
     assert {k: corpus_job.get("env", {}).get(k) for k in TELEMETRY_OFF} == TELEMETRY_OFF
 
