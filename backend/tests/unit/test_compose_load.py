@@ -8,6 +8,7 @@ only change load-profile knobs: never quality settings, never secrets.
 
 import pathlib
 import re
+import subprocess  # nosec B404 - make -n only, fixed arguments
 from typing import Any
 
 import pytest
@@ -37,6 +38,8 @@ EXPECTED_ENV = {
     "LOG_LEVEL": "INFO",
     "LLM_PROVIDER": "stub",
     "LLM_STUB_TOKEN_DELAY_MS": "160",
+    # Profile B ruling: one provider call is one attempt, so the spend guard counts them all.
+    "LLM_MAX_RETRIES": "0",
     "API_PORT": "8100",
 }
 RATE_LIMIT_KEYS = {
@@ -221,6 +224,30 @@ def test_load_needs_a_run_name_and_passes_the_run_settings_on() -> None:
         "LOAD_BURST",
     ):
         assert f'{name}="$({name})"' in env.split(), name
+
+
+def dry_run_load(*variables: str) -> str:
+    # Only prints the expanded recipe (-n): nothing runs, no network, no containers.
+    result = subprocess.run(  # noqa: S603 - fixed argv, test-owned values
+        ["make", "-n", "--no-print-directory", "load", "LOAD_RUN=r", *variables],  # noqa: S607
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
+
+
+def test_a_real_model_run_always_has_the_spend_guard() -> None:
+    # Profile B must not be startable without the $3.00 cap, whatever LOAD_BUDGET says.
+    for budget in ("", "LOAD_BUDGET=0"):
+        out = dry_run_load("LOAD_PROVIDER=anthropic", *filter(None, [budget]))
+        assert 'LOAD_BUDGET="1"' in out.split(), budget
+
+
+def test_a_stub_run_has_the_guard_only_when_asked() -> None:
+    assert 'LOAD_BUDGET=""' in dry_run_load().split()
+    assert 'LOAD_BUDGET="1"' in dry_run_load("LOAD_BUDGET=1").split()
 
 
 def test_load_ends_with_the_capacity_table_even_when_requests_failed() -> None:
