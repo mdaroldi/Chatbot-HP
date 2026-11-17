@@ -17,3 +17,4 @@ considered, consequences.
 | [0010](0010-chat-api.md) | Chat API: conversations, SSE answers, three refusal reasons, rate limits, retention |
 | [0011](0011-chat-ui.md) | Chat UI: Streamlit page, state model, safe rendering, page guard |
 | [0012](0012-answer-benchmark.md) | Answer benchmark: harness over the chat API, judge, $10 budget, dev ablation and held-out result |
+| [0013](0013-load-testing.md) | Load testing: unit, SLO, harness, 1 × 4 inference default, capacity result, Profile B |
