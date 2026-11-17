@@ -9,6 +9,7 @@ import sys
 
 import pytest
 
+from hpdocs_load.burst import BURST_USERS
 from hpdocs_load.metrics import RequestRecord, write_record
 from hpdocs_load.report import (
     GENERATOR_SATURATED_PERCENT,
@@ -546,12 +547,13 @@ def test_a_rate_limits_run_has_no_verdict_and_no_capacity_line() -> None:
     assert "| pass |" not in text
     assert "| fail |" not in text
     assert "outside the SLO" in text
+    assert f"{BURST_USERS} burst users sharing one client ID" in text
 
 
 def test_a_rate_limits_run_reports_the_burst_client_per_window() -> None:
     text = render(rows_for(message(150.0)), SLO, burst=[burst_row()])
 
-    assert "Burst client at 5 users: 1200 requests in 4.0 min (300.0/min)" in text
+    assert "Burst users at 5 users: 1200 requests in 4.0 min (300.0/min)" in text
     assert "statuses 200: 40, 429: 1160" in text
     assert "error codes rate_limited: 1160" in text
     assert "completed questions 40" in text
@@ -577,7 +579,7 @@ def test_main_reports_the_burst_client_of_a_burst_run(tmp_path: pathlib.Path) ->
     assert main([str(run), "--slo", str(slo)]) == 0
 
     text = (run / "report.md").read_text()
-    assert "Burst client at 5 users: 1 requests" in text
+    assert "Burst users at 5 users: 1 requests" in text
     assert "Sustained:" not in text
 
 
@@ -591,5 +593,5 @@ def test_main_treats_runs_without_the_flag_as_capacity_runs(tmp_path: pathlib.Pa
     assert main([str(run), "--slo", str(slo)]) == 0
 
     text = (run / "report.md").read_text()
-    assert "Burst client" not in text
+    assert "Burst users" not in text
     assert "Sustained:" in text

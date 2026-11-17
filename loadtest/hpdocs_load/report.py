@@ -28,6 +28,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
+from hpdocs_load.burst import BURST_USERS
 from hpdocs_load.metrics import MESSAGE, RequestRecord, WindowSummary, percentile, read_records
 from hpdocs_load.metrics import summarize_window as summarize
 from hpdocs_load.stages import StageRow, read_stages
@@ -252,7 +253,7 @@ def build_rows(
 
 @dataclass(frozen=True)
 class BurstRow:
-    """The burst client in one step's window: what it sent and what came back."""
+    """The burst users in one step's window: what they sent and what came back."""
 
     users: int
     minutes: float
@@ -416,7 +417,7 @@ def _counted(counts: Mapping[int, int] | Mapping[str, int]) -> str:
 
 def _burst_line(row: BurstRow) -> str:
     return (
-        f"Burst client at {row.users} users: {row.requests} requests in {row.minutes:.1f} min "
+        f"Burst users at {row.users} users: {row.requests} requests in {row.minutes:.1f} min "
         f"({row.requests / row.minutes:.1f}/min); statuses {_counted(row.statuses)}; "
         f"error codes {_counted(row.error_codes)}; "
         f"completed questions {row.questions_completed}."
@@ -447,8 +448,8 @@ def render(
         )
     elif burst is not None:
         lines.append(
-            "Rate-limits run: one burst client (one client ID, no think time) next to the "
-            "users above; outside the SLO, not a capacity result."
+            f"Rate-limits run: {BURST_USERS} burst users sharing one client ID (no think "
+            "time) next to the users above; outside the SLO, not a capacity result."
         )
         lines.extend(_burst_line(b) for b in burst)
     elif slo is None:

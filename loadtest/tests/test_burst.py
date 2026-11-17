@@ -1,12 +1,12 @@
-"""The burst client of the rate-limits run (ADR 0013): one client ID, no think time, the
-fixed dev question list. It runs only when LOAD_BURST=1, next to the normal users and
-not instead of one, and its records never mix with theirs."""
+"""The burst client of the rate-limits run (ADR 0013): a few Locust users sharing one
+client ID, no think time, the fixed dev question list. It runs only when LOAD_BURST=1,
+next to the normal users and not instead of any, and its records never mix with theirs."""
 
 import ast
 import itertools
 import pathlib
 
-from hpdocs_load.burst import burst_questions, shape_users
+from hpdocs_load.burst import BURST_USERS, burst_questions, shape_users
 from hpdocs_load.workload import MESSAGE, THINK, QuestionPool
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -32,8 +32,14 @@ def test_follow_up_questions_are_never_sent() -> None:
     assert not {a.text for a in actions} & set(POOL.follow_ups)
 
 
-def test_the_burst_client_comes_on_top_of_the_step_users() -> None:
-    assert shape_users((16, 2.0), burst=True) == (17, 2.0)
+def test_the_burst_users_come_on_top_of_the_step_users() -> None:
+    assert shape_users((16, 2.0), burst=True) == (16 + BURST_USERS, 2.0)
+
+
+def test_three_burst_users_outpace_the_message_refill() -> None:
+    # One sequential user asking follow-ups sends about 10 a minute, the default refill:
+    # a 150 s smoke saw 25 messages and no 429. Three users sharing the ID send ~30.
+    assert BURST_USERS == 3
 
 
 def test_without_the_burst_client_the_step_is_unchanged() -> None:
@@ -63,21 +69,34 @@ def _assignments(node: ast.ClassDef) -> dict[str, str]:
     }
 
 
-def test_the_burst_user_exists_only_when_enabled_and_only_once() -> None:
+def test_the_burst_users_exist_only_when_enabled_and_at_a_fixed_count() -> None:
     fields = _assignments(_class("Burst"))
 
     assert fields["abstract"] == "not CONFIG.burst"
-    assert fields["fixed_count"] == "1"
+    assert fields["fixed_count"] == "BURST_USERS"
     assert fields["wait_time"] == "constant(0)"
 
 
-def test_the_burst_user_records_into_its_own_file_with_its_own_questions() -> None:
+def test_the_burst_users_record_into_their_own_file_under_one_client_id() -> None:
     source = ast.unparse(_class("Burst"))
 
     assert "files.add_burst_request" in source
     assert "files.add_request" not in source
     assert "burst_questions(POOL)" in source
-    assert "new_client_id" in source
+    assert "LocustTransport(self, BURST_CLIENT_ID)" in source
+    assert "new_client_id" not in source  # one ID for all burst users, made once
+
+
+def test_the_shared_burst_client_id_has_its_own_seed() -> None:
+    tree = ast.parse((ROOT / "locustfile.py").read_text())
+    (statement,) = (
+        n
+        for n in tree.body
+        if isinstance(n, ast.Assign) and ast.unparse(n.targets[0]) == "BURST_CLIENT_ID"
+    )
+
+    # Its own generator: the normal users draw the same seeds as in a capacity run.
+    assert ast.unparse(statement.value) == "new_client_id(random.Random(f'burst-{CONFIG.seed}'))"
 
 
 def test_normal_users_never_record_into_the_burst_file() -> None:

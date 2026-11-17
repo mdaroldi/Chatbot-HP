@@ -18,7 +18,7 @@ import requests
 from locust import HttpUser, LoadTestShape, constant, events, task
 from locust.env import Environment
 
-from hpdocs_load.burst import burst_questions, shape_users
+from hpdocs_load.burst import BURST_USERS, burst_questions, shape_users
 from hpdocs_load.client_id import new_client_id
 from hpdocs_load.config import config_from_env
 from hpdocs_load.ramp import measured_windows, tick
@@ -42,6 +42,9 @@ SEEDS = random.Random(CONFIG.seed)  # noqa: S311
 RESULTS = pathlib.Path(__file__).resolve().parent / "results"
 HOST = HostProbes(psutil.virtual_memory, psutil.swap_memory, os.sysconf("SC_PAGE_SIZE"))
 STATE: dict[str, object] = {}
+# One ID for every burst user, from its own generator, so the normal users draw the same
+# seeds as in a capacity run.
+BURST_CLIENT_ID = new_client_id(random.Random(f"burst-{CONFIG.seed}"))  # noqa: S311 - see SEEDS
 
 
 class Clock:
@@ -101,14 +104,12 @@ class Burst(HttpUser):
     """The rate-limits run's burst client (hpdocs_load.burst): only with LOAD_BURST=1."""
 
     abstract = not CONFIG.burst
-    fixed_count = 1
+    fixed_count = BURST_USERS
     wait_time = constant(0)
 
     def on_start(self) -> None:
-        # Its own generator, so the normal users draw the same seeds as in a capacity run.
-        rng = random.Random(f"burst-{CONFIG.seed}")  # noqa: S311 - reproducible, see SEEDS
         files: RunFiles = STATE["files"]  # type: ignore[assignment]
-        transport = LocustTransport(self, new_client_id(rng))
+        transport = LocustTransport(self, BURST_CLIENT_ID)
         self.session = Session(transport, Clock(), files.add_burst_request)
         self.questions = burst_questions(POOL)
         self.session.run((Action(CREATE),))
