@@ -18,6 +18,7 @@ import requests
 from locust import HttpUser, LoadTestShape, constant, events, task
 from locust.env import Environment
 
+from hpdocs_load.budget import PROFILE_B, SpendGuard, admission
 from hpdocs_load.burst import BURST_USERS, burst_questions, shape_users
 from hpdocs_load.client_id import new_client_id
 from hpdocs_load.config import config_from_env
@@ -45,6 +46,16 @@ STATE: dict[str, object] = {}
 # One ID for every burst user, from its own generator, so the normal users draw the same
 # seeds as in a capacity run.
 BURST_CLIENT_ID = new_client_id(random.Random(f"burst-{CONFIG.seed}"))  # noqa: S311 - see SEEDS
+
+
+def _quit_run() -> None:
+    # Spawned: the refused user's own greenlet must not be the one that kills all users.
+    gevent.spawn(STATE["environment"].runner.quit)  # type: ignore[attr-defined]
+
+
+# Profile B (LOAD_BUDGET=1) stops at the $3.00 cap or 90 questions (hpdocs_load.budget).
+GUARD = SpendGuard(PROFILE_B, _quit_run)
+ADMIT = admission(enabled=CONFIG.budget, guard=GUARD)
 
 
 class Clock:
@@ -92,7 +103,7 @@ class Browser(HttpUser):
         self.rng = random.Random(SEEDS.getrandbits(64))  # noqa: S311 - reproducible, see SEEDS
         files: RunFiles = STATE["files"]  # type: ignore[assignment]
         transport = LocustTransport(self, new_client_id(self.rng))
-        self.session = Session(transport, Clock(), files.add_request)
+        self.session = Session(transport, Clock(), files.add_request, admit=ADMIT)
         self.session.run(page_open())
 
     @task
@@ -110,7 +121,7 @@ class Burst(HttpUser):
     def on_start(self) -> None:
         files: RunFiles = STATE["files"]  # type: ignore[assignment]
         transport = LocustTransport(self, BURST_CLIENT_ID)
-        self.session = Session(transport, Clock(), files.add_burst_request)
+        self.session = Session(transport, Clock(), files.add_burst_request, admit=ADMIT)
         self.questions = burst_questions(POOL)
         self.session.run((Action(CREATE),))
 
@@ -144,6 +155,7 @@ def _meta(environment: Environment, started_at: float) -> dict[str, object]:
     return {
         "run": CONFIG.name,
         "burst": CONFIG.burst,
+        "budget": CONFIG.budget,
         "host": environment.host,
         "seed": CONFIG.seed,
         "sample_seconds": CONFIG.sample_seconds,
@@ -159,6 +171,7 @@ def _meta(environment: Environment, started_at: float) -> dict[str, object]:
 def _start(environment: Environment, **_: object) -> None:
     files = RunFiles.create(RESULTS, CONFIG.name)
     STATE["files"] = files
+    STATE["environment"] = environment
     STATE["meta"] = _meta(environment, time.time())
     files.write_meta(STATE["meta"])  # type: ignore[arg-type]
     STATE["sampler"] = gevent.spawn(_sample_forever, files)
@@ -169,7 +182,8 @@ def _stop(**_: object) -> None:
     STATE["sampler"].kill()  # type: ignore[attr-defined]
     started: float = STATE["meta"]["started_at"]  # type: ignore[index]
     files.add_stages(parse_stage_logs(run_command(logs_command(started))))
-    files.write_meta({**STATE["meta"], "ended_at": time.time()})  # type: ignore[dict-item]
+    meta = {**STATE["meta"], "ended_at": time.time(), "spend_guard": GUARD.summary()}  # type: ignore[dict-item]
+    files.write_meta(meta)
     files.close()
 
 

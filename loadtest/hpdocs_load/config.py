@@ -16,6 +16,7 @@ _DEFAULTS = {
     "LOAD_WARMUP_SECONDS": "60",
     "LOAD_SPAWN_RATE": "1",
     "LOAD_BURST": "0",
+    "LOAD_BUDGET": "0",
 }
 _SWITCH = {"0": False, "1": True}
 
@@ -28,6 +29,8 @@ class RunConfig:
     plan: StepPlan
     # The rate-limits run's burst client (hpdocs_load.burst); never on in a capacity run.
     burst: bool = False
+    # Profile B's spend guard (hpdocs_load.budget); `make load` turns it on for anthropic.
+    budget: bool = False
 
 
 def _positive(text: str) -> float:
@@ -67,4 +70,5 @@ def config_from_env(env: Mapping[str, str]) -> RunConfig:
             spawn_rate=value("LOAD_SPAWN_RATE", _positive),
         ),
         burst=value("LOAD_BURST", _switch),
+        budget=value("LOAD_BUDGET", _switch),
     )

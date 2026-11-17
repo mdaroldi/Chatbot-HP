@@ -95,3 +95,20 @@ def test_only_zero_or_one_enable_the_burst_client(value: str) -> None:
     # A typo must stop the run, not silently run a capacity test with a burst client.
     with pytest.raises(ValueError, match="LOAD_BURST"):
         config_from_env({"LOAD_RUN": "r", "LOAD_BURST": value})
+
+
+def test_the_spend_guard_is_off_unless_enabled() -> None:
+    assert config_from_env({"LOAD_RUN": "r"}).budget is False
+    assert config_from_env({"LOAD_RUN": "r", "LOAD_BUDGET": ""}).budget is False
+    assert config_from_env({"LOAD_RUN": "r", "LOAD_BUDGET": "0"}).budget is False
+
+
+def test_the_spend_guard_is_enabled_by_one() -> None:
+    assert config_from_env({"LOAD_RUN": "r", "LOAD_BUDGET": "1"}).budget is True
+
+
+@pytest.mark.parametrize("value", ["2", "yes", "true", " 1"])
+def test_only_zero_or_one_enable_the_spend_guard(value: str) -> None:
+    # A typo must stop the run, not send real-model questions without the guard.
+    with pytest.raises(ValueError, match="LOAD_BUDGET"):
+        config_from_env({"LOAD_RUN": "r", "LOAD_BUDGET": value})

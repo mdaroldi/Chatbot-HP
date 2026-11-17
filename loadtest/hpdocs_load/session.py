@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
+from hpdocs_load.budget import admit_all
 from hpdocs_load.metrics import MESSAGE, RequestRecord
 from hpdocs_load.sse import SseProtocolError, summarize_stream, timed_events
 from hpdocs_load.workload import CREATE, DELETE, LIST, OPEN, PREVIOUS, READY, THINK, Action
@@ -65,16 +66,25 @@ def error_code_of(status: int, text: str) -> str | None:
 
 class Session:
     def __init__(
-        self, transport: Transport, clock: Clock, record: Callable[[RequestRecord], None]
+        self,
+        transport: Transport,
+        clock: Clock,
+        record: Callable[[RequestRecord], None],
+        *,
+        admit: Callable[..., bool] = admit_all,
     ) -> None:
         self._transport = transport
+        self._admit = admit
         self._clock = clock
         self._record = record
         self._kept: list[str] = []
 
     def run(self, actions: Iterable[Action]) -> None:
-        """A failed create ends the plan: there is no conversation to ask in."""
+        """A failed create ends the plan: there is no conversation to ask in. So does a
+        question the spend guard refuses: the run is stopping."""
         for action in actions:
+            if action.kind == MESSAGE and not self._admit(follow_up=action.follow_up):
+                return
             if action.kind == THINK:
                 self._clock.sleep(action.seconds)
             elif action.kind == CREATE and not self._create():

@@ -300,3 +300,62 @@ def test_the_follow_up_goes_to_the_same_conversation() -> None:
 )
 def test_error_code_of(status: int, body: str, code: str | None) -> None:
     assert error_code_of(status, body) == code
+
+
+# ---------------------------------------------------------------- spend guard
+
+
+def test_every_question_is_offered_to_the_guard_with_its_class() -> None:
+    asked: list[bool] = []
+    clock = FakeClock()
+    transport = FakeTransport(clock)
+
+    def admit(*, follow_up: bool) -> bool:
+        asked.append(follow_up)
+        return True
+
+    session = Session(transport, clock, lambda _: None, admit=admit)
+    session.run(
+        (
+            Action(CREATE),
+            Action(MESSAGE, text="q1"),
+            Action(LIST),
+            Action(MESSAGE, text="q2", follow_up=True),
+        )
+    )
+
+    assert asked == [False, True]
+    assert transport.contents == ["q1", "q2"]
+
+
+def test_a_refused_question_is_not_sent_and_ends_the_plan() -> None:
+    clock = FakeClock()
+    transport = FakeTransport(clock)
+    records: list[RequestRecord] = []
+    answers = iter([True, False])
+
+    def admit(*, follow_up: bool) -> bool:  # noqa: ARG001 - the guard's signature
+        return next(answers)
+
+    session = Session(transport, clock, records.append, admit=admit)
+
+    session.run(
+        (
+            Action(CREATE),
+            Action(MESSAGE, text="q1"),
+            Action(THINK, seconds=12.0),
+            Action(MESSAGE, text="q2", follow_up=True),
+            Action(LIST),
+        )
+    )
+
+    assert transport.contents == ["q1"]
+    assert [r.name for r in records] == ["create", "message"]
+
+
+def test_without_a_guard_every_question_is_sent() -> None:
+    session, transport, _, _ = rig()
+
+    session.run((Action(CREATE), Action(MESSAGE, text="q1"), Action(MESSAGE, text="q2")))
+
+    assert transport.contents == ["q1", "q2"]
