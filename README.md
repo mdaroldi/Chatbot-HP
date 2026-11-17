@@ -569,6 +569,10 @@ integration job as a required check in the branch protection settings.
 
 ## Security and data governance
 
+The [threat model](docs/security/threat-model.md) covers STRIDE over the data flow,
+the OWASP GenAI LLM Top 10 (2026), the supply chain, corpus copyright and the residual
+risks with their next steps.
+
 - **Secrets** come only from environment variables. `.env` is git-ignored and
   `.env.example` holds placeholders. The database password is a `SecretStr`, the
   DSN is unwrapped in exactly one place, and neither appears in logs, images or
