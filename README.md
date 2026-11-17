@@ -15,7 +15,8 @@ Retrieval-Augmented Generation (RAG):
 > ([Chat](#chat)). The Streamlit page at http://localhost:8501 is the chat
 > ([Chat UI](#chat-ui)). Answer quality is benchmarked ([Answer quality](#answer-quality))
 > and capacity is load tested ([Load testing](#load-testing)); the
-> [threat model](docs/security/threat-model.md) records the security review; see
+> [threat model](docs/security/threat-model.md) records the security review, and the
+> [demo script](docs/demo.md) walks through the UI in 8 to 10 minutes; see
 > [Status](#status).
 
 ## Architecture
