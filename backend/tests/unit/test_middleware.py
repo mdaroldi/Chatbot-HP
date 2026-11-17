@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from starlette.types import Message, Receive, Scope, Send
 
 from app.core.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
@@ -44,6 +44,23 @@ def build_app() -> FastAPI:
     @app.post("/submit")
     async def submit(payload: dict[str, str]) -> dict[str, int]:
         return {"fields": len(payload)}
+
+    @app.get("/items/{item_id}")
+    async def item(item_id: str) -> dict[str, int]:
+        return {"length": len(item_id)}
+
+    @app.post("/items/{item_id}")
+    async def update_item(item_id: str, payload: dict[str, str]) -> dict[str, int]:
+        return {"length": len(item_id), "fields": len(payload)}
+
+    # The real app's routes come from included routers, which dispatch differently.
+    router = APIRouter(prefix="/v1")
+
+    @router.get("/things/{thing_id}")
+    async def thing(thing_id: str) -> dict[str, int]:
+        return {"length": len(thing_id)}
+
+    app.include_router(router)
 
     return app
 
@@ -350,6 +367,103 @@ async def test_access_log_never_contains_query_string_or_bodies(
     assert "query-secret" not in raw
     assert "body-secret" not in raw
     assert '"fields"' not in raw
+
+
+def access_entries(json_logs: LogReader) -> list[dict[str, object]]:
+    return [line for line in json_logs() if line["logger"] == "app.access"]
+
+
+def app_log_text(json_logs: LogReader) -> str:
+    """Every app log line (the test client's own httpx logger is not the app)."""
+    return json.dumps([line for line in json_logs() if line["logger"].startswith("app")])
+
+
+async def test_access_log_records_the_route_template_not_the_path_parameters(
+    client: httpx.AsyncClient, json_logs: LogReader
+) -> None:
+    await client.get("/items/path-secret-segment")
+
+    entries = access_entries(json_logs)
+    assert [entry["path"] for entry in entries] == ["/items/{item_id}"]
+    assert "path-secret-segment" not in app_log_text(json_logs)
+
+
+async def test_access_log_records_a_fixed_placeholder_for_a_path_no_route_matches(
+    client: httpx.AsyncClient, json_logs: LogReader
+) -> None:
+    response = await client.get("/no/such/unmatched-secret?q=query-secret")
+
+    assert response.status_code == 404
+    assert [entry["path"] for entry in access_entries(json_logs)] == ["<unmatched>"]
+    raw = app_log_text(json_logs)
+    assert "unmatched-secret" not in raw
+    assert "query-secret" not in raw
+
+
+async def test_access_log_names_the_route_when_the_method_is_not_allowed(
+    client: httpx.AsyncClient, json_logs: LogReader
+) -> None:
+    response = await client.delete("/items/method-secret")
+
+    assert response.status_code == 405
+    assert [entry["path"] for entry in access_entries(json_logs)] == ["/items/{item_id}"]
+    assert "method-secret" not in app_log_text(json_logs)
+
+
+async def test_access_log_names_the_route_when_validation_fails(
+    client: httpx.AsyncClient, json_logs: LogReader
+) -> None:
+    response = await client.post(
+        "/items/segment-secret",
+        content=b'{"broken": "validation-secret"',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    assert [entry["path"] for entry in access_entries(json_logs)] == ["/items/{item_id}"]
+    raw = app_log_text(json_logs)
+    assert "segment-secret" not in raw
+    assert "validation-secret" not in raw
+
+
+@pytest.mark.parametrize(
+    ("method", "status"), [("GET", 200), ("DELETE", 405)], ids=["dispatched", "not-allowed"]
+)
+async def test_access_log_names_the_template_of_a_route_from_an_included_router(
+    client: httpx.AsyncClient, json_logs: LogReader, method: str, status: int
+) -> None:
+    response = await client.request(method, "/v1/things/router-secret")
+
+    assert response.status_code == status
+    assert [entry["path"] for entry in access_entries(json_logs)] == ["/v1/things/{thing_id}"]
+    assert "router-secret" not in app_log_text(json_logs)
+
+
+async def test_access_log_uses_the_placeholder_when_answered_before_routing(
+    json_logs: LogReader,
+) -> None:
+    """A CORS preflight is answered by an outer middleware: no route, no raw path."""
+
+    async def preflight(scope: Scope, receive: Receive, send: Send) -> None:  # noqa: ARG001
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    async def send(message: Message) -> None:  # noqa: ARG001
+        return
+
+    scope = {**http_scope([]), "method": "OPTIONS", "path": "/items/preflight-secret"}
+    await RequestIdMiddleware(preflight)(scope, empty_receive, send)
+
+    assert [entry["path"] for entry in access_entries(json_logs)] == ["<unmatched>"]
+    assert "preflight-secret" not in app_log_text(json_logs)
+
+
+async def test_access_log_uses_the_placeholder_without_an_app_or_route_in_scope(
+    json_logs: LogReader,
+) -> None:
+    await call_raw([])
+
+    assert [entry["path"] for entry in access_entries(json_logs)] == ["<unmatched>"]
 
 
 # ------------------------------------------------------------------ streaming responses

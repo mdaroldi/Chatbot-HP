@@ -23,6 +23,9 @@ CLIENT_CLOSED_REQUEST = 499
 # or headers, so it is replaced rather than sanitized.
 _VALID_REQUEST_ID = re.compile(r"[A-Za-z0-9-]{8,64}")
 
+# Logged instead of the path when no route matches: the raw path is client-chosen text.
+UNMATCHED_ROUTE = "<unmatched>"
+
 _access_logger = logging.getLogger("app.access")
 _logger = logging.getLogger(__name__)
 
@@ -47,6 +50,17 @@ def _incoming_request_id(scope: Scope) -> bytes | None:
         if name.lower() == _REQUEST_ID_HEADER_BYTES:
             return bytes(value)
     return None
+
+
+def route_template(scope: Scope) -> str:
+    """The matched route's template (`/v1/conversations/{conversation_id}`), never the path.
+
+    Path segments are client-chosen (IDs, or anything a client types), so the access log
+    names the route the router dispatched to, including a partial match (405). A request
+    answered before routing (a CORS preflight) or by no route (404) gets the placeholder.
+    """
+    template = getattr(scope.get("route"), "path", None)
+    return template if isinstance(template, str) else UNMATCHED_ROUTE
 
 
 def _internal_error_body(request_id: str) -> bytes:
@@ -114,7 +128,7 @@ class RequestIdMiddleware:
                     "request completed",
                     extra={
                         "method": scope["method"],
-                        "path": scope["path"],
+                        "path": route_template(scope),
                         "status": status,
                         "duration_ms": round((ended_at - started_at) * 1000, 3),
                     },

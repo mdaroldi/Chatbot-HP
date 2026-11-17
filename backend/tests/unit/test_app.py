@@ -270,7 +270,10 @@ async def test_preflight_carries_request_id_and_is_access_logged(
 
     assert response.headers[REQUEST_ID_HEADER] == REQUEST_ID
     access = [line for line in json_logs() if line["logger"] == "app.access"]
-    assert [(a["method"], a["path"], a["status"]) for a in access] == [("OPTIONS", "/health", 200)]
+    # CORS answers before routing, so no route matched: the placeholder, never the path.
+    assert [(a["method"], a["path"], a["status"]) for a in access] == [
+        ("OPTIONS", "<unmatched>", 200)
+    ]
     assert access[0]["request_id"] == REQUEST_ID
 
 
