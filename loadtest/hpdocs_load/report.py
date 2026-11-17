@@ -241,14 +241,23 @@ def _row(
     )
 
 
+def _windows(meta: Mapping[str, object]) -> list[Mapping[str, float]]:
+    """The planned windows, cut at the run's end: a run the spend guard stopped mid-step
+    is measured over the time it ran, and steps it never reached are not reported."""
+    planned: list[Mapping[str, float]] = meta["windows"]  # type: ignore[assignment]
+    ended = meta.get("ended_at")
+    if not isinstance(ended, int | float):
+        return planned
+    return [{**w, "end": min(w["end"], ended)} for w in planned if w["start"] < ended]
+
+
 def build_rows(
     meta: Mapping[str, object],
     records: list[RequestRecord],
     samples: Sequence[Sample],
     stages: list[StageRow],
 ) -> list[StepRow]:
-    windows: list[Mapping[str, float]] = meta["windows"]  # type: ignore[assignment]
-    return [_row(w, records, samples, stages) for w in windows]
+    return [_row(w, records, samples, stages) for w in _windows(meta)]
 
 
 @dataclass(frozen=True)
@@ -265,9 +274,8 @@ class BurstRow:
 
 def burst_rows(meta: Mapping[str, object], records: list[RequestRecord]) -> list[BurstRow]:
     """Same window rule as the steps: a request counts where it ends."""
-    windows: list[Mapping[str, float]] = meta["windows"]  # type: ignore[assignment]
     rows = []
-    for w in windows:
+    for w in _windows(meta):
         inside = [r for r in records if w["start"] < r.end <= w["end"]]
         rows.append(
             BurstRow(

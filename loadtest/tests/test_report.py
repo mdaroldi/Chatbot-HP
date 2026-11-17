@@ -595,3 +595,49 @@ def test_main_treats_runs_without_the_flag_as_capacity_runs(tmp_path: pathlib.Pa
     text = (run / "report.md").read_text()
     assert "Burst users" not in text
     assert "Sustained:" in text
+
+
+# ---------------------------------------------------------------- a run that ended early
+
+
+def test_a_run_stopped_inside_a_window_is_measured_up_to_its_end() -> None:
+    # A spent Profile B run ends mid-step: rates use the time it ran, not the plan.
+    stopped = {**meta((1, 0.0, 600.0)), "ended_at": 240.0}
+
+    (row,) = build_rows(stopped, [message(100.0), message(200.0)], [], [])
+
+    assert row.seconds == 240.0
+    assert row.summary.questions_per_minute == pytest.approx(2 / 4)
+
+
+def test_a_run_stopped_early_can_leave_its_window_too_short_to_count() -> None:
+    stopped = {**meta((1, 0.0, 600.0)), "ended_at": MIN_WINDOW_SECONDS - 1}
+
+    (row,) = build_rows(stopped, [message(100.0)], [], [])
+
+    assert not row.long_enough
+
+
+def test_windows_planned_after_the_run_ended_are_not_reported() -> None:
+    stopped = {**meta((1, 0.0, 300.0), (2, 300.0, 600.0)), "ended_at": 300.0}
+
+    rows = build_rows(stopped, [message(100.0)], [], [])
+
+    assert [r.users for r in rows] == [1]
+    assert [r.users for r in burst_rows(stopped, [])] == [1]
+
+
+def test_a_run_that_ran_its_plan_keeps_its_windows() -> None:
+    ran = {**meta((1, 0.0, 300.0)), "ended_at": 301.5}
+
+    (row,) = build_rows(ran, [message(100.0)], [], [])
+
+    assert row.seconds == 300.0
+
+
+def test_burst_rows_use_the_same_cut_window() -> None:
+    stopped = {**meta((5, 100.0, 600.0)), "ended_at": 220.0}
+
+    (row,) = burst_rows(stopped, [burst_call(150.0)])
+
+    assert row.minutes == pytest.approx(2.0)
