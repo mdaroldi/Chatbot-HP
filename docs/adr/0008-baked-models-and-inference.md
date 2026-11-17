@@ -59,7 +59,7 @@ falls back to the OS temp directory when no cache directory is given.
    gets `INFERENCE_ONNX_THREADS` as its ONNX intra-op thread count; fastembed's
    `parallel` option is never used. Defaults until Phase 6: 2 workers × 2 threads;
    from Phase 6 commit 7: 1 worker × 4 threads, the same 4 threads in total, measured
-   faster under load with bit-identical scores.
+   faster under load with bit-identical scores (`loadtest/reports/tuning.md`).
    At startup, workers × threads is compared with the container's cgroup CPU quota
    (`/sys/fs/cgroup/cpu.max`), or with the CPU count when no quota is readable, and a
    warning names which one was used. A reranker other than the configured one is
