@@ -350,8 +350,8 @@ def test_a_run_reports_golden_index_git_hardware_and_every_config(
     assert summary["warm_up_retrievals"] == 1
     assert summary["hardware"]["cpus"] == 8.0
     assert summary["hardware"]["cpu_source"] == "cgroup"
-    assert summary["hardware"]["inference_workers"] == 2
-    assert summary["hardware"]["onnx_threads"] == 2
+    assert summary["hardware"]["inference_workers"] == 1
+    assert summary["hardware"]["onnx_threads"] == 4
     assert "machine" in summary["hardware"]
     # The models this run used: never a pinned reranker that no config reranked with.
     assert summary["models"] == {

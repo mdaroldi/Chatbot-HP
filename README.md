@@ -372,8 +372,8 @@ Compose-only keys: `BIND_ADDRESS`, `API_PORT`, `FRONTEND_PORT`. The frontend rea
 | `RETRIEVAL_RELEVANCE_THRESHOLD` | `-6.54` | Lowest top reranker score that counts as relevant. Calibrated for Xenova/ms-marco-MiniLM-L-6-v2 @ a09144355ade on the dev split (ADR 0009): 2 of 48 in-scope questions refused, 4 of 4 unrelated and 0 of 4 near-domain out-of-scope questions caught. Fragile (8 out-of-scope questions); recalibrate when the reranker changes. |
 | `RETRIEVAL_DENSE_QUERY_PREFIX` | *empty* | Text put before the question for the dense query only (BGE instruction). |
 | `RERANKER_MODEL` | `Xenova/ms-marco-MiniLM-L-6-v2` | fastembed cross-encoder; must be pinned in `models.toml`. |
-| `INFERENCE_WORKERS` | `2` | Threads that run embedding and reranking for requests. |
-| `INFERENCE_ONNX_THREADS` | `2` | ONNX intra-op threads per model call; workers times threads should fit the container's CPUs. |
+| `INFERENCE_WORKERS` | `1` | Threads that run embedding and reranking for requests. |
+| `INFERENCE_ONNX_THREADS` | `4` | ONNX intra-op threads per model call; workers times threads should fit the container's CPUs. |
 | `INFERENCE_EMBED_WORKERS` | `0` | Threads of a separate pool for query embeddings, so they do not wait behind reranks; 0 runs them on the inference pool. |
 | `QDRANT_SEARCH_TIMEOUT_SECONDS` | `2.0` | Deadline for one Qdrant search. |
 | `QUERY_MAX_CHARS` | `1000` | Longest accepted question, in characters. |

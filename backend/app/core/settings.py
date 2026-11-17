@@ -248,13 +248,13 @@ class Settings(BaseSettings):
         description="fastembed cross-encoder; must be pinned in `models.toml`.",
     )
     inference_workers: int = Field(
-        default=2,
+        default=1,
         ge=1,
         le=32,
         description="Threads that run embedding and reranking for requests.",
     )
     inference_onnx_threads: int = Field(
-        default=2,
+        default=4,
         ge=1,
         le=32,
         description="ONNX intra-op threads per model call; workers times threads should "

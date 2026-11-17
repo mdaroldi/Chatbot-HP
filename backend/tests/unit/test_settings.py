@@ -470,8 +470,9 @@ def test_retrieval_defaults_are_hybrid_with_rerank_and_the_calibrated_threshold(
     assert settings.retrieval_relevance_threshold == -6.54
     assert settings.retrieval_dense_query_prefix == ""
     assert settings.reranker_model == "Xenova/ms-marco-MiniLM-L-6-v2"
-    assert settings.inference_workers == 2
-    assert settings.inference_onnx_threads == 2
+    # One rerank at a time on all 4 CPUs beat 2 x 2 under load (Phase 6 tuning, ADR 0008).
+    assert settings.inference_workers == 1
+    assert settings.inference_onnx_threads == 4
     assert settings.inference_embed_workers == 0  # embeddings share the inference pool
     assert settings.qdrant_search_timeout_seconds == 2.0
     assert settings.query_max_chars == 1000
