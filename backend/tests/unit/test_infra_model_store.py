@@ -206,6 +206,26 @@ def test_main_keeps_the_hub_requests_out_of_the_build_log(tmp_path: Path) -> Non
     assert logging.getLogger("httpx").level >= logging.WARNING
 
 
+def test_main_prints_a_hub_warning_once_through_the_build_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """huggingface_hub adds its own stderr handler and also propagates to the root, so
+    a server warning (X-HF-Warning) was printed twice; only the root handler remains.
+    """
+    library = logging.getLogger("huggingface_hub")
+    monkeypatch.setattr(library, "handlers", [logging.StreamHandler()])
+    monkeypatch.setattr(library, "propagate", True)
+
+    main(
+        ["--cache", str(tmp_path / "c"), "--target", str(tmp_path / "s")],
+        pins={PIN.name: PIN},
+        hub=hub_with(),
+    )
+
+    assert library.handlers == []
+    assert library.propagate is True
+
+
 def test_main_lists_every_store_problem_and_exits_non_zero(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

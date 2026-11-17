@@ -135,6 +135,9 @@ def main(
     # A build step, not the API: plain lines on stderr (a no-op if logging is set up).
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per hub request
+    # huggingface_hub adds its own stderr handler at import and also propagates to the
+    # root, so a hub warning (X-HF-Warning) printed twice; the root handler alone prints it.
+    logging.getLogger("huggingface_hub").handlers.clear()
     pinned = pins if pins is not None else load_pins()
     try:
         asyncio.run(bake(pinned, args.cache, args.target, hub or HuggingFaceHub()))
