@@ -18,7 +18,7 @@ TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURD
 
 .PHONY: help install setup lint lint-workflows format typecheck test docs-config coverage-summary test-int test-ui-int test-eval-int test-log-audit smoke-llm \
 	fetch-test-assets models \
-	security images scan-images scan-config up down ingest inspect-chunks model-pins \
+	security images scan-images scan-config sbom up down ingest inspect-chunks model-pins \
 	purge eval-retrieval eval-estimate eval-answers eval-ablation eval-judge \
 	eval-label-sheet eval-agreement eval-report eval-summary eval load load-measured load-up load-reset load-down check
 
@@ -119,6 +119,16 @@ scan-images: ## Trivy image scan: fail on fixable HIGH/CRITICAL vulnerabilities
 scan-config: ## Trivy misconfiguration scan of the Dockerfiles (compose is not supported)
 	$(TRIVY) config --quiet --skip-version-check --exit-code 1 \
 		--skip-dirs /src/backend/.venv --skip-dirs /src/frontend/.venv /src
+
+# Local only (CI uploads no artifacts): one CycloneDX file per image in sbom/ (git-ignored),
+# from the same pinned Trivy image as the scans. Run `make images` first.
+sbom: ## CycloneDX bill of materials of both images into sbom/ (local, git-ignored)
+	mkdir -p sbom
+	for image in $(IMAGES); do \
+		docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$(CURDIR)/sbom":/out \
+			-v trivy-cache:/root/.cache $(TRIVY_IMAGE) image --quiet --skip-version-check \
+			--format cyclonedx --output /out/$${image%%:*}.cdx.json $$image || exit 1; \
+	done
 
 up: ## Build and start the stack, waiting until every service is healthy
 	docker compose up --build --detach --wait
