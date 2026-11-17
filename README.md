@@ -670,6 +670,12 @@ are not redistributed.
   answer is kept and flagged (`flags.uncited`, no sources), not rejected.
 - **Truncated answers:** an answer cut by `LLM_ANSWER_MAX_TOKENS` (2048) or another
   non-final stop is kept, as the user saw it, and flagged `flags.truncated`.
+- **A follow-up can occasionally be refused:** when the query rewrite stops early
+  (`flags.rewrite_fallback` is `incomplete`), the search runs on the raw follow-up and
+  can fall below the relevance threshold. mt-006's second turn was refused this way in 2
+  of 2 real runs. The stop reason is now logged; raising the rewrite token budget
+  (`LLM_REWRITE_MAX_TOKENS`, 100) is a next step
+  ([ADR 0012, Update Phase 7](docs/adr/0012-answer-benchmark.md#update-phase-7-2026-11-17-earlier-turns-of-multi-turn-items)).
 - **Long first messages cut chunk tails at the reranker:** the cross-encoder truncates
   each (question, chunk) pair to 512 tokens from the chunk's end. Up to about 290
   characters nothing is cut; a 1,000-character first question cuts 69 chunks. From the
