@@ -34,7 +34,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "pyyaml>=6.0.3",
     "ruff>=0.17.4",
-    "types-pyyaml==6.0.12.20261111",
+    "types-pyyaml==6.0.12.20261113",
 ]
 
 [tool.uv]
